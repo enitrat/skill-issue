@@ -1,0 +1,179 @@
+#!/bin/bash
+# git-id: Simple git identity switcher
+
+VERSION="1.0.0"
+CONFIG_DIR="$HOME/.git-identities"
+
+show_help() {
+    cat << 'EOF'
+NAME
+    git-id - switch between multiple git identities
+
+SYNOPSIS
+    git-id [<identity>]
+    git-id add <id> <name> <email> <ssh_key>
+    git-id rm <id>
+    git-id list
+    git-id --help | -h
+    git-id --version | -v
+
+DESCRIPTION
+    git-id manages multiple git identities, switching both git user
+    configuration and SSH keys with a single command.
+
+    When switching identities, git-id sets:
+      - git config --global user.name
+      - git config --global user.email
+      - git config --global core.sshCommand (to use the correct SSH key)
+
+COMMANDS
+    <identity>
+        Switch to the specified identity. The identity must exist in
+        ~/.git-identities/<identity>.conf
+
+    list (default)
+        List all available identities and show the current one.
+        This is the default when git-id is run without arguments.
+
+    add <id> <name> <email> <ssh_key>
+        Create a new identity. The ssh_key should be the filename
+        of an existing key in ~/.ssh/ (e.g., id_work).
+
+    rm <id>, remove <id>
+        Remove an identity configuration.
+
+FILES
+    ~/.git-identities/
+        Directory containing identity configuration files.
+
+    ~/.git-identities/<id>.conf
+        Identity configuration file with format:
+            GIT_NAME="Your Name"
+            GIT_EMAIL="your@email.com"
+            SSH_KEY="id_keyname"
+
+EXAMPLES
+    List identities and show current:
+        $ git-id
+
+    Switch to work identity:
+        $ git-id work
+
+    Add a new identity:
+        $ git-id add work "John Doe" john@company.com id_work
+
+    Remove an identity:
+        $ git-id rm work
+
+SETUP NEW SSH KEY
+    1. Generate key:
+        $ ssh-keygen -t ed25519 -f ~/.ssh/id_mykey -C "email@example.com"
+
+    2. Add public key to GitHub:
+        $ cat ~/.ssh/id_mykey.pub
+        Copy output to: GitHub > Settings > SSH Keys > New SSH Key
+
+    3. Register identity:
+        $ git-id add mykey "My Name" email@example.com id_mykey
+
+SEE ALSO
+    git-config(1), ssh-keygen(1)
+
+EOF
+}
+
+show_version() {
+    echo "git-id version $VERSION"
+}
+
+show_current() {
+    local name=$(git config --global user.name)
+    local email=$(git config --global user.email)
+    local key=$(git config --global core.sshCommand | grep -oE 'id_[a-zA-Z0-9]+')
+    echo "Current: $name <$email> [key: $key]"
+}
+
+list_identities() {
+    echo "Available identities:"
+    for f in "$CONFIG_DIR"/*.conf; do
+        [ -f "$f" ] || continue
+        local id=$(basename "$f" .conf)
+        source "$f"
+        echo "  $id: $GIT_NAME <$GIT_EMAIL>"
+    done
+    echo ""
+    show_current
+}
+
+switch_identity() {
+    local id="$1"
+    local conf="$CONFIG_DIR/$id.conf"
+
+    if [ ! -f "$conf" ]; then
+        echo "Error: Identity '$id' not found"
+        echo "Available: $(ls -1 "$CONFIG_DIR"/*.conf 2>/dev/null | xargs -n1 basename | sed 's/.conf$//' | tr '\n' ' ')"
+        return 1
+    fi
+
+    source "$conf"
+
+    git config --global user.name "$GIT_NAME"
+    git config --global user.email "$GIT_EMAIL"
+    git config --global core.sshCommand "ssh -i ~/.ssh/$SSH_KEY"
+
+    echo "Switched to: $GIT_NAME <$GIT_EMAIL> [key: $SSH_KEY]"
+}
+
+add_identity() {
+    local id="$1"
+    local name="$2"
+    local email="$3"
+    local key="$4"
+
+    if [ -z "$id" ] || [ -z "$name" ] || [ -z "$email" ] || [ -z "$key" ]; then
+        echo "Usage: git-id add <id> <name> <email> <ssh_key_name>"
+        echo "Example: git-id add work 'John Doe' john@work.com id_work"
+        return 1
+    fi
+
+    mkdir -p "$CONFIG_DIR"
+    cat > "$CONFIG_DIR/$id.conf" << EOF
+GIT_NAME="$name"
+GIT_EMAIL="$email"
+SSH_KEY="$key"
+EOF
+    echo "Added identity: $id"
+}
+
+remove_identity() {
+    local id="$1"
+    local conf="$CONFIG_DIR/$id.conf"
+
+    if [ -f "$conf" ]; then
+        rm "$conf"
+        echo "Removed identity: $id"
+    else
+        echo "Identity not found: $id"
+    fi
+}
+
+case "$1" in
+    -h|--help)
+        show_help
+        ;;
+    -v|--version)
+        show_version
+        ;;
+    ""|list)
+        list_identities
+        ;;
+    add)
+        add_identity "$2" "$3" "$4" "$5"
+        ;;
+    rm|remove)
+        remove_identity "$2"
+        ;;
+    *)
+        switch_identity "$1"
+        ;;
+esac

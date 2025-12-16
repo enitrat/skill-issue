@@ -1,0 +1,140 @@
+#!/bin/bash
+# skills-sync: Sync skills from this repo to ~/.claude/skills/
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_SKILLS="$SCRIPT_DIR/../skills"
+TARGET_DIR="$HOME/.claude/skills"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+show_help() {
+    cat << 'EOF'
+NAME
+    skills-sync - sync Claude skills from repo to ~/.claude/skills/
+
+SYNOPSIS
+    skills-sync [--dry-run | -n]
+    skills-sync --help | -h
+    skills-sync --version | -v
+
+DESCRIPTION
+    skills-sync copies skills from this repository's skills/ directory
+    to ~/.claude/skills/, making them available to Claude Code.
+
+    Behavior:
+      - Copies all skills from repo to ~/.claude/skills/
+      - Overwrites existing skills on conflict
+      - Preserves other skills already in ~/.claude/skills/
+
+OPTIONS
+    -n, --dry-run
+        Show what would be synced without making changes.
+
+    -h, --help
+        Show this help message.
+
+    -v, --version
+        Show version number.
+
+EXAMPLES
+    Sync skills:
+        $ skills-sync
+
+    Preview changes:
+        $ skills-sync --dry-run
+
+FILES
+    Source: <repo>/skills/
+    Target: ~/.claude/skills/
+
+EOF
+}
+
+show_version() {
+    echo "skills-sync version $VERSION"
+}
+
+sync_skills() {
+    local dry_run="$1"
+
+    # Check source exists
+    if [ ! -d "$REPO_SKILLS" ]; then
+        printf "${RED}Error:${NC} Source directory not found: %s\n" "$REPO_SKILLS"
+        exit 1
+    fi
+
+    # Check if any skills exist
+    if [ -z "$(ls -A "$REPO_SKILLS" 2>/dev/null)" ]; then
+        printf "${YELLOW}Warning:${NC} No skills found in %s\n" "$REPO_SKILLS"
+        exit 0
+    fi
+
+    # Create target if needed
+    if [ "$dry_run" != "true" ]; then
+        mkdir -p "$TARGET_DIR"
+    fi
+
+    printf "${BLUE}Source:${NC} %s\n" "$REPO_SKILLS"
+    printf "${BLUE}Target:${NC} %s\n\n" "$TARGET_DIR"
+
+    if [ "$dry_run" = "true" ]; then
+        printf "${YELLOW}[DRY RUN]${NC} Would sync:\n\n"
+    fi
+
+    local count=0
+    for skill_dir in "$REPO_SKILLS"/*/; do
+        [ -d "$skill_dir" ] || continue
+
+        local skill_name=$(basename "$skill_dir")
+        local target_skill="$TARGET_DIR/$skill_name"
+
+        if [ -d "$target_skill" ]; then
+            local action="overwrite"
+            local color="$YELLOW"
+        else
+            local action="create"
+            local color="$GREEN"
+        fi
+
+        if [ "$dry_run" = "true" ]; then
+            printf "  ${color}%-12s${NC} %s\n" "[$action]" "$skill_name"
+        else
+            cp -r "$skill_dir" "$TARGET_DIR/"
+            printf "  ${color}✓${NC} %-12s %s\n" "[$action]" "$skill_name"
+        fi
+
+        ((count++))
+    done
+
+    echo ""
+    if [ "$dry_run" = "true" ]; then
+        printf "Would sync ${BLUE}%d${NC} skill(s)\n" "$count"
+    else
+        printf "Synced ${GREEN}%d${NC} skill(s)\n" "$count"
+    fi
+}
+
+case "$1" in
+    -h|--help)
+        show_help
+        ;;
+    -v|--version)
+        show_version
+        ;;
+    -n|--dry-run)
+        sync_skills true
+        ;;
+    "")
+        sync_skills false
+        ;;
+    *)
+        echo "Unknown option: $1"
+        echo "Run 'skills-sync --help' for usage"
+        exit 1
+        ;;
+esac

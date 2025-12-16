@@ -1,0 +1,206 @@
+#!/bin/bash
+# dev-check: Verify development environment is properly set up
+
+VERSION="1.0.0"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
+show_help() {
+    cat << 'EOF'
+NAME
+    dev-check - verify development environment setup
+
+SYNOPSIS
+    dev-check [category]
+    dev-check --help | -h
+    dev-check --version | -v
+
+DESCRIPTION
+    dev-check verifies that development tools are properly installed
+    and shows their versions. Useful after a fresh install or to
+    diagnose environment issues.
+
+CATEGORIES
+    all (default)
+        Check all categories
+
+    starknet
+        StarkNet/Cairo tools: scarb, snforge, sncast, starkli
+
+    node
+        Node.js ecosystem: node, npm, bun, pnpm
+
+    rust
+        Rust toolchain: rustc, cargo
+
+    system
+        System tools: git, gh, vim, fzf, zoxide, claude
+
+    python
+        Python tools: uv
+
+    go
+        Go toolchain: go
+
+    cpp
+        C/C++ toolchain: gcc, clang, llvm, cmake
+
+EXAMPLES
+    Check everything:
+        $ dev-check
+
+    Check only StarkNet tools:
+        $ dev-check starknet
+
+EOF
+}
+
+show_version() {
+    echo "dev-check version $VERSION"
+}
+
+check_cmd() {
+    local name="$1"
+    local cmd="$2"
+
+    if command -v "$cmd" &> /dev/null; then
+        local version=$("$cmd" --version 2>&1 | head -1)
+        printf "  ${GREEN}✓${NC} %-12s %s\n" "$name" "$version"
+        return 0
+    else
+        printf "  ${RED}✗${NC} %-12s not found\n" "$name"
+        return 1
+    fi
+}
+
+check_cmd_custom() {
+    local name="$1"
+    local cmd="$2"
+    local version_cmd="$3"
+
+    if command -v "$cmd" &> /dev/null; then
+        local version=$(eval "$version_cmd" 2>&1 | head -1)
+        printf "  ${GREEN}✓${NC} %-12s %s\n" "$name" "$version"
+        return 0
+    else
+        printf "  ${RED}✗${NC} %-12s not found\n" "$name"
+        return 1
+    fi
+}
+
+check_starknet() {
+    echo "StarkNet/Cairo:"
+    check_cmd "scarb" "scarb"
+    check_cmd "snforge" "snforge"
+    check_cmd "sncast" "sncast"
+    check_cmd "starkli" "starkli"
+    echo ""
+}
+
+check_node() {
+    echo "Node.js:"
+    check_cmd "node" "node"
+    check_cmd "npm" "npm"
+    check_cmd "bun" "bun"
+    check_cmd "pnpm" "pnpm"
+    echo ""
+}
+
+check_rust() {
+    echo "Rust:"
+    check_cmd "rustc" "rustc"
+    check_cmd "cargo" "cargo"
+    echo ""
+}
+
+check_system() {
+    echo "System:"
+    check_cmd "git" "git"
+    check_cmd "gh" "gh"
+    check_cmd "vim" "vim"
+    check_cmd "fzf" "fzf"
+    check_cmd_custom "zoxide" "zoxide" "echo zoxide $(zoxide --version)"
+    check_cmd_custom "atuin" "atuin" "atuin --version"
+    check_cmd "claude" "claude"
+    echo ""
+}
+
+check_python() {
+    echo "Python:"
+    check_cmd "uv" "uv"
+    echo ""
+}
+
+check_go() {
+    echo "Go:"
+    check_cmd_custom "go" "go" "go version"
+    echo ""
+}
+
+check_cpp() {
+    echo "C/C++:"
+    check_cmd_custom "clang" "clang" "clang --version | head -1"
+    check_cmd_custom "llvm" "llvm-config" "llvm-config --version"
+    check_cmd "cmake" "cmake"
+    check_cmd "make" "make"
+    echo ""
+}
+
+check_all() {
+    echo ""
+    check_system
+    check_node
+    check_python
+    check_go
+    check_rust
+    check_cpp
+    check_starknet
+}
+
+case "$1" in
+    -h|--help)
+        show_help
+        ;;
+    -v|--version)
+        show_version
+        ;;
+    ""|all)
+        check_all
+        ;;
+    starknet)
+        echo ""
+        check_starknet
+        ;;
+    node)
+        echo ""
+        check_node
+        ;;
+    rust)
+        echo ""
+        check_rust
+        ;;
+    system)
+        echo ""
+        check_system
+        ;;
+    python)
+        echo ""
+        check_python
+        ;;
+    go)
+        echo ""
+        check_go
+        ;;
+    cpp|c++)
+        echo ""
+        check_cpp
+        ;;
+    *)
+        echo "Unknown category: $1"
+        echo "Run 'dev-check --help' for usage"
+        exit 1
+        ;;
+esac
