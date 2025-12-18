@@ -12,6 +12,8 @@ Personal Claude Skills, developer tools, and software configurations.
 skills/              # Claude Skills (synced to ~/.claude/skills/)
   <skill-name>/
     SKILL.md         # Skill definition
+    scripts/         # Python scripts with uv inline dependencies
+    references/      # Reference documentation (optional)
 
 tools/               # Shell scripts and CLI utilities
   <tool-name>        # Executable script (no extension)
@@ -27,9 +29,38 @@ config/
 
 1. Create `skills/<skill-name>/SKILL.md`
 2. Follow the format: YAML frontmatter (`name`, `description`) + markdown body
-3. Run `tools/skills-sync` to deploy to `~/.claude/skills/`
+3. Add `scripts/` directory with Python scripts using uv inline dependencies
+4. Run `tools/skills-sync` to deploy to `~/.claude/skills/`
 
 Reference: https://github.com/anthropics/skills
+
+#### Skill Scripts Pattern
+
+Scripts should use `uv` with inline script dependencies for zero-setup execution:
+
+```python
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "ghapi>=1.0.5",
+#   "typer>=0.9.0",
+#   "rich>=13.0.0",
+# ]
+# ///
+```
+
+Guidelines:
+- Use `typer` for CLI argument parsing
+- Use `rich` for formatted output
+- Prefer wrapping external APIs (GitHub, etc.) over shell commands
+- Include `--raw` flag for JSON output where applicable
+- Make scripts executable: `chmod +x scripts/*.py`
+
+Usage in SKILL.md:
+```bash
+uv run scripts/my_script.py command --option value
+```
 
 ### Tools
 

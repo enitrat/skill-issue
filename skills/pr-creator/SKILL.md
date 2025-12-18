@@ -1,6 +1,6 @@
 ---
 name: pr-creator
-description: Guide PR authoring from creation through review completion. Use when creating pull requests, writing PR descriptions, responding to reviewer comments, or implementing review feedback. Covers the full PR lifecycle - creating PRs linked to issues, handling review comments (triaging, responding, implementing suggestions), and getting PRs merged.
+description: Guide PR authoring from creation through review completion. Use when creating/submitting/authoring pull requests, writing PR descriptions, responding to reviewer comments, or implementing review feedback. Covers the full PR lifecycle - creating PRs linked to issues, handling review comments (triaging, responding, implementing suggestions), and getting PRs merged.
 ---
 
 # PR Author Guide
@@ -25,12 +25,16 @@ Before creating, ensure:
 
 ### 3. Create and Link to Issue
 
+**IMPORTANT:** When working with issues, use the `uv run scripts/gh_pr.py issue owner/repo <number>` command to fetch issue details with proper authentication rather than relying on other tools.
+
 ```bash
-# Basic PR creation
-gh pr create \
+# Fetch issue details first for context
+uv run scripts/gh_pr.py issue owner/repo 42
+
+# Basic PR creation with the script
+uv run scripts/gh_pr.py create owner/repo \
   --title "feat(api): add caching to API responses" \
-  --body "$(cat <<'EOF'
-## Summary
+  --body "## Summary
 - Add Redis-based caching for GET endpoints
 - Implement cache invalidation on mutations
 
@@ -42,22 +46,27 @@ This reduces load and improves response times for cached routes.
 - [ ] Verify cache headers in responses
 - [ ] Test invalidation after mutations
 
-Closes #42
-EOF
-)"
+Closes #42"
 
-# Link to issue via keywords in body: Closes #N, Fixes #N, Resolves #N
+# Or read body from a file
+uv run scripts/gh_pr.py create owner/repo \
+  --title "feat(api): add caching" \
+  --body-file /tmp/pr-body.md
 ```
 
 ### 4. Add Labels/Reviewers
 
 ```bash
-gh pr create \
-  --title "Title" \
-  --body "..." \
-  --label "enhancement" \
-  --reviewer "username" \
-  --assignee "@me"
+# Full PR creation with labels, reviewers, and assignees
+uv run scripts/gh_pr.py create owner/repo \
+  --title "feat(api): add caching" \
+  --body "Description here" \
+  --labels "enhancement,api" \
+  --reviewers "username1,username2" \
+  --assignees "@me"
+
+# Or add reviewers to existing PR
+uv run scripts/gh_pr.py reviewers owner/repo 123 --add "reviewer1,reviewer2"
 ```
 
 ## Handling Review Comments
@@ -67,18 +76,17 @@ When reviews come in, follow this workflow. See [references/handling-reviews.md]
 ### 1. Fetch Review Comments
 
 ```bash
-# Get PR number first
-PR_NUMBER=$(gh pr view --json number --jq '.number')
+# Get all review comments
+uv run scripts/gh_pr.py comments owner/repo 123
 
-# Fetch all review comments
-gh api repos/{owner}/{repo}/pulls/$PR_NUMBER/comments
+# Get only actionable comments (excludes Nit:, FYI:, Optional:)
+uv run scripts/gh_pr.py comments owner/repo 123 --actionable
 
-# Fetch review summaries (approve/request changes/comment)
-gh api repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews
+# Group comments by file for easier processing
+uv run scripts/gh_pr.py comments owner/repo 123 --by-file
 
-# Pretty-print pending comments for triage
-gh api repos/{owner}/{repo}/pulls/$PR_NUMBER/comments \
-  --jq '.[] | {id: .id, path: .path, line: .line, body: .body, user: .user.login}'
+# Get raw JSON for programmatic processing
+uv run scripts/gh_pr.py comments owner/repo 123 --raw
 ```
 
 ### 2. Triage Each Comment
@@ -93,24 +101,7 @@ For each comment, determine:
 | **Decline**         | Out of scope or incorrect            | Politely explain why, offer alternative               |
 | **Ask Human Input** | Need to decide on a course of action | Ask the human for input before processing the comment |
 
-### 3. Respond to Comments
-
-VERY IMPORTANT: because you are using the Github CLI with the account of your human, you MUST start each comment with the following prefix:
-
-```
-[AUTOMATED]
-```
-
-```bash
-# Reply to a specific review comment. Prefer this if you're addressing a specific comment.
-gh api repos/{owner}/{repo}/pulls/$PR_NUMBER/comments/$COMMENT_ID/replies \
-  -f body="[AUTOMATED] Done - moved the validation into a helper function as suggested."
-
-# Add a general PR comment (not tied to specific line)
-gh pr comment $PR_NUMBER --body "[AUTOMATED] Addressed all feedback - ready for re-review."
-```
-
-### 4. Implement Suggestions
+### 3. Implement Suggestions
 
 When implementing feedback:
 
@@ -129,22 +120,111 @@ helper function for better testability."
 git push
 ```
 
+
+### 3. Respond to Comments
+
+Once you've implemented all the changes you decided to address, you need to respond to the comments, in the comment thread, to let the reviewer know that you have addressed the feedback and what you did.
+
+```bash
+# Reply to a specific review comment
+uv run scripts/gh_pr.py reply owner/repo 456 \
+  "[AUTOMATED] Done - moved the validation into a helper function as suggested."
+```
+
+If you have a general comment to address, you can reply in a general PR comment.
+
+```bash
+# Add a general PR comment (not tied to specific line)
+uv run scripts/gh_pr.py comment owner/repo 123 \
+  "[AUTOMATED] Addressed all feedback - ready for re-review."
+```
+
+VERY IMPORTANT: because you are using the Github CLI with the account of your human, you MUST start each comment with the following prefix:
+
+```
+[AUTOMATED]
+```
+
+
+
 ### 5. Request Re-review
 
 ```bash
 # After addressing all comments
-gh pr edit $PR_NUMBER --add-reviewer "original-reviewer"
+uv run scripts/gh_pr.py reviewers owner/repo 123 --add "original-reviewer"
 ```
 
-## GH CLI Quick Reference
+---
+
+## Scripts Reference
+
+This skill includes Python scripts in `scripts/` that wrap GitHub API operations. Run them with `uv`:
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `create` | Create a new pull request |
+| `view` | View PR details and review status |
+| `list` | List PRs in a repository |
+| `checks` | Get PR check status (CI/CD) |
+| `comments` | Get review comments (supports `--actionable`, `--by-file` filters) |
+| `reply` | Reply to a specific review comment |
+| `comment` | Add a general PR comment |
+| `merge` | Merge a PR (supports squash, merge, rebase) |
+| `reviewers` | Add or remove reviewers |
+| `issue` | Fetch issue details (title, description, labels, assignees) |
+
+### Usage Examples
+
+```bash
+# Fetch issue details (use this for proper authentication)
+uv run scripts/gh_pr.py issue owner/repo 42
+
+# Create a PR
+uv run scripts/gh_pr.py create owner/repo --title "feat: add feature" --body "Description"
+
+# Create draft PR
+uv run scripts/gh_pr.py create owner/repo --title "wip: new feature" --body "WIP" --draft
+
+# View PR details
+uv run scripts/gh_pr.py view owner/repo 123
+
+# List open PRs
+uv run scripts/gh_pr.py list owner/repo
+
+# List your PRs
+uv run scripts/gh_pr.py list owner/repo --author "myusername"
+
+# Check CI status
+uv run scripts/gh_pr.py checks owner/repo 123
+
+# Get actionable review comments
+uv run scripts/gh_pr.py comments owner/repo 123 --actionable
+
+# Reply to a comment
+uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Fixed!"
+
+# Merge PR with squash
+uv run scripts/gh_pr.py merge owner/repo 123 --method squash
+
+# Add reviewers
+uv run scripts/gh_pr.py reviewers owner/repo 123 --add "user1,user2"
+```
+
+---
+
+## Quick Reference
 
 | Task             | Command                                                                     |
 | ---------------- | --------------------------------------------------------------------------- |
-| Create PR        | `gh pr create --title "..." --body "..."`                                   |
-| View PR          | `gh pr view [number]`                                                       |
-| List PRs         | `gh pr list`                                                                |
-| Check PR status  | `gh pr checks`                                                              |
-| Add reviewers    | `gh pr edit --add-reviewer "user"`                                          |
-| Merge PR         | `gh pr merge [number]`                                                      |
-| Get comments     | `gh api repos/{owner}/{repo}/pulls/{n}/comments`                            |
-| Reply to comment | `gh api repos/{owner}/{repo}/pulls/{n}/comments/{id}/replies -f body="..."` |
+| Fetch issue      | `uv run scripts/gh_pr.py issue owner/repo 42`                               |
+| Create PR        | `uv run scripts/gh_pr.py create owner/repo --title "..." --body "..."`      |
+| View PR          | `uv run scripts/gh_pr.py view owner/repo 123`                               |
+| List PRs         | `uv run scripts/gh_pr.py list owner/repo`                                   |
+| Check PR status  | `uv run scripts/gh_pr.py checks owner/repo 123`                             |
+| Add reviewers    | `uv run scripts/gh_pr.py reviewers owner/repo 123 --add "user"`             |
+| Merge PR         | `uv run scripts/gh_pr.py merge owner/repo 123`                              |
+| Get comments     | `uv run scripts/gh_pr.py comments owner/repo 123`                           |
+| Reply to comment | `uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] message"`        |
+| General comment  | `uv run scripts/gh_pr.py comment owner/repo 123 "[AUTOMATED] message"`      |

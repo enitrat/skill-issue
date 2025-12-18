@@ -6,6 +6,11 @@ description: Perform thorough, constructive pull request reviews. Use when user 
 # PR Review Skill
 
 This skill provides a structured approach to reviewing pull requests, distilled from Google's engineering practices.
+Keep this in mind: any text comment that you make must be prefixed with the following prefix:
+```
+[AUTOMATED]
+```
+This is important because you are using the Github CLI with the account of your beloved human, and you want to make it clear that the comment is not coming from the human.
 
 ## The Core Standard
 
@@ -28,7 +33,7 @@ When opinions conflict:
 ### Step 1: Assess the Overall Change
 
 Before diving into code:
-- Read the PR description and linked issue
+- Read the PR description and linked issue (use `uv run scripts/gh_pr.py issue owner/repo <number>` to fetch issue details with proper authentication)
 - Does this change make sense? Should it exist?
 - If fundamentally problematic, respond immediately with explanation
 
@@ -186,6 +191,52 @@ Slow reviews cause:
 
 ---
 
+## Scripts Reference
+
+This skill includes Python scripts in `scripts/` that wrap GitHub API operations. Run them with `uv`:
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `files` | Get PR files with status and patch info |
+| `comments` | Get review comments (supports `--unresolved`, `--pending` filters) |
+| `reviews` | List all reviews on a PR |
+| `post` | Post a batched review from JSON file |
+| `reply` | Reply to a specific review comment |
+| `head` | Get the head commit SHA for a PR |
+| `checkout` | Create a worktree to review PR locally |
+| `cleanup` | Remove a PR worktree |
+| `init-review` | Initialize a review JSON file |
+| `issue` | Fetch issue details (title, description, labels, assignees) |
+
+### Usage Examples
+
+```bash
+# Fetch issue details (use this for proper authentication)
+uv run scripts/gh_pr.py issue owner/repo 42
+
+# Get PR files and diff
+uv run scripts/gh_pr.py files owner/repo 123
+
+# Get unresolved review comments
+uv run scripts/gh_pr.py comments owner/repo 123 --unresolved
+
+# Get raw JSON output
+uv run scripts/gh_pr.py comments owner/repo 123 --raw
+
+# List all reviews
+uv run scripts/gh_pr.py reviews owner/repo 123
+
+# Get head commit SHA (for review submission)
+uv run scripts/gh_pr.py head owner/repo 123
+
+# Reply to a comment
+uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Good catch, fixed!"
+```
+
+---
+
 ## Posting the Code Review
 
 ### Workflow Overview
@@ -194,10 +245,22 @@ Reviews are posted in a single batch to avoid spamming notifications. During the
 
 If you are inside the same repository as the PR, you MUST checkout the PR branch, inside a new worktree that will be temporary and deleted after the review, and use local tools to review the code, so as to get full context of the codebase on top of the code diff.
 
-### Transient Feedback File
+### Step 1: Checkout the PR (if in same repo)
 
-Create `/tmp/pr-review-{owner}-{repo}-{pr_number}.json` to accumulate comments:
+```bash
+# Create a temporary worktree for the PR
+WORKTREE_PATH=$(uv run scripts/gh_pr.py checkout owner/repo 123)
+cd "$WORKTREE_PATH"
+```
 
+### Step 2: Initialize Review File
+
+```bash
+# Creates /tmp/pr-review-{owner}-{repo}-{pr}.json with commit SHA
+uv run scripts/gh_pr.py init-review owner/repo 123
+```
+
+This creates a JSON file with the structure:
 ```json
 {
   "owner": "anthropics",
@@ -210,16 +273,16 @@ Create `/tmp/pr-review-{owner}-{repo}-{pr_number}.json` to accumulate comments:
 }
 ```
 
-### Adding Comments During Review
+### Step 3: Add Comments During Review
 
-Append comments to the `comments` array as you review each file. Make sure that you use the correct line number for the comment!
+Edit the JSON file to add comments to the `comments` array as you review each file. Make sure to use the correct line number!
 
 ```json
 {
   "path": "src/utils/parser.ts",
   "line": 42,
   "side": "RIGHT",
-  "body": "Nit: consider extracting this logic into a helper function for readability."
+  "body": "[AUTOMATED] Nit: consider extracting this logic into a helper function for readability."
 }
 ```
 
@@ -229,9 +292,9 @@ Append comments to the `comments` array as you review each file. Make sure that 
 - `side`: `RIGHT` for new/modified code, `LEFT` for deleted code being commented on
 - `body`: The comment text (use severity prefixes: `Nit:`, `Optional:`, `FYI:`)
 
-### Setting the Review Verdict
+### Step 4: Set the Review Verdict
 
-Before posting, update the `event` and `body` fields:
+Before posting, update the `event` and `body` fields in the JSON:
 
 | Verdict | `event` value | When to use |
 |---------|---------------|-------------|
@@ -241,61 +304,39 @@ Before posting, update the `event` and `body` fields:
 
 Set `body` to a summary of the review (required for `REQUEST_CHANGES` and `COMMENT`).
 
-### Fetching Required Context
-
-Before posting, fetch the latest commit SHA:
+### Step 5: Post the Review
 
 ```bash
-# Get PR metadata including head commit
-gh pr view {pr_number} -R {owner}/{repo} --json headRefOid --jq '.headRefOid'
+# Submit the batched review (auto-cleans up JSON file on success)
+uv run scripts/gh_pr.py post owner/repo 123 /tmp/pr-review-owner-repo-123.json
 ```
 
-### Posting the Review
-
-Submit the batched review:
+### Step 6: Cleanup
 
 ```bash
-# Read the transient file and post
-gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews \
-  -f body="$(jq -r '.body' /tmp/pr-review-{owner}-{repo}-{pr}.json)" \
-  -f commit_id="$(jq -r '.commit_id' /tmp/pr-review-{owner}-{repo}-{pr}.json)" \
-  -f event="$(jq -r '.event' /tmp/pr-review-{owner}-{repo}-{pr}.json)" \
-  --input <(jq '{comments: .comments}' /tmp/pr-review-{owner}-{repo}-{pr}.json)
+# Remove the worktree after review
+uv run scripts/gh_pr.py cleanup owner/repo 123
 ```
-
-Alternative using raw JSON input:
-
-```bash
-jq '{body, commit_id, event, comments}' /tmp/pr-review-{owner}-{repo}-{pr}.json | \
-  gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --input -
-```
-
-### After Posting
-
-On successful submission:
-1. Confirm the review was posted (API returns the review object with `id`)
-2. Delete the transient file: `rm /tmp/pr-review-{owner}-{repo}-{pr}.json`
-
-On failure:
-- Keep the transient file for retry
-- Check error message and fix (common issues: invalid `commit_id`, malformed JSON)
 
 ### Replying to Existing Comments
 
-To respond to an existing review thread:
-
 ```bash
-gh api repos/{owner}/{repo}/pulls/comments/{comment_id}/replies \
-  -f body="Response to the discussion"
+# Reply to a specific review comment
+uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Response to the discussion"
 ```
 
-### Quick Reference: API Endpoints
+### Quick Reference: Script Commands
 
-| Action | Endpoint |
-|--------|----------|
-| Get PR files & diff | `GET repos/{owner}/{repo}/pulls/{pr}/files` |
-| Get existing review comments | `GET repos/{owner}/{repo}/pulls/{pr}/comments` |
-| Get PR reviews | `GET repos/{owner}/{repo}/pulls/{pr}/reviews` |
-| Post batched review | `POST repos/{owner}/{repo}/pulls/{pr}/reviews` |
-| Reply to comment | `POST repos/{owner}/{repo}/pulls/comments/{id}/replies` |
-| Get commit SHA | `gh pr view {pr} --json headRefOid` |
+| Action | Command |
+|--------|---------|
+| Fetch issue details | `uv run scripts/gh_pr.py issue owner/repo 42` |
+| Get PR files & diff | `uv run scripts/gh_pr.py files owner/repo 123` |
+| Get existing review comments | `uv run scripts/gh_pr.py comments owner/repo 123` |
+| Get unresolved comments only | `uv run scripts/gh_pr.py comments owner/repo 123 --unresolved` |
+| Get PR reviews | `uv run scripts/gh_pr.py reviews owner/repo 123` |
+| Initialize review file | `uv run scripts/gh_pr.py init-review owner/repo 123` |
+| Post batched review | `uv run scripts/gh_pr.py post owner/repo 123 /path/to/review.json` |
+| Reply to comment | `uv run scripts/gh_pr.py reply owner/repo 456 "message"` |
+| Get commit SHA | `uv run scripts/gh_pr.py head owner/repo 123` |
+| Create worktree | `uv run scripts/gh_pr.py checkout owner/repo 123` |
+| Remove worktree | `uv run scripts/gh_pr.py cleanup owner/repo 123` |
