@@ -104,7 +104,8 @@ sync_skills() {
         if [ "$dry_run" = "true" ]; then
             printf "  ${color}%-12s${NC} %s\n" "[$action]" "$skill_name"
         else
-            cp -r "$skill_dir" "$TARGET_DIR/"
+            # Remove trailing slash to ensure cp creates subdirectory correctly
+            cp -r "${skill_dir%/}" "$TARGET_DIR/"
             printf "  ${color}✓${NC} %-12s %s\n" "[$action]" "$skill_name"
         fi
 
