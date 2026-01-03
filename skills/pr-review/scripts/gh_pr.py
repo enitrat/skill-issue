@@ -36,6 +36,7 @@ import json
 import os
 import subprocess
 import sys
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Optional
 
@@ -74,6 +75,38 @@ def get_api(owner: str, repo: str) -> GhApi:
             console.print("[red]Error: No GitHub token found. Set GITHUB_TOKEN or run 'gh auth login'[/red]")
             raise typer.Exit(1)
     return GhApi(owner=owner, repo=repo, token=token)
+
+
+def extract_pull_number_from_url(url: Optional[str]) -> Optional[int]:
+    """Extract PR number from a GitHub pull request API URL."""
+    if not url:
+        return None
+    path = urlparse(url).path
+    parts = [part for part in path.split("/") if part]
+    if "pulls" in parts:
+        idx = parts.index("pulls")
+        if idx + 1 < len(parts) and parts[idx + 1].isdigit():
+            return int(parts[idx + 1])
+    for part in reversed(parts):
+        if part.isdigit():
+            return int(part)
+    return None
+
+
+def get_pull_number_from_comment(api: GhApi, comment_id: int) -> int:
+    """Fetch PR number for a given review comment."""
+    try:
+        comment = api.pulls.get_review_comment(comment_id)
+    except Exception as e:
+        console.print(f"[red]Error fetching review comment {comment_id}: {e}[/red]")
+        raise typer.Exit(1)
+    pull_number = extract_pull_number_from_url(
+        comment.get("pull_request_url") or comment.get("pull_request_review_url")
+    )
+    if pull_number is None:
+        console.print(f"[red]Error: Could not determine PR number for comment ID {comment_id}[/red]")
+        raise typer.Exit(1)
+    return pull_number
 
 
 def find_review_thread_id(
@@ -329,7 +362,10 @@ def reply(
 
     try:
         # The ghapi library uses pulls.create_reply_for_review_comment
-        result = api.pulls.create_reply_for_review_comment(comment_id, body=body)
+        pull_number = get_pull_number_from_comment(api, comment_id)
+        result = api.pulls.create_reply_for_review_comment(
+            pull_number=pull_number, comment_id=comment_id, body=body
+        )
         console.print(f"[green]Reply posted successfully! Comment ID: {result.get('id')}[/green]")
     except Exception as e:
         console.print(f"[red]Error posting reply: {e}[/red]")
