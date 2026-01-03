@@ -131,6 +131,7 @@ This repo includes custom CLI tools in the `tools/` directory. The zshrc adds th
 |------|-------------|
 | `git-id` | Switch git identity + SSH key with one command |
 | `dev-check` | Verify dev environment is properly set up |
+| `ssh-sync` | Bootstrap remote Linux machines with your dev environment |
 
 ### Manual Setup
 
@@ -174,6 +175,40 @@ ssh-keygen -t ed25519 -f ~/.ssh/id_newkey -C "email@example.com"
 cat ~/.ssh/id_newkey.pub  # Add to GitHub
 git-id add newkey "Name" email@example.com id_newkey
 ```
+
+## Remote Machine Bootstrap
+
+Use `ssh-sync` to bootstrap a fresh Linux machine with your complete dev environment.
+
+### Full bootstrap:
+```bash
+ssh-sync user@server.example.com
+```
+
+### Preview what would happen:
+```bash
+ssh-sync user@server.example.com --dry-run
+```
+
+### Only sync configs (tools already installed):
+```bash
+ssh-sync user@server.example.com --configs-only
+```
+
+### Skip runtime installation:
+```bash
+ssh-sync user@server.example.com --skip-runtimes
+```
+
+### What gets installed:
+- **Shell**: zsh, oh-my-zsh, plugins, powerlevel10k
+- **CLI tools**: bat, eza, fd, ripgrep, delta, fzf, zoxide, atuin
+- **Runtimes**: uv, bun, node, go
+
+### What gets synced:
+- `~/.zshrc`, `~/.p10k.zsh` (from your home)
+- `~/.gitconfig` (sanitized - user identity removed)
+- Claude skills (from this repo)
 
 ## Aliases & Functions Reference
 

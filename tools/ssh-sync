@@ -1,0 +1,1166 @@
+#!/bin/bash
+# ssh-sync: Bootstrap remote Linux machines with your dev environment
+#
+# Transfers dotfiles and runs installation scripts on remote machines via SSH.
+# Uses tar+base64 streaming to avoid rsync/scp dependencies.
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$SCRIPT_DIR/.."
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Default options
+DRY_RUN=false
+TOOLS_ONLY=false
+CONFIGS_ONLY=false
+SKIP_RUNTIMES=false
+SSH_PORT=22
+SSH_IDENTITY=""
+SSH_TARGET=""
+ALLOW_PASSWORD=false
+
+show_help() {
+    cat << 'EOF'
+NAME
+    ssh-sync - bootstrap remote Linux machines with your dev environment
+
+SYNOPSIS
+    ssh-sync <user@host> [options]
+    ssh-sync --help | -h
+    ssh-sync --version | -v
+
+DESCRIPTION
+    ssh-sync bootstraps a fresh Linux machine with your complete development
+    environment, including shell configuration, modern CLI tools, and runtimes.
+
+    It works by:
+    1. Bundling your local dotfiles and skills into a tarball
+    2. Streaming the tarball to the remote machine via SSH
+    3. Extracting and running an embedded setup script
+
+    The setup script detects the remote package manager (apt/dnf/pacman)
+    and installs tools accordingly.
+
+OPTIONS
+    -n, --dry-run
+        Show what would be installed/synced without making changes.
+
+    --tools-only
+        Only install tools, don't sync dotfiles or skills.
+
+    --configs-only
+        Only sync dotfiles and skills, assume tools are installed.
+
+    --skip-runtimes
+        Skip installing language runtimes (uv, bun, node, go).
+
+    -p, --port <port>
+        SSH port (default: 22).
+
+    -i <key>
+        SSH identity file to use.
+
+    --password
+        Allow password authentication (disables BatchMode).
+        Use this if your key requires a passphrase or you use password auth.
+
+    -h, --help
+        Show this help message.
+
+    -v, --version
+        Show version number.
+
+WHAT GETS INSTALLED
+    Shell:
+      - zsh + oh-my-zsh + plugins (autosuggestions, syntax-highlighting)
+      - powerlevel10k theme
+      - fzf, zoxide, atuin
+
+    Modern CLI tools:
+      - bat, eza, fd, ripgrep, delta, gh (GitHub CLI)
+
+    Runtimes (unless --skip-runtimes):
+      - uv (Python), bun (JS/TS), node, go, rust (via rustup)
+
+    Containers:
+      - docker (user added to docker group)
+
+    AI:
+      - Claude Code CLI
+
+WHAT GETS SYNCED
+    From your home directory:
+      - ~/.zshrc (transformed for Linux paths)
+      - ~/.p10k.zsh
+      - ~/.gitconfig (including user identity)
+      - ~/.config/gh/hosts.yml (GitHub auth token)
+
+    From this repo:
+      - skills/ -> ~/.claude/skills/
+
+EXAMPLES
+    Full bootstrap:
+        $ ssh-sync user@server.example.com
+
+    Preview what would happen:
+        $ ssh-sync user@server.example.com --dry-run
+
+    Only sync configs to an already-set-up machine:
+        $ ssh-sync user@server.example.com --configs-only
+
+    Skip runtime installation:
+        $ ssh-sync user@server.example.com --skip-runtimes
+
+    Use custom SSH port and key:
+        $ ssh-sync user@server.example.com -p 2222 -i ~/.ssh/id_custom
+
+NOTES
+    - Requires SSH access to the remote machine
+    - Remote machine must be Linux (apt, dnf, or pacman)
+    - Remote user must have sudo privileges (for package installation)
+    - Your local dotfiles must exist in your home directory
+    - The tool is idempotent - safe to run multiple times
+
+SECURITY
+    - Your GitHub CLI token (~/.config/gh/hosts.yml) is transferred if present.
+      This authenticates 'gh' on the remote machine with your account.
+    - Your .gitconfig (including user.name/email) is transferred.
+    - Tool installation uses curl-to-shell patterns from official sources.
+    - Only run this on machines you trust.
+
+EOF
+}
+
+show_version() {
+    echo "ssh-sync version $VERSION"
+}
+
+log_info() {
+    printf "${BLUE}[INFO]${NC} %s\n" "$1"
+}
+
+log_ok() {
+    printf "${GREEN}[OK]${NC} %s\n" "$1"
+}
+
+log_warn() {
+    printf "${YELLOW}[WARN]${NC} %s\n" "$1"
+}
+
+log_error() {
+    printf "${RED}[ERROR]${NC} %s\n" "$1"
+}
+
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -v|--version)
+                show_version
+                exit 0
+                ;;
+            -n|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --tools-only)
+                TOOLS_ONLY=true
+                shift
+                ;;
+            --configs-only)
+                CONFIGS_ONLY=true
+                shift
+                ;;
+            --skip-runtimes)
+                SKIP_RUNTIMES=true
+                shift
+                ;;
+            --password)
+                ALLOW_PASSWORD=true
+                shift
+                ;;
+            -p|--port)
+                SSH_PORT="$2"
+                shift 2
+                ;;
+            -i)
+                SSH_IDENTITY="$2"
+                shift 2
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                echo "Run 'ssh-sync --help' for usage"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$SSH_TARGET" ]]; then
+                    SSH_TARGET="$1"
+                else
+                    log_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$SSH_TARGET" ]]; then
+        log_error "Missing required argument: user@host"
+        echo "Run 'ssh-sync --help' for usage"
+        exit 1
+    fi
+
+    # Validate target format
+    if [[ ! "$SSH_TARGET" =~ ^[^@]+@[^@]+$ ]]; then
+        log_error "Invalid SSH target format. Expected: user@host"
+        exit 1
+    fi
+}
+
+# Control socket for SSH multiplexing
+CONTROL_SOCKET=""
+
+# Build SSH options string
+get_ssh_opts() {
+    local opts="-o ConnectTimeout=10"
+    if [[ "$ALLOW_PASSWORD" != "true" ]]; then
+        opts="$opts -o BatchMode=yes"
+    fi
+    opts="$opts -p $SSH_PORT"
+    if [[ -n "$SSH_IDENTITY" ]]; then
+        opts="$opts -i $SSH_IDENTITY"
+    fi
+    if [[ -n "$CONTROL_SOCKET" ]]; then
+        opts="$opts -o ControlPath=$CONTROL_SOCKET"
+    fi
+    echo "$opts"
+}
+
+# Start SSH master connection (avoids multiple password prompts)
+start_ssh_master() {
+    CONTROL_SOCKET="/tmp/ssh-sync-$$-$(date +%s)"
+    local ssh_opts="-o ConnectTimeout=10 -p $SSH_PORT"
+    if [[ -n "$SSH_IDENTITY" ]]; then
+        ssh_opts="$ssh_opts -i $SSH_IDENTITY"
+    fi
+
+    log_info "Establishing SSH connection..."
+    ssh $ssh_opts -o ControlMaster=yes -o ControlPath="$CONTROL_SOCKET" -o ControlPersist=300 -fN "$SSH_TARGET"
+
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to establish SSH connection"
+        exit 1
+    fi
+    log_ok "SSH connection established"
+}
+
+# Stop SSH master connection
+stop_ssh_master() {
+    if [[ -n "$CONTROL_SOCKET" ]] && [[ -S "$CONTROL_SOCKET" ]]; then
+        ssh -o ControlPath="$CONTROL_SOCKET" -O exit "$SSH_TARGET" 2>/dev/null || true
+    fi
+}
+
+# Test SSH connection
+test_ssh_connection() {
+    local ssh_opts
+    ssh_opts=$(get_ssh_opts)
+
+    log_info "Testing SSH connection to $SSH_TARGET..."
+
+    if ! ssh $ssh_opts "$SSH_TARGET" "echo 'Connection OK'" 2>/dev/null; then
+        log_error "Cannot connect to $SSH_TARGET"
+        echo "Check: hostname, port ($SSH_PORT), SSH key, network"
+        exit 1
+    fi
+
+    log_ok "SSH connection successful"
+}
+
+# Transform .zshrc for Linux compatibility
+# - Replace Homebrew paths with oh-my-zsh equivalents
+# - Wrap optional sources in existence checks
+# - Remove macOS-specific settings
+transform_zshrc() {
+    local input="$1"
+    sed -E '
+        # Replace Homebrew powerlevel10k path with oh-my-zsh path
+        s|source /opt/homebrew/share/powerlevel10k/powerlevel10k\.zsh-theme|source ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k/powerlevel10k.zsh-theme|g
+        s|source /usr/local/share/powerlevel10k/powerlevel10k\.zsh-theme|source ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k/powerlevel10k.zsh-theme|g
+
+        # Replace Homebrew zsh-autosuggestions
+        s|source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions\.zsh|source ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh|g
+
+        # Replace Homebrew zsh-syntax-highlighting
+        s|source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting\.zsh|source ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh|g
+
+        # Wrap optional tool sources in existence checks
+        # .starkli/env
+        s|^\. .*\.starkli/env.*$|[[ -f "$HOME/.starkli/env" ]] \&\& . "$HOME/.starkli/env"|g
+        s|^source .*\.starkli/env.*$|[[ -f "$HOME/.starkli/env" ]] \&\& source "$HOME/.starkli/env"|g
+
+        # .asdf/asdf.sh
+        s|^\. .*\.asdf/asdf\.sh.*$|[[ -f "$HOME/.asdf/asdf.sh" ]] \&\& . "$HOME/.asdf/asdf.sh"|g
+        s|^source .*\.asdf/asdf\.sh.*$|[[ -f "$HOME/.asdf/asdf.sh" ]] \&\& source "$HOME/.asdf/asdf.sh"|g
+
+        # .cargo/env
+        s|^\. .*\.cargo/env.*$|[[ -f "$HOME/.cargo/env" ]] \&\& . "$HOME/.cargo/env"|g
+        s|^source .*\.cargo/env.*$|[[ -f "$HOME/.cargo/env" ]] \&\& source "$HOME/.cargo/env"|g
+
+        # .nvm/nvm.sh
+        s|^\. .*\.nvm/nvm\.sh.*$|[[ -f "$HOME/.nvm/nvm.sh" ]] \&\& . "$HOME/.nvm/nvm.sh"|g
+        s|^source .*\.nvm/nvm\.sh.*$|[[ -f "$HOME/.nvm/nvm.sh" ]] \&\& source "$HOME/.nvm/nvm.sh"|g
+
+        # Remove macOS-specific PATH entries (keep line but comment out)
+        s|^(export PATH=.*/opt/homebrew.*)$|# macOS: \1|g
+    ' "$input"
+}
+
+# Generate the remote setup script
+generate_setup_script() {
+    local skip_runtimes_flag=""
+    [[ "$SKIP_RUNTIMES" == "true" ]] && skip_runtimes_flag="true"
+
+    cat << 'SETUP_SCRIPT_EOF'
+#!/bin/bash
+# Remote setup script - generated by ssh-sync
+set -e
+
+# Configuration from ssh-sync
+SKIP_RUNTIMES="__SKIP_RUNTIMES__"
+TOOLS_ONLY="__TOOLS_ONLY__"
+CONFIGS_ONLY="__CONFIGS_ONLY__"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+FAILED=()
+
+log_phase() { printf "\n${BLUE}[Phase]${NC} %s\n" "$1"; }
+log_ok()    { printf "  ${GREEN}✓${NC} %-16s %s\n" "$1" "$2"; }
+log_fail()  { printf "  ${RED}✗${NC} %-16s %s\n" "$1" "$2"; FAILED+=("$1"); }
+log_skip()  { printf "  ${YELLOW}○${NC} %-16s %s\n" "$1" "$2"; }
+log_info()  { printf "  ${CYAN}→${NC} %s\n" "$1"; }
+
+# Detect package manager
+detect_pkg_manager() {
+    if command -v apt-get &>/dev/null; then
+        echo "apt"
+    elif command -v dnf &>/dev/null; then
+        echo "dnf"
+    elif command -v pacman &>/dev/null; then
+        echo "pacman"
+    else
+        echo "unknown"
+    fi
+}
+
+PKG_MGR=$(detect_pkg_manager)
+
+# Package install wrapper
+pkg_install() {
+    case $PKG_MGR in
+        apt) sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" >/dev/null 2>&1 ;;
+        dnf) sudo dnf install -y "$@" >/dev/null 2>&1 ;;
+        pacman) sudo pacman -S --noconfirm "$@" >/dev/null 2>&1 ;;
+    esac
+}
+
+# Update package lists
+pkg_update() {
+    log_info "Updating package lists..."
+    case $PKG_MGR in
+        apt) sudo apt-get update >/dev/null 2>&1 ;;
+        dnf) sudo dnf check-update >/dev/null 2>&1 || true ;;
+        pacman) sudo pacman -Sy >/dev/null 2>&1 ;;
+    esac
+}
+
+# Install system dependencies
+install_system_deps() {
+    log_phase "Installing system dependencies..."
+
+    local deps
+    case $PKG_MGR in
+        apt) deps="git curl zsh build-essential unzip" ;;
+        dnf) deps="git curl zsh @development-tools unzip" ;;
+        pacman) deps="git curl zsh base-devel unzip" ;;
+    esac
+
+    for dep in $deps; do
+        if pkg_install "$dep"; then
+            log_ok "$dep" "installed"
+        else
+            log_fail "$dep" "failed"
+        fi
+    done
+}
+
+# Install oh-my-zsh
+install_ohmyzsh() {
+    log_phase "Installing oh-my-zsh..."
+
+    if [ -d "$HOME/.oh-my-zsh" ]; then
+        log_skip "oh-my-zsh" "already installed"
+    else
+        if sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended >/dev/null 2>&1; then
+            log_ok "oh-my-zsh" "installed"
+        else
+            log_fail "oh-my-zsh" "failed"
+            return 1
+        fi
+    fi
+}
+
+# Install zsh plugins
+install_zsh_plugins() {
+    log_phase "Installing zsh plugins..."
+
+    local ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+
+    # Autosuggestions
+    if [ -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
+        log_skip "autosuggestions" "already installed"
+    elif git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions" >/dev/null 2>&1; then
+        log_ok "autosuggestions" "installed"
+    else
+        log_fail "autosuggestions" "failed"
+    fi
+
+    # Syntax highlighting
+    if [ -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
+        log_skip "syntax-highlight" "already installed"
+    elif git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" >/dev/null 2>&1; then
+        log_ok "syntax-highlight" "installed"
+    else
+        log_fail "syntax-highlight" "failed"
+    fi
+
+    # History substring search
+    if [ -d "$ZSH_CUSTOM/plugins/zsh-history-substring-search" ]; then
+        log_skip "hist-search" "already installed"
+    elif git clone --depth=1 https://github.com/zsh-users/zsh-history-substring-search "$ZSH_CUSTOM/plugins/zsh-history-substring-search" >/dev/null 2>&1; then
+        log_ok "hist-search" "installed"
+    else
+        log_fail "hist-search" "failed"
+    fi
+}
+
+# Install powerlevel10k
+install_powerlevel10k() {
+    log_phase "Installing powerlevel10k..."
+
+    local P10K_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"
+
+    if [ -d "$P10K_DIR" ]; then
+        log_skip "powerlevel10k" "already installed"
+    elif git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR" >/dev/null 2>&1; then
+        log_ok "powerlevel10k" "installed"
+    else
+        log_fail "powerlevel10k" "failed"
+    fi
+}
+
+# Install shell enhancements (fzf, zoxide, atuin)
+install_shell_enhancements() {
+    log_phase "Installing shell enhancements..."
+
+    # fzf
+    if command -v fzf &>/dev/null; then
+        log_skip "fzf" "already installed"
+    elif git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf >/dev/null 2>&1 && ~/.fzf/install --all --no-bash --no-fish >/dev/null 2>&1; then
+        log_ok "fzf" "installed"
+    else
+        log_fail "fzf" "failed"
+    fi
+
+    # zoxide
+    if command -v zoxide &>/dev/null; then
+        log_skip "zoxide" "already installed"
+    elif curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash >/dev/null 2>&1; then
+        log_ok "zoxide" "installed"
+    else
+        log_fail "zoxide" "failed"
+    fi
+
+    # atuin
+    if command -v atuin &>/dev/null; then
+        log_skip "atuin" "already installed"
+    elif curl -sSL https://setup.atuin.sh | bash >/dev/null 2>&1; then
+        log_ok "atuin" "installed"
+    else
+        log_fail "atuin" "failed"
+    fi
+}
+
+# Install modern CLI tools
+install_modern_cli() {
+    log_phase "Installing modern CLI tools..."
+
+    # bat
+    if command -v bat &>/dev/null || command -v batcat &>/dev/null; then
+        log_skip "bat" "already installed"
+    elif pkg_install bat; then
+        # Create symlink for apt (batcat -> bat)
+        if [ "$PKG_MGR" = "apt" ] && command -v batcat &>/dev/null && ! command -v bat &>/dev/null; then
+            mkdir -p ~/.local/bin
+            ln -sf "$(which batcat)" ~/.local/bin/bat
+        fi
+        log_ok "bat" "installed"
+    else
+        log_fail "bat" "failed"
+    fi
+
+    # fd
+    if command -v fd &>/dev/null || command -v fdfind &>/dev/null; then
+        log_skip "fd" "already installed"
+    else
+        local fd_pkg
+        case $PKG_MGR in
+            apt) fd_pkg="fd-find" ;;
+            *) fd_pkg="fd" ;;
+        esac
+        if pkg_install "$fd_pkg"; then
+            # Create symlink for apt (fdfind -> fd)
+            if [ "$PKG_MGR" = "apt" ] && command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
+                mkdir -p ~/.local/bin
+                ln -sf "$(which fdfind)" ~/.local/bin/fd
+            fi
+            log_ok "fd" "installed"
+        else
+            log_fail "fd" "failed"
+        fi
+    fi
+
+    # ripgrep
+    if command -v rg &>/dev/null; then
+        log_skip "ripgrep" "already installed"
+    elif pkg_install ripgrep; then
+        log_ok "ripgrep" "installed"
+    else
+        log_fail "ripgrep" "failed"
+    fi
+
+    # eza (apt doesn't have it, need GitHub release)
+    if command -v eza &>/dev/null; then
+        log_skip "eza" "already installed"
+    elif [ "$PKG_MGR" = "apt" ]; then
+        # Install from GitHub releases for apt
+        if install_eza_from_github; then
+            log_ok "eza" "installed"
+        else
+            log_fail "eza" "failed"
+        fi
+    elif pkg_install eza; then
+        log_ok "eza" "installed"
+    else
+        log_fail "eza" "failed"
+    fi
+
+    # delta
+    if command -v delta &>/dev/null; then
+        log_skip "delta" "already installed"
+    else
+        local delta_pkg
+        case $PKG_MGR in
+            apt) delta_pkg="" ;;  # Not in apt, install via cargo or GitHub
+            dnf) delta_pkg="git-delta" ;;
+            pacman) delta_pkg="git-delta" ;;
+        esac
+        if [ -n "$delta_pkg" ] && pkg_install "$delta_pkg"; then
+            log_ok "delta" "installed"
+        elif [ "$PKG_MGR" = "apt" ]; then
+            if install_delta_from_github; then
+                log_ok "delta" "installed"
+            else
+                log_fail "delta" "failed"
+            fi
+        else
+            log_fail "delta" "failed"
+        fi
+    fi
+}
+
+# Install eza from GitHub releases (for apt)
+install_eza_from_github() {
+    local arch
+    case "$(uname -m)" in
+        x86_64) arch="x86_64" ;;
+        aarch64) arch="aarch64" ;;
+        *) return 1 ;;
+    esac
+
+    local url="https://github.com/eza-community/eza/releases/latest/download/eza_${arch}-unknown-linux-gnu.tar.gz"
+    mkdir -p ~/.local/bin
+
+    if curl -sL "$url" | tar xz -C ~/.local/bin 2>/dev/null; then
+        chmod +x ~/.local/bin/eza
+        return 0
+    fi
+    return 1
+}
+
+# Install delta from GitHub releases (for apt)
+install_delta_from_github() {
+    local arch
+    case "$(uname -m)" in
+        x86_64) arch="x86_64" ;;
+        aarch64) arch="aarch64" ;;
+        *) return 1 ;;
+    esac
+
+    # Fetch latest version tag
+    local version
+    version=$(curl -sI https://github.com/dandavison/delta/releases/latest | grep -i location | sed 's/.*tag\/\([^[:space:]]*\).*/\1/' | tr -d '\r')
+    local url="https://github.com/dandavison/delta/releases/download/${version}/delta-${version#v}-${arch}-unknown-linux-gnu.tar.gz"
+    mkdir -p ~/.local/bin
+
+    local tmpdir=$(mktemp -d)
+    if curl -sL "$url" | tar xz -C "$tmpdir" 2>/dev/null; then
+        mv "$tmpdir"/delta-*/delta ~/.local/bin/
+        chmod +x ~/.local/bin/delta
+        rm -rf "$tmpdir"
+        return 0
+    fi
+    rm -rf "$tmpdir"
+    return 1
+}
+
+# Install runtimes
+install_runtimes() {
+    if [ "$SKIP_RUNTIMES" = "true" ]; then
+        log_phase "Skipping runtimes (--skip-runtimes)"
+        return 0
+    fi
+
+    log_phase "Installing runtimes..."
+
+    # uv (Python)
+    if command -v uv &>/dev/null; then
+        log_skip "uv" "already installed"
+    elif curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1; then
+        log_ok "uv" "installed"
+    else
+        log_fail "uv" "failed"
+    fi
+
+    # bun
+    if command -v bun &>/dev/null; then
+        log_skip "bun" "already installed"
+    elif curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1; then
+        log_ok "bun" "installed"
+    else
+        log_fail "bun" "failed"
+    fi
+
+    # node (via NodeSource for apt, package manager for others)
+    if command -v node &>/dev/null; then
+        log_skip "node" "already installed"
+    else
+        case $PKG_MGR in
+            apt)
+                if curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - >/dev/null 2>&1 && pkg_install nodejs; then
+                    log_ok "node" "installed"
+                else
+                    log_fail "node" "failed"
+                fi
+                ;;
+            dnf)
+                if pkg_install nodejs; then
+                    log_ok "node" "installed"
+                else
+                    log_fail "node" "failed"
+                fi
+                ;;
+            pacman)
+                if pkg_install nodejs npm; then
+                    log_ok "node" "installed"
+                else
+                    log_fail "node" "failed"
+                fi
+                ;;
+        esac
+    fi
+
+    # go
+    if command -v go &>/dev/null; then
+        log_skip "go" "already installed"
+    else
+        local GO_VERSION="1.22.0"
+        local arch
+        case "$(uname -m)" in
+            x86_64) arch="amd64" ;;
+            aarch64) arch="arm64" ;;
+            *) arch="amd64" ;;
+        esac
+
+        if curl -sLO "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" && \
+           sudo tar -C /usr/local -xzf "go${GO_VERSION}.linux-${arch}.tar.gz" && \
+           rm "go${GO_VERSION}.linux-${arch}.tar.gz"; then
+            log_ok "go" "installed (${GO_VERSION})"
+        else
+            log_fail "go" "failed"
+        fi
+    fi
+
+    # rust (via rustup)
+    if command -v rustc &>/dev/null; then
+        log_skip "rust" "already installed"
+    elif curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y >/dev/null 2>&1; then
+        log_ok "rust" "installed"
+    else
+        log_fail "rust" "failed"
+    fi
+}
+
+# Install GitHub CLI
+install_gh_cli() {
+    log_phase "Installing GitHub CLI..."
+
+    if command -v gh &>/dev/null; then
+        log_skip "gh" "already installed"
+    else
+        case $PKG_MGR in
+            apt)
+                # Add GitHub CLI repo
+                if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null 2>&1 && \
+                   sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+                   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && \
+                   sudo apt-get update >/dev/null 2>&1 && \
+                   pkg_install gh; then
+                    log_ok "gh" "installed (run 'gh auth login')"
+                else
+                    log_fail "gh" "failed"
+                fi
+                ;;
+            dnf)
+                if sudo dnf install -y 'dnf-command(config-manager)' >/dev/null 2>&1 && \
+                   sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 && \
+                   pkg_install gh; then
+                    log_ok "gh" "installed (run 'gh auth login')"
+                else
+                    log_fail "gh" "failed"
+                fi
+                ;;
+            pacman)
+                if pkg_install github-cli; then
+                    log_ok "gh" "installed (run 'gh auth login')"
+                else
+                    log_fail "gh" "failed"
+                fi
+                ;;
+        esac
+    fi
+}
+
+# Install Docker
+install_docker() {
+    log_phase "Installing Docker..."
+
+    if command -v docker &>/dev/null; then
+        log_skip "docker" "already installed"
+    elif curl -fsSL https://get.docker.com | sudo sh >/dev/null 2>&1; then
+        # Add current user to docker group
+        sudo usermod -aG docker "$USER" 2>/dev/null || true
+        log_ok "docker" "installed (re-login for group)"
+    else
+        log_fail "docker" "failed"
+    fi
+}
+
+# Install Claude Code
+install_claude_code() {
+    log_phase "Installing Claude Code..."
+
+    if command -v claude &>/dev/null; then
+        log_skip "claude" "already installed"
+    elif curl -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1; then
+        log_ok "claude" "installed"
+    else
+        log_fail "claude" "failed"
+    fi
+}
+
+# Sync dotfiles
+sync_dotfiles() {
+    log_phase "Syncing dotfiles..."
+
+    # .zshrc
+    if [ -f dotfiles/.zshrc ]; then
+        if [ -f ~/.zshrc ]; then
+            cp ~/.zshrc ~/.zshrc.backup.$(date +%Y%m%d%H%M%S)
+            log_info "Backed up existing .zshrc"
+        fi
+        cp dotfiles/.zshrc ~/.zshrc
+        log_ok ".zshrc" "synced"
+    else
+        log_skip ".zshrc" "not provided"
+    fi
+
+    # .p10k.zsh
+    if [ -f dotfiles/.p10k.zsh ]; then
+        cp dotfiles/.p10k.zsh ~/.p10k.zsh
+        log_ok ".p10k.zsh" "synced"
+    else
+        log_skip ".p10k.zsh" "not provided"
+    fi
+
+    # .gitconfig (full config including user identity)
+    if [ -f dotfiles/.gitconfig ]; then
+        if [ -f ~/.gitconfig ]; then
+            cp ~/.gitconfig ~/.gitconfig.backup.$(date +%Y%m%d%H%M%S)
+            log_info "Backed up existing .gitconfig"
+        fi
+        cp dotfiles/.gitconfig ~/.gitconfig
+        log_ok ".gitconfig" "synced"
+    else
+        log_skip ".gitconfig" "not provided"
+    fi
+
+    # gh CLI config (GitHub auth token)
+    if [ -f dotfiles/gh/hosts.yml ]; then
+        mkdir -p ~/.config/gh
+        cp dotfiles/gh/hosts.yml ~/.config/gh/hosts.yml
+        chmod 600 ~/.config/gh/hosts.yml
+        log_ok "gh auth" "synced (authenticated)"
+    else
+        log_skip "gh auth" "not provided"
+    fi
+}
+
+# Append tool initializations to .zshrc
+# This ensures tools installed by ssh-sync are properly configured
+finalize_zshrc() {
+    log_phase "Finalizing shell config..."
+
+    local zshrc="$HOME/.zshrc"
+    [ ! -f "$zshrc" ] && return
+
+    local marker="# >>> ssh-sync tools >>>"
+
+    # Skip if already finalized
+    if grep -q "$marker" "$zshrc" 2>/dev/null; then
+        log_skip "shell config" "already finalized"
+        return
+    fi
+
+    cat >> "$zshrc" << 'ZSHRC_APPEND'
+
+# >>> ssh-sync tools >>>
+# Added by ssh-sync - do not edit manually
+
+# Ensure ~/.local/bin is in PATH
+[[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+
+# fzf
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+
+# zoxide (smart cd)
+command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
+
+# atuin (shell history)
+command -v atuin &>/dev/null && eval "$(atuin init zsh --disable-up-arrow)"
+
+# cargo/rust
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+
+# <<< ssh-sync tools <<<
+ZSHRC_APPEND
+
+    log_ok "shell config" "tool initializations added"
+}
+
+# Sync Claude skills
+sync_skills() {
+    log_phase "Syncing Claude skills..."
+
+    if [ -d skills ] && [ "$(ls -A skills 2>/dev/null)" ]; then
+        mkdir -p ~/.claude/skills
+        cp -r skills/* ~/.claude/skills/
+        local count=$(ls -1d skills/*/ 2>/dev/null | wc -l)
+        log_ok "skills" "${count} skill(s) synced"
+    else
+        log_skip "skills" "none provided"
+    fi
+}
+
+# Ensure ~/.local/bin is in PATH
+setup_local_bin() {
+    mkdir -p ~/.local/bin
+    # Add to path for current session
+    export PATH="$HOME/.local/bin:$PATH"
+}
+
+# Change default shell to zsh
+set_default_shell() {
+    log_phase "Setting default shell..."
+
+    local zsh_path
+    zsh_path=$(which zsh)
+
+    if [ "$SHELL" = "$zsh_path" ]; then
+        log_skip "default shell" "already zsh"
+    elif grep -q "$zsh_path" /etc/shells; then
+        # Use sudo to avoid interactive password prompt
+        if sudo chsh -s "$zsh_path" "$USER" 2>/dev/null; then
+            log_ok "default shell" "changed to zsh"
+        else
+            log_fail "default shell" "failed (run 'chsh -s $zsh_path' manually)"
+        fi
+    else
+        # Add zsh to /etc/shells first, then change shell
+        if sudo sh -c "echo '$zsh_path' >> /etc/shells" && sudo chsh -s "$zsh_path" "$USER" 2>/dev/null; then
+            log_ok "default shell" "changed to zsh"
+        else
+            log_fail "default shell" "failed (zsh not in /etc/shells)"
+        fi
+    fi
+}
+
+# Print summary
+print_summary() {
+    printf "\n${BLUE}════════════════════════════════════════════════════════${NC}\n"
+
+    if [ ${#FAILED[@]} -eq 0 ]; then
+        printf "${GREEN}${BOLD}Setup complete!${NC}\n"
+    else
+        printf "${YELLOW}${BOLD}Setup complete with some failures${NC}\n"
+        printf "\n${YELLOW}Failed:${NC}\n"
+        for f in "${FAILED[@]}"; do
+            printf "  - %s\n" "$f"
+        done
+    fi
+
+    printf "\n${CYAN}Next steps:${NC}\n"
+    printf "  1. Log out and back in (or run 'exec zsh') to use new shell\n"
+    printf "  2. Run 'p10k configure' if prompt looks wrong\n"
+    printf "\n"
+}
+
+# Main
+main() {
+    printf "${BLUE}${BOLD}SSH Environment Sync${NC}\n"
+    printf "Package manager: ${CYAN}%s${NC}\n" "$PKG_MGR"
+
+    if [ "$PKG_MGR" = "unknown" ]; then
+        printf "${RED}Error: No supported package manager found (apt/dnf/pacman)${NC}\n"
+        exit 1
+    fi
+
+    setup_local_bin
+
+    if [ "$CONFIGS_ONLY" != "true" ]; then
+        pkg_update
+        install_system_deps
+        install_ohmyzsh
+        install_zsh_plugins
+        install_powerlevel10k
+        install_shell_enhancements
+        install_modern_cli
+        install_runtimes
+        install_gh_cli
+        install_docker
+        install_claude_code
+    fi
+
+    if [ "$TOOLS_ONLY" != "true" ]; then
+        sync_dotfiles
+        finalize_zshrc
+        sync_skills
+    fi
+
+    if [ "$CONFIGS_ONLY" != "true" ]; then
+        set_default_shell
+    fi
+
+    print_summary
+}
+
+main "$@"
+SETUP_SCRIPT_EOF
+}
+
+# Create the payload tarball
+# NOTE: All log output must go to stderr so only tarball goes to stdout
+create_payload() {
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    log_info "Preparing payload..." >&2
+
+    # Create directories
+    mkdir -p "$tmpdir/dotfiles"
+    mkdir -p "$tmpdir/skills"
+
+    # Copy dotfiles from home directory
+    local files_found=0
+
+    if [[ -f "$HOME/.zshrc" ]]; then
+        transform_zshrc "$HOME/.zshrc" > "$tmpdir/dotfiles/.zshrc"
+        ((files_found++))
+    else
+        log_warn "~/.zshrc not found, skipping" >&2
+    fi
+
+    if [[ -f "$HOME/.p10k.zsh" ]]; then
+        cp "$HOME/.p10k.zsh" "$tmpdir/dotfiles/.p10k.zsh"
+        ((files_found++))
+    else
+        log_warn "~/.p10k.zsh not found, skipping" >&2
+    fi
+
+    if [[ -f "$HOME/.gitconfig" ]]; then
+        cp "$HOME/.gitconfig" "$tmpdir/dotfiles/.gitconfig"
+        ((files_found++))
+    else
+        log_warn "~/.gitconfig not found, skipping" >&2
+    fi
+
+    # Copy gh CLI config (GitHub auth)
+    if [[ -f "$HOME/.config/gh/hosts.yml" ]]; then
+        mkdir -p "$tmpdir/dotfiles/gh"
+        cp "$HOME/.config/gh/hosts.yml" "$tmpdir/dotfiles/gh/hosts.yml"
+        ((files_found++))
+        log_ok "gh auth bundled" >&2
+    fi
+
+    # Copy skills from repo
+    if [[ -d "$REPO_DIR/skills" ]] && [[ -n "$(ls -A "$REPO_DIR/skills" 2>/dev/null)" ]]; then
+        cp -r "$REPO_DIR/skills"/* "$tmpdir/skills/" 2>/dev/null || true
+        log_ok "Skills bundled: $(ls -1d "$REPO_DIR/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')" >&2
+    else
+        log_warn "No skills found in $REPO_DIR/skills" >&2
+    fi
+
+    # Generate setup script with configuration
+    local setup_script
+    setup_script=$(generate_setup_script)
+    setup_script="${setup_script//__SKIP_RUNTIMES__/$SKIP_RUNTIMES}"
+    setup_script="${setup_script//__TOOLS_ONLY__/$TOOLS_ONLY}"
+    setup_script="${setup_script//__CONFIGS_ONLY__/$CONFIGS_ONLY}"
+    echo "$setup_script" > "$tmpdir/_setup.sh"
+    chmod +x "$tmpdir/_setup.sh"
+
+    # Create tarball and output to stdout
+    # COPYFILE_DISABLE prevents macOS from including extended attributes
+    COPYFILE_DISABLE=1 tar -czf - -C "$tmpdir" .
+
+    # Cleanup
+    rm -rf "$tmpdir"
+}
+
+# Show what would be transferred (dry-run)
+show_dry_run() {
+    printf "\n${YELLOW}[DRY RUN]${NC} Would transfer and install:\n\n"
+
+    printf "${BOLD}Dotfiles to sync:${NC}\n"
+    [[ -f "$HOME/.zshrc" ]] && printf "  • ~/.zshrc\n" || printf "  ${YELLOW}○${NC} ~/.zshrc (not found)\n"
+    [[ -f "$HOME/.p10k.zsh" ]] && printf "  • ~/.p10k.zsh\n" || printf "  ${YELLOW}○${NC} ~/.p10k.zsh (not found)\n"
+    [[ -f "$HOME/.gitconfig" ]] && printf "  • ~/.gitconfig\n" || printf "  ${YELLOW}○${NC} ~/.gitconfig (not found)\n"
+    [[ -f "$HOME/.config/gh/hosts.yml" ]] && printf "  • ~/.config/gh/hosts.yml (GitHub auth)\n" || printf "  ${YELLOW}○${NC} ~/.config/gh/hosts.yml (not found - run 'gh auth login' locally first)\n"
+
+    printf "\n${BOLD}Skills to sync:${NC}\n"
+    if [[ -d "$REPO_DIR/skills" ]]; then
+        for skill in "$REPO_DIR/skills"/*/; do
+            [[ -d "$skill" ]] && printf "  • %s\n" "$(basename "$skill")"
+        done
+    else
+        printf "  ${YELLOW}○${NC} No skills found\n"
+    fi
+
+    if [[ "$TOOLS_ONLY" != "true" && "$CONFIGS_ONLY" != "true" ]]; then
+        printf "\n${BOLD}Tools to install:${NC}\n"
+        printf "  Shell:    zsh, oh-my-zsh, powerlevel10k, plugins\n"
+        printf "  CLI:      bat, eza, fd, ripgrep, delta, gh\n"
+        printf "  Utils:    fzf, zoxide, atuin\n"
+        if [[ "$SKIP_RUNTIMES" != "true" ]]; then
+            printf "  Runtimes: uv, bun, node, go, rust\n"
+        else
+            printf "  Runtimes: ${YELLOW}skipped${NC}\n"
+        fi
+        printf "  Docker:   docker engine + user group\n"
+        printf "  AI:       Claude Code CLI\n"
+    elif [[ "$TOOLS_ONLY" == "true" ]]; then
+        printf "\n${BOLD}Mode:${NC} Tools only (no configs)\n"
+    elif [[ "$CONFIGS_ONLY" == "true" ]]; then
+        printf "\n${BOLD}Mode:${NC} Configs only (no tools)\n"
+    fi
+
+    printf "\n"
+}
+
+# Transfer and execute on remote
+transfer_and_execute() {
+    local ssh_opts
+    ssh_opts=$(get_ssh_opts)
+
+    printf "\n${BLUE}Transferring to ${NC}${BOLD}%s${NC}${BLUE}...${NC}\n" "$SSH_TARGET"
+
+    # Create payload locally first
+    local payload_file
+    payload_file=$(mktemp)
+    create_payload > "$payload_file"
+
+    # Transfer the tarball directly via stdin (no base64 needed)
+    ssh $ssh_opts "$SSH_TARGET" '
+        set -e
+        cd ~
+        rm -rf .ssh-sync-tmp 2>/dev/null || true
+        mkdir -p .ssh-sync-tmp
+        cd .ssh-sync-tmp
+        tar xzf -
+        chmod +x _setup.sh
+        ./_setup.sh
+        cd ~
+        rm -rf .ssh-sync-tmp
+    ' < "$payload_file"
+
+    rm -f "$payload_file"
+}
+
+# Cleanup on exit
+cleanup() {
+    stop_ssh_master
+}
+
+# Main entry point
+main() {
+    parse_args "$@"
+
+    printf "\n${BOLD}${BLUE}ssh-sync${NC} v%s\n" "$VERSION"
+    printf "Target: ${CYAN}%s${NC}\n" "$SSH_TARGET"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        show_dry_run
+        exit 0
+    fi
+
+    # Set up cleanup trap
+    trap cleanup EXIT
+
+    # Establish master connection (single password prompt)
+    start_ssh_master
+
+    transfer_and_execute
+
+    printf "${GREEN}Done!${NC}\n"
+}
+
+main "$@"
