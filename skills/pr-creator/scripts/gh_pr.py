@@ -20,6 +20,7 @@ Commands:
     checks      Get PR check status
     comments    Get review comments on a PR
     reply       Reply to a review comment
+    resolve     Resolve or unresolve a review thread
     merge       Merge a PR
     reviewers   Add reviewers to a PR
 
@@ -28,6 +29,7 @@ Examples:
     uv run gh_pr.py view owner/repo 123
     uv run gh_pr.py comments owner/repo 123 --actionable
     uv run gh_pr.py reply owner/repo 456 "[AUTOMATED] Done"
+    uv run gh_pr.py resolve owner/repo 123 --comment-id 456
 """
 
 import json
@@ -73,6 +75,65 @@ def get_api(owner: str, repo: str) -> GhApi:
             console.print("[red]Error: No GitHub token found. Set GITHUB_TOKEN or run 'gh auth login'[/red]")
             raise typer.Exit(1)
     return GhApi(owner=owner, repo=repo, token=token)
+
+
+def find_review_thread_id(
+    api: GhApi,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    comment_id: int,
+) -> tuple[Optional[str], Optional[bool]]:
+    """Find the GraphQL review thread ID for a given review comment database ID."""
+    query = """
+    query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $after) {
+            nodes {
+              id
+              isResolved
+              comments(first: 50) {
+                nodes {
+                  databaseId
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+    """
+
+    after: Optional[str] = None
+    while True:
+        data = api.graphql(query, owner=owner, repo=repo, number=pr_number, after=after)
+        threads = (
+            data.get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+            .get("nodes", [])
+        )
+        for thread in threads:
+            comments = thread.get("comments", {}).get("nodes", [])
+            for comment in comments:
+                if comment.get("databaseId") == comment_id:
+                    return thread.get("id"), thread.get("isResolved")
+        page_info = (
+            data.get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+            .get("pageInfo", {})
+        )
+        if not page_info.get("hasNextPage"):
+            break
+        after = page_info.get("endCursor")
+
+    return None, None
 
 
 def get_current_branch() -> str:
@@ -368,6 +429,62 @@ def reply(
         console.print(f"[green]Reply posted successfully! Comment ID: {result.get('id')}[/green]")
     except Exception as e:
         console.print(f"[red]Error posting reply: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def resolve(
+    repo: str = typer.Argument(..., help="Repository in owner/repo format"),
+    pr_number: int = typer.Argument(..., help="Pull request number"),
+    comment_id: Optional[int] = typer.Option(None, "--comment-id", "-c", help="Review comment ID to resolve"),
+    thread_id: Optional[str] = typer.Option(None, "--thread-id", "-t", help="Review thread node ID (GraphQL ID)"),
+    unresolve: bool = typer.Option(False, "--unresolve", help="Mark the thread as unresolved"),
+):
+    """Resolve or unresolve a review thread."""
+    owner, repo_name = parse_repo(repo)
+    api = get_api(owner, repo_name)
+
+    if (comment_id is None and thread_id is None) or (comment_id is not None and thread_id is not None):
+        console.print("[red]Error: Provide exactly one of --comment-id or --thread-id[/red]")
+        raise typer.Exit(1)
+
+    is_resolved: Optional[bool] = None
+    if comment_id is not None:
+        thread_id, is_resolved = find_review_thread_id(api, owner, repo_name, pr_number, comment_id)
+        if not thread_id:
+            console.print(f"[red]Error: Could not find a review thread for comment ID {comment_id}[/red]")
+            raise typer.Exit(1)
+
+    if is_resolved is not None:
+        if is_resolved and not unresolve:
+            console.print("[yellow]Thread is already resolved[/yellow]")
+            return
+        if not is_resolved and unresolve:
+            console.print("[yellow]Thread is already unresolved[/yellow]")
+            return
+
+    mutation_name = "unresolveReviewThread" if unresolve else "resolveReviewThread"
+    mutation = f"""
+    mutation($threadId: ID!) {{
+      {mutation_name}(input: {{threadId: $threadId}}) {{
+        thread {{
+          id
+          isResolved
+        }}
+      }}
+    }}
+    """
+
+    try:
+        result = api.graphql(mutation, threadId=thread_id)
+        payload = result.get(mutation_name, {})
+        thread = payload.get("thread", {})
+        console.print(
+            f"[green]Thread {thread.get('id', thread_id)} is now "
+            f"{'resolved' if thread.get('isResolved') else 'unresolved'}[/green]"
+        )
+    except Exception as e:
+        console.print(f"[red]Error updating thread resolution: {e}[/red]")
         raise typer.Exit(1)
 
 

@@ -204,6 +204,7 @@ This skill includes Python scripts in `scripts/` that wrap GitHub API operations
 | `reviews` | List all reviews on a PR |
 | `post` | Post a batched review from JSON file |
 | `reply` | Reply to a specific review comment |
+| `resolve` | Resolve or unresolve a review thread |
 | `head` | Get the head commit SHA for a PR |
 | `checkout` | Create a worktree to review PR locally |
 | `cleanup` | Remove a PR worktree |
@@ -233,6 +234,12 @@ uv run scripts/gh_pr.py head owner/repo 123
 
 # Reply to a comment
 uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Good catch, fixed!"
+
+# Resolve a thread by comment ID
+uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456
+
+# Unresolve a thread by comment ID
+uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456 --unresolve
 ```
 
 ---
@@ -325,6 +332,16 @@ uv run scripts/gh_pr.py cleanup owner/repo 123
 uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Response to the discussion"
 ```
 
+### Resolving Comment Threads
+
+```bash
+# Resolve a thread by comment ID
+uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456
+
+# Unresolve a thread by comment ID
+uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456 --unresolve
+```
+
 ### Quick Reference: Script Commands
 
 | Action | Command |
@@ -337,6 +354,7 @@ uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Response to the discus
 | Initialize review file | `uv run scripts/gh_pr.py init-review owner/repo 123` |
 | Post batched review | `uv run scripts/gh_pr.py post owner/repo 123 /path/to/review.json` |
 | Reply to comment | `uv run scripts/gh_pr.py reply owner/repo 456 "message"` |
+| Resolve thread | `uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456` |
 | Get commit SHA | `uv run scripts/gh_pr.py head owner/repo 123` |
 | Create worktree | `uv run scripts/gh_pr.py checkout owner/repo 123` |
 | Remove worktree | `uv run scripts/gh_pr.py cleanup owner/repo 123` |

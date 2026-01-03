@@ -145,7 +145,17 @@ VERY IMPORTANT: because you are using the Github CLI with the account of your hu
 [AUTOMATED]
 ```
 
+If you respond to a comment mentioning that you fixed what the reviewer asked for, you should resolve the comment thread.
 
+### 4. Resolve Comment Threads (when appropriate)
+
+```bash
+# Resolve a thread by comment ID
+uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456
+
+# Unresolve a thread by comment ID
+uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456 --unresolve
+```
 
 ### 5. Request Re-review
 
@@ -160,20 +170,22 @@ uv run scripts/gh_pr.py reviewers owner/repo 123 --add "original-reviewer"
 
 This skill includes Python scripts in `scripts/` that wrap GitHub API operations. Run them with `uv`:
 
-### Available Commands
+### Quick Reference
 
-| Command | Description |
-|---------|-------------|
-| `create` | Create a new pull request |
-| `view` | View PR details and review status |
-| `list` | List PRs in a repository |
-| `checks` | Get PR check status (CI/CD) |
-| `comments` | Get review comments (supports `--actionable`, `--by-file` filters) |
-| `reply` | Reply to a specific review comment |
-| `comment` | Add a general PR comment |
-| `merge` | Merge a PR (supports squash, merge, rebase) |
-| `reviewers` | Add or remove reviewers |
-| `issue` | Fetch issue details (title, description, labels, assignees) |
+| Task             | Command                                                                     |
+| ---------------- | --------------------------------------------------------------------------- |
+| Fetch issue      | `uv run scripts/gh_pr.py issue owner/repo 42`                               |
+| Create PR        | `uv run scripts/gh_pr.py create owner/repo --title "..." --body "..."`      |
+| View PR          | `uv run scripts/gh_pr.py view owner/repo 123`                               |
+| List PRs         | `uv run scripts/gh_pr.py list owner/repo`                                   |
+| Check PR status  | `uv run scripts/gh_pr.py checks owner/repo 123`                             |
+| Add reviewers    | `uv run scripts/gh_pr.py reviewers owner/repo 123 --add "user"`             |
+| Merge PR         | `uv run scripts/gh_pr.py merge owner/repo 123`                              |
+| Get comments     | `uv run scripts/gh_pr.py comments owner/repo 123`                           |
+| Reply to comment | `uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] message"`        |
+| Resolve thread   | `uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456`           |
+| General comment  | `uv run scripts/gh_pr.py comment owner/repo 123 "[AUTOMATED] message"`      |
+
 
 ### Usage Examples
 
@@ -205,26 +217,12 @@ uv run scripts/gh_pr.py comments owner/repo 123 --actionable
 # Reply to a comment
 uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Fixed!"
 
+# Resolve a thread by comment ID
+uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456
+
 # Merge PR with squash
 uv run scripts/gh_pr.py merge owner/repo 123 --method squash
 
 # Add reviewers
 uv run scripts/gh_pr.py reviewers owner/repo 123 --add "user1,user2"
 ```
-
----
-
-## Quick Reference
-
-| Task             | Command                                                                     |
-| ---------------- | --------------------------------------------------------------------------- |
-| Fetch issue      | `uv run scripts/gh_pr.py issue owner/repo 42`                               |
-| Create PR        | `uv run scripts/gh_pr.py create owner/repo --title "..." --body "..."`      |
-| View PR          | `uv run scripts/gh_pr.py view owner/repo 123`                               |
-| List PRs         | `uv run scripts/gh_pr.py list owner/repo`                                   |
-| Check PR status  | `uv run scripts/gh_pr.py checks owner/repo 123`                             |
-| Add reviewers    | `uv run scripts/gh_pr.py reviewers owner/repo 123 --add "user"`             |
-| Merge PR         | `uv run scripts/gh_pr.py merge owner/repo 123`                              |
-| Get comments     | `uv run scripts/gh_pr.py comments owner/repo 123`                           |
-| Reply to comment | `uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] message"`        |
-| General comment  | `uv run scripts/gh_pr.py comment owner/repo 123 "[AUTOMATED] message"`      |
