@@ -102,6 +102,7 @@ WHAT GETS SYNCED
       - ~/.p10k.zsh
       - ~/.gitconfig (including user identity)
       - ~/.config/gh/hosts.yml (GitHub auth token)
+      - ~/.config/gh/config.yml (GitHub CLI config)
 
     From this repo:
       - skills/ -> ~/.claude/skills/
@@ -130,7 +131,7 @@ NOTES
     - The tool is idempotent - safe to run multiple times
 
 SECURITY
-    - Your GitHub CLI token (~/.config/gh/hosts.yml) is transferred if present.
+    - Your GitHub CLI config (~/.config/gh/hosts.yml and config.yml) is transferred if present.
       This authenticates 'gh' on the remote machine with your account.
     - Your .gitconfig (including user.name/email) is transferred.
     - Tool installation uses curl-to-shell patterns from official sources.
@@ -745,7 +746,7 @@ install_gh_cli() {
                    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && \
                    sudo apt-get update >/dev/null 2>&1 && \
                    pkg_install gh; then
-                    log_ok "gh" "installed (run 'gh auth login')"
+                    log_ok "gh" "installed (auth will sync if provided)"
                 else
                     log_fail "gh" "failed"
                 fi
@@ -754,14 +755,14 @@ install_gh_cli() {
                 if sudo dnf install -y 'dnf-command(config-manager)' >/dev/null 2>&1 && \
                    sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo >/dev/null 2>&1 && \
                    pkg_install gh; then
-                    log_ok "gh" "installed (run 'gh auth login')"
+                    log_ok "gh" "installed (auth will sync if provided)"
                 else
                     log_fail "gh" "failed"
                 fi
                 ;;
             pacman)
                 if pkg_install github-cli; then
-                    log_ok "gh" "installed (run 'gh auth login')"
+                    log_ok "gh" "installed (auth will sync if provided)"
                 else
                     log_fail "gh" "failed"
                 fi
@@ -837,11 +838,40 @@ sync_dotfiles() {
     # gh CLI config (GitHub auth token)
     if [ -f dotfiles/gh/hosts.yml ]; then
         mkdir -p ~/.config/gh
-        cp dotfiles/gh/hosts.yml ~/.config/gh/hosts.yml
-        chmod 600 ~/.config/gh/hosts.yml
-        log_ok "gh auth" "synced (authenticated)"
+        if [ -f ~/.config/gh/hosts.yml ]; then
+            cp ~/.config/gh/hosts.yml ~/.config/gh/hosts.yml.backup.$(date +%Y%m%d%H%M%S)
+            log_info "Backed up existing gh auth"
+        fi
+        if grep -Eq "oauth_token:[[:space:]]*[^[:space:]]" dotfiles/gh/hosts.yml; then
+            cp dotfiles/gh/hosts.yml ~/.config/gh/hosts.yml
+            chmod 600 ~/.config/gh/hosts.yml
+            log_ok "gh auth" "synced (authenticated)"
+        else
+            log_warn "gh auth" "incoming hosts.yml missing token; keeping existing"
+        fi
     else
-        log_skip "gh auth" "not provided"
+        if [ -f ~/.config/gh/hosts.yml ]; then
+            log_skip "gh auth" "kept existing"
+        else
+            log_skip "gh auth" "not provided"
+        fi
+    fi
+
+    # gh CLI config (settings)
+    if [ -f dotfiles/gh/config.yml ]; then
+        mkdir -p ~/.config/gh
+        if [ -f ~/.config/gh/config.yml ]; then
+            cp ~/.config/gh/config.yml ~/.config/gh/config.yml.backup.$(date +%Y%m%d%H%M%S)
+            log_info "Backed up existing gh config"
+        fi
+        cp dotfiles/gh/config.yml ~/.config/gh/config.yml
+        log_ok "gh config" "synced"
+    else
+        if [ -f ~/.config/gh/config.yml ]; then
+            log_skip "gh config" "kept existing"
+        else
+            log_skip "gh config" "not provided"
+        fi
     fi
 }
 
@@ -1040,6 +1070,12 @@ create_payload() {
         ((files_found++))
         log_ok "gh auth bundled" >&2
     fi
+    if [[ -f "$HOME/.config/gh/config.yml" ]]; then
+        mkdir -p "$tmpdir/dotfiles/gh"
+        cp "$HOME/.config/gh/config.yml" "$tmpdir/dotfiles/gh/config.yml"
+        ((files_found++))
+        log_ok "gh config bundled" >&2
+    fi
 
     # Copy skills from repo
     if [[ -d "$REPO_DIR/skills" ]] && [[ -n "$(ls -A "$REPO_DIR/skills" 2>/dev/null)" ]]; then
@@ -1075,6 +1111,7 @@ show_dry_run() {
     [[ -f "$HOME/.p10k.zsh" ]] && printf "  • ~/.p10k.zsh\n" || printf "  ${YELLOW}○${NC} ~/.p10k.zsh (not found)\n"
     [[ -f "$HOME/.gitconfig" ]] && printf "  • ~/.gitconfig\n" || printf "  ${YELLOW}○${NC} ~/.gitconfig (not found)\n"
     [[ -f "$HOME/.config/gh/hosts.yml" ]] && printf "  • ~/.config/gh/hosts.yml (GitHub auth)\n" || printf "  ${YELLOW}○${NC} ~/.config/gh/hosts.yml (not found - run 'gh auth login' locally first)\n"
+    [[ -f "$HOME/.config/gh/config.yml" ]] && printf "  • ~/.config/gh/config.yml (GitHub CLI config)\n" || printf "  ${YELLOW}○${NC} ~/.config/gh/config.yml (not found)\n"
 
     printf "\n${BOLD}Skills to sync:${NC}\n"
     if [[ -d "$REPO_DIR/skills" ]]; then
