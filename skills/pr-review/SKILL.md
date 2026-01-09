@@ -1,23 +1,136 @@
 ---
 name: pr-review
-description: Perform thorough, constructive pull request reviews. Use when user wants to review a PR, provide code review feedback, or assess code changes. This skill provides a structured approach to evaluating code quality, design, and implementation while maintaining constructive communication, and how to perform the review through the Github CLI.
+description: Perform thorough, constructive pull request reviews using parallel specialized agents. Use when user wants to review a PR, provide code review feedback, or assess code changes. Features confidence-scored issues, validation filtering, and batched GitHub comments.
 ---
 
 # PR Review Skill
 
-This skill provides a structured approach to reviewing pull requests, distilled from Google's engineering practices.
-Keep this in mind: any text comment that you make must be prefixed with the following prefix:
+This skill provides a structured approach to reviewing pull requests using **parallel specialized agents** for thorough coverage, with confidence scoring to minimize false positives.
+
+**Important**: Any text comment you post must be prefixed with:
 ```
 [AUTOMATED]
 ```
 This is important because you are using the Github CLI with the account of your beloved human, and you want to make it clear that the comment is not coming from the human.
+
+---
+
+## Review Workflow
+
+### Step 1: Pre-Review Validation
+
+Before starting, launch a **haiku agent** to check if review should proceed:
+
+```
+Check if any of the following are true for the PR:
+- The PR is closed
+- The PR is a draft
+- The PR is trivial (automated, obviously correct single-line change)
+
+If any condition is true, stop and explain why.
+```
+
+If validation fails, do not proceed with the review.
+
+### Step 2: Gather Context
+
+Launch **two haiku agents in parallel**:
+
+**Agent A - PR Summary**:
+```
+Fetch PR details using: uv run scripts/gh_pr.py files owner/repo <number>
+If there's a linked issue, fetch it: uv run scripts/gh_pr.py issue owner/repo <issue>
+Return a brief summary of:
+- What the PR does
+- Files changed
+- Author's stated intent — based on code and eventual linked issue
+```
+
+**Agent B - Guidelines Discovery**:
+```
+Find all relevant guideline files:
+- Root CLAUDE.md (if exists)
+- CLAUDE.md files in directories containing modified files
+- Any project-specific style guides
+
+Return the file paths and key rules that apply to changed files.
+```
+
+### Step 3: Parallel Review Agents
+
+Launch **4 specialized agents in parallel** to review the changes. Each agent should receive:
+- PR title and description
+- Relevant guideline summaries (from Step 2)
+- The diff (via `uv run scripts/gh_pr.py files owner/repo <number> --raw`)
+
+**Agent 1: Bug Hunter (opus)**
+See `agents/bug-hunter.md`. Focus on actual bugs and security issues.
+
+**Agent 2: Bug Hunter (opus)**
+Same as Agent 1, run twice for coverage. Different agents may catch different issues.
+
+**Agent 3: Guideline Compliance (sonnet)**
+See `agents/guideline-compliance.md`. Check CLAUDE.md and project convention adherence.
+
+**Agent 4: Error Handling Auditor (sonnet)**
+See `agents/error-handling-auditor.md`. Hunt for silent failures and poor error handling.
+
+**CRITICAL**: We only want **HIGH SIGNAL** issues:
+- Objective bugs that will cause incorrect behavior at runtime
+- Clear, unambiguous guideline violations with quoted rules
+- Silent failures that hide errors from users
+
+We do NOT want:
+- Subjective concerns or suggestions
+- Style preferences not explicitly required
+- Potential issues that "might" be problems
+- Anything requiring interpretation or judgment
+
+### Step 4: Issue Validation
+
+For each issue found with confidence >= 80, launch a **validation subagent**:
+
+See `agents/issue-validator.md`. The validator independently verifies:
+- Bug reports are real (trace code, check for defensive handling)
+- Guideline violations actually apply (rule exists, no exceptions)
+- The severity assessment is accurate
+
+Use **opus** subagents for bug validation, **sonnet** for guideline validation.
+
+### Step 5: Filter Results
+
+Only keep issues that:
+1. Had original confidence >= 80
+2. Were validated in Step 4
+3. Are not duplicates
+
+This gives us our final list of high-signal issues.
+
+### Step 6: Post Review
+
+#### If NO issues found:
+
+Post a summary comment (if requested):
+```bash
+gh pr comment <number> --body "[AUTOMATED]
+
+## Code Review
+
+No issues found. Checked for bugs, guideline compliance, and error handling."
+```
+
+#### If issues found:
+
+Use the batched review workflow to post all comments at once.
+
+---
 
 ## The Core Standard
 
 **Approve changes that improve code health, even if imperfect.**
 
 - The goal is continuous improvement, not perfection
-- Don't block progress over minor issues—use "Nit:" prefix for non-blocking suggestions
+- Don't block progress over minor issues - use "Nit:" prefix for non-blocking suggestions
 - Reject only when the change worsens overall code health or is fundamentally unwanted
 
 ### Decision Hierarchy
@@ -28,27 +141,7 @@ When opinions conflict:
 3. Design decisions require principle-based reasoning, not preference
 4. Consistency with existing code (when it maintains health)
 
-## Review Approach: Three Steps
-
-### Step 1: Assess the Overall Change
-
-Before diving into code:
-- Read the PR description and linked issue (use `uv run scripts/gh_pr.py issue owner/repo <number>` to fetch issue details with proper authentication)
-- Does this change make sense? Should it exist?
-- If fundamentally problematic, respond immediately with explanation
-
-### Step 2: Examine Critical Components First
-
-- Identify files with the most substantial logic changes
-- Review these first—they provide context for everything else
-- Flag major design issues immediately (don't wait until the end)
-- If design is wrong, communicate early so author can course-correct
-
-### Step 3: Review Remaining Files
-
-- Go through remaining files methodically
-- Consider reading tests before implementation to understand intent
-- Review every line within the broader context
+---
 
 ## What to Look For
 
@@ -59,135 +152,62 @@ Before diving into code:
 - Does it integrate well with existing systems?
 
 ### Architectural Consistency
+- **Identify existing abstractions** - What patterns does this codebase already have?
+- **Check for pattern reuse** - Is new code following established patterns or reinventing them?
+- **Look for duplicated abstractions** - Is the PR reimplementing existing helpers?
+- **Look for useless abstractions** - Is complexity being added unnecessarily?
 
-**Before reviewing individual files, understand the codebase's existing patterns:**
-
-1. **Identify existing abstractions** - What helpers, utilities, or patterns does this codebase already have for similar problems?
-
-2. **Check for pattern reuse** - Is the new code following established patterns, or reinventing them? If similar code exists elsewhere, how was it structured?
-
-3. **Ask the extensibility question** - "If someone adds a similar feature tomorrow, would they copy-paste this code or reuse it?" Copy-paste is a design smell.
-
-4. **Look for duplicated abstractions** - Is the PR reimplementing logic that already exists in a helper? New code should extend existing abstractions, not duplicate them.
-
-5. **Look for useless abstractions** - Is the PR introducing a new abstraction that is not needed? Will we likely need to do a similar thing in the future? If not, it's probably not worth the complexity. You can ask the author what they think about it.
-
-**Key question to always ask:** *"How do similar features in this codebase solve this problem?"*
-
-This is often more important than catching bugs—architectural inconsistency compounds over time and makes codebases harder to maintain.
+**Key question**: *"How do similar features in this codebase solve this problem?"*
 
 ### Functionality
 - Does the code do what the author intended?
-- Does it serve end-users and future developers well?
 - Watch for: edge cases, race conditions, concurrency bugs
-- UI changes warrant extra scrutiny for user impact
 
 ### Complexity
 - Can you understand the code quickly?
 - Is it over-engineered for hypothetical future needs?
-- **Key principle**: Solve the problem that exists now, not speculative future problems
+- **Principle**: Solve the problem that exists now
 
 ### Tests
-- Are there appropriate tests (unit, integration, e2e)?
+- Are there appropriate tests?
 - Will tests actually fail when the code breaks?
 - Are test cases meaningful, not just coverage padding?
 
-### Naming
-- Do names clearly communicate purpose?
-- Are they descriptive yet readable?
-
-### Comments
-- Do comments explain *why*, not *what*?
-- Are they necessary, or does the code speak for itself?
-- If code needs explanation in review comments, request code comments instead
-
-### Style & Consistency
-- Does it follow the project's style guide?
-- Is it consistent with surrounding code?
-
-### Documentation
-- Are user-facing changes documented?
-- READMEs, API docs, and references updated?
+---
 
 ## Writing Effective Comments
 
-### Tone
-- Be kind—critique code, never the person
-- Explain the reasoning behind suggestions
-- Acknowledge when the author knows more than you
-
 ### Severity Labels
-Use prefixes to clarify intent:
 - **Nit:** Minor issue, should fix but won't block approval
 - **Optional/Consider:** Suggestion worth considering, not required
 - **FYI:** Information only, no action expected
 
-### Balance Direction and Learning
-- Sometimes point out issues and let the author solve them
-- Sometimes provide explicit solutions
-- Use judgment based on complexity and author experience
-
-### Positive Feedback
-- Call out things done well: clean algorithms, thorough tests, clever approaches
-- Reinforcing good practices encourages their continuation
-
-## Handling Disagreements
-
-### When Author Pushes Back
-
-1. **Consider their perspective**—they may have deeper context
-2. **If they're right**, acknowledge it and move on
-3. **If you still disagree**, explain *why* it matters with additional context
-4. Maintain courtesy even through multiple rounds of discussion
-
-### "We'll Fix It Later"
-
-- This almost never happens—competing priorities take over
-- Insist on cleanup before merge unless truly an emergency
-- If unavoidable: require a filed issue and TODO comment
-
-### Escalation
-
-If consensus fails after good-faith discussion:
-- Consult technical leads or maintainers
-- Reference established project standards
-- Don't let reviews stall indefinitely
-
-## Speed Matters
-
-### Response Time
-- Respond at natural break points (not mid-task)
-- Maximum: one business day
-- Goal: multiple review rounds within a single day when needed
-
-### Why Speed Matters
-Slow reviews cause:
-- Blocked features and fixes
-- Developer frustration
-- Pressure to approve substandard work
-
-### Large PRs
-- Request authors split into smaller, sequential changes
-- Large PRs are harder to review well and slower to merge
+### Tone
+- Be kind - critique code, never the person
+- Explain the reasoning behind suggestions
+- Acknowledge when the author knows more than you
 
 ---
 
-## Review Checklist (Quick Reference)
+## Specialized Agents Reference
 
-- [ ] PR description is clear and links to relevant issue
-- [ ] Design is sound and appropriate for the codebase
-- [ ] **New code extends existing abstractions rather than duplicating them**
-- [ ] **Follows patterns established by similar code in the codebase**
-- [ ] Code does what it claims to do
-- [ ] Edge cases and error conditions handled
-- [ ] No over-engineering or unnecessary complexity
-- [ ] Tests are present and meaningful
-- [ ] Naming is clear and consistent
-- [ ] Comments explain *why* where needed
-- [ ] Style guide followed
-- [ ] Documentation updated if user-facing
-- [ ] No security vulnerabilities introduced
-- [ ] No obvious performance regressions
+Additional agents available for targeted analysis:
+
+### Test Analyzer
+See `agents/test-analyzer.md`. Use when:
+- PR adds significant new functionality
+- You want to verify test coverage quality
+- User asks about test thoroughness
+
+### Full Agent List
+
+| Agent | Focus | Model | When to Use |
+|-------|-------|-------|-------------|
+| bug-hunter | Bugs & security | opus | Default parallel review |
+| guideline-compliance | CLAUDE.md adherence | sonnet | Default parallel review |
+| error-handling-auditor | Silent failures | sonnet | Default parallel review |
+| test-analyzer | Test coverage | sonnet | On request or for new features |
+| issue-validator | Verify findings | inherit | Validation step |
 
 ---
 
@@ -214,32 +234,23 @@ This skill includes Python scripts in `scripts/` that wrap GitHub API operations
 ### Usage Examples
 
 ```bash
-# Fetch issue details (use this for proper authentication)
+# Fetch issue details
 uv run scripts/gh_pr.py issue owner/repo 42
 
 # Get PR files and diff
 uv run scripts/gh_pr.py files owner/repo 123
 
+# Get raw JSON for agent processing
+uv run scripts/gh_pr.py files owner/repo 123 --raw
+
 # Get unresolved review comments
 uv run scripts/gh_pr.py comments owner/repo 123 --unresolved
 
-# Get raw JSON output
-uv run scripts/gh_pr.py comments owner/repo 123 --raw
+# Initialize review file
+uv run scripts/gh_pr.py init-review owner/repo 123
 
-# List all reviews
-uv run scripts/gh_pr.py reviews owner/repo 123
-
-# Get head commit SHA (for review submission)
-uv run scripts/gh_pr.py head owner/repo 123
-
-# Reply to a comment
-uv run scripts/gh_pr.py reply owner/repo 456 "[AUTOMATED] Good catch, fixed!"
-
-# Resolve a thread by comment ID
-uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456
-
-# Unresolve a thread by comment ID
-uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456 --unresolve
+# Post batched review
+uv run scripts/gh_pr.py post owner/repo 123 /tmp/pr-review-owner-repo-123.json
 ```
 
 ---
@@ -250,7 +261,7 @@ uv run scripts/gh_pr.py resolve owner/repo 123 --comment-id 456 --unresolve
 
 Reviews are posted in a single batch to avoid spamming notifications. During the review process, accumulate feedback in a transient JSON file, then submit everything at once.
 
-If you are inside the same repository as the PR, you MUST checkout the PR branch, inside a new worktree that will be temporary and deleted after the review, and use local tools to review the code, so as to get full context of the codebase on top of the code diff.
+If you are inside the same repository as the PR, checkout the PR branch into a temporary worktree for full codebase context.
 
 ### Step 1: Checkout the PR (if in same repo)
 
@@ -282,26 +293,24 @@ This creates a JSON file with the structure:
 
 ### Step 3: Add Comments During Review
 
-Edit the JSON file to add comments to the `comments` array as you review each file. Make sure to use the correct line number!
+Edit the JSON file to add comments from validated issues:
 
 ```json
 {
   "path": "src/utils/parser.ts",
   "line": 42,
   "side": "RIGHT",
-  "body": "[AUTOMATED] Nit: consider extracting this logic into a helper function for readability."
+  "body": "[AUTOMATED] This catch block swallows all exceptions without logging. Unexpected errors will be silently ignored.\n\nConfidence: 92/100"
 }
 ```
 
 **Field reference:**
 - `path`: File path relative to repo root
 - `line`: Line number in the new file (for additions/modifications)
-- `side`: `RIGHT` for new/modified code, `LEFT` for deleted code being commented on
-- `body`: The comment text (use severity prefixes: `Nit:`, `Optional:`, `FYI:`)
+- `side`: `RIGHT` for new/modified code, `LEFT` for deleted code
+- `body`: The comment text (include confidence score)
 
 ### Step 4: Set the Review Verdict
-
-Before posting, update the `event` and `body` fields in the JSON:
 
 | Verdict | `event` value | When to use |
 |---------|---------------|-------------|
@@ -309,21 +318,36 @@ Before posting, update the `event` and `body` fields in the JSON:
 | Request Changes | `REQUEST_CHANGES` | Blocking issues must be addressed |
 | Comment | `COMMENT` | Feedback only, not blocking |
 
-Set `body` to a summary of the review (required for `REQUEST_CHANGES` and `COMMENT`).
-
 ### Step 5: Post the Review
 
 ```bash
-# Submit the batched review (auto-cleans up JSON file on success)
 uv run scripts/gh_pr.py post owner/repo 123 /tmp/pr-review-owner-repo-123.json
 ```
 
 ### Step 6: Cleanup
 
 ```bash
-# Remove the worktree after review
 uv run scripts/gh_pr.py cleanup owner/repo 123
 ```
+
+---
+
+## Review Checklist (Quick Reference)
+
+- [ ] PR description is clear and links to relevant issue
+- [ ] Design is sound and appropriate for the codebase
+- [ ] New code extends existing abstractions rather than duplicating them
+- [ ] Follows patterns established by similar code in the codebase
+- [ ] Code does what it claims to do
+- [ ] Edge cases and error conditions handled
+- [ ] No over-engineering or unnecessary complexity
+- [ ] Tests are present and meaningful
+- [ ] Naming is clear and consistent
+- [ ] Comments explain *why* where needed
+- [ ] Style guide followed
+- [ ] Documentation updated if user-facing
+- [ ] No security vulnerabilities introduced
+- [ ] No silent failures in error handling
 
 ### Replying to Existing Comments
 

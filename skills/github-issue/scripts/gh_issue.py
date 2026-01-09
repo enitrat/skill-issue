@@ -16,6 +16,7 @@ Usage:
 Commands:
     create      Create a new issue
     create-sub  Create a sub-issue linked to a parent
+    edit        Edit an existing issue's title or body
     view        View issue details
     list        List issues in a repository
     link        Link two issues (parent/child relationship)
@@ -26,6 +27,7 @@ Commands:
 Examples:
     uv run gh_issue.py create owner/repo --title "Bug: login fails" --body-file /tmp/issue.md
     uv run gh_issue.py create-sub owner/repo --parent 10 --title "Sub-task" --body "..."
+    uv run gh_issue.py edit owner/repo 123 --body-file /tmp/updated-body.md
     uv run gh_issue.py view owner/repo 123
     uv run gh_issue.py link owner/repo --parent 10 --child 42
 """
@@ -347,6 +349,119 @@ def create_sub(
 
     except Exception as e:
         console.print(f"[red]Error creating sub-issue: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def edit(
+    repo: str = typer.Argument(..., help="Repository in owner/repo format"),
+    issue_number: int = typer.Argument(..., help="Issue number"),
+    title: Optional[str] = typer.Option(None, "--title", "-t", help="New issue title"),
+    body: Optional[str] = typer.Option(None, "--body", "-b", help="New issue body"),
+    body_file: Optional[Path] = typer.Option(None, "--body-file", "-f", help="Read body from file"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    skip_validation: bool = typer.Option(False, "--skip-validation", help="Skip title format validation"),
+):
+    """Edit an existing issue's title or body.
+
+    If title is provided, it must follow conventional commit format unless --skip-validation is set.
+    """
+    owner, repo_name = parse_repo(repo)
+    api = get_api(owner, repo_name)
+
+    # Fetch current issue
+    try:
+        issue = api.issues.get(issue_number)
+    except Exception as e:
+        console.print(f"[red]Error fetching issue #{issue_number}: {e}[/red]")
+        raise typer.Exit(1)
+
+    current_title = issue.get("title", "")
+    current_body = issue.get("body", "")
+
+    # Determine new values
+    new_title = title if title is not None else current_title
+    new_body = body
+
+    if body_file:
+        if not body_file.exists():
+            console.print(f"[red]Error: Body file not found: {body_file}[/red]")
+            raise typer.Exit(1)
+        new_body = body_file.read_text()
+
+    if new_body is None:
+        new_body = current_body
+
+    # Check if anything changed
+    if new_title == current_title and new_body == current_body:
+        console.print("[yellow]No changes specified. Nothing to update.[/yellow]")
+        raise typer.Exit(0)
+
+    # Validate title format if changed
+    if new_title != current_title and not skip_validation:
+        valid, error_msg = validate_title(new_title)
+        if not valid:
+            console.print(f"[red]Invalid title format:[/red]\n{error_msg}")
+            raise typer.Exit(1)
+
+    # Preview changes
+    if not yes:
+        console.print("\n" + "=" * 60)
+        console.print("[bold cyan]EDIT PREVIEW[/bold cyan]")
+        console.print("=" * 60)
+
+        console.print(f"\n[bold]Repository:[/bold] {repo}")
+        console.print(f"[bold]Issue:[/bold] #{issue_number}")
+
+        if new_title != current_title:
+            console.print(f"\n[bold]Title:[/bold]")
+            console.print(f"  [red]- {current_title}[/red]")
+            console.print(f"  [green]+ {new_title}[/green]")
+        else:
+            console.print(f"\n[bold]Title:[/bold] {current_title} [dim](unchanged)[/dim]")
+
+        if new_body != current_body:
+            console.print(f"\n[bold]Body:[/bold] [yellow](changed)[/yellow]")
+            console.print("-" * 40)
+            console.print(Markdown(new_body))
+            console.print("-" * 40)
+        else:
+            console.print(f"\n[bold]Body:[/bold] [dim](unchanged)[/dim]")
+
+        console.print("\n[yellow]Apply these changes?[/yellow]")
+        console.print("  [green]y[/green] = apply changes")
+        console.print("  [red]n[/red] = cancel")
+        console.print("  [cyan]e[/cyan] = edit (saves body to /tmp/issue-body.md for editing)")
+
+        while True:
+            response = input("\nChoice [y/n/e]: ").strip().lower()
+            if response in ("y", "yes"):
+                break
+            elif response in ("n", "no"):
+                console.print("[yellow]Edit cancelled.[/yellow]")
+                raise typer.Exit(0)
+            elif response in ("e", "edit"):
+                edit_path = Path("/tmp/issue-body.md")
+                edit_path.write_text(new_body)
+                console.print(f"[cyan]Body saved to {edit_path}[/cyan]")
+                console.print("[cyan]Edit the file and re-run with --body-file /tmp/issue-body.md[/cyan]")
+                raise typer.Exit(0)
+            else:
+                console.print("[red]Invalid choice. Please enter y, n, or e.[/red]")
+
+    try:
+        update_kwargs = {}
+        if new_title != current_title:
+            update_kwargs["title"] = new_title
+        if new_body != current_body:
+            update_kwargs["body"] = new_body
+
+        api.issues.update(issue_number, **update_kwargs)
+        console.print(f"[green]Issue #{issue_number} updated successfully![/green]")
+        console.print(f"[dim]URL: {issue.get('html_url')}[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error updating issue: {e}[/red]")
         raise typer.Exit(1)
 
 

@@ -1,10 +1,10 @@
 #!/bin/bash
-# skills-sync: Sync skills from this repo to ~/.claude/skills/
+# skills-sync: Sync skills from this repo to ~/.claude/skills/ and ~/.codex/skills/
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_SKILLS="$SCRIPT_DIR/../skills"
-TARGET_DIR="$HOME/.claude/skills"
+TARGET_DIRS=("$HOME/.claude/skills" "$HOME/.codex/skills")
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 show_help() {
     cat << 'EOF'
 NAME
-    skills-sync - sync Claude skills from repo to ~/.claude/skills/
+    skills-sync - sync Claude skills from repo to ~/.claude/skills/ and ~/.codex/skills/
 
 SYNOPSIS
     skills-sync [--dry-run | -n]
@@ -24,12 +24,13 @@ SYNOPSIS
 
 DESCRIPTION
     skills-sync copies skills from this repository's skills/ directory
-    to ~/.claude/skills/, making them available to Claude Code.
+    to ~/.claude/skills/ and ~/.codex/skills/, making them available to
+    Claude Code and Codex.
 
     Behavior:
-      - Copies all skills from repo to ~/.claude/skills/
+      - Copies all skills from repo to both target directories
       - Overwrites existing skills on conflict
-      - Preserves other skills already in ~/.claude/skills/
+      - Preserves other skills already in target directories
 
 OPTIONS
     -n, --dry-run
@@ -50,7 +51,8 @@ EXAMPLES
 
 FILES
     Source: <repo>/skills/
-    Target: ~/.claude/skills/
+    Targets: ~/.claude/skills/
+             ~/.codex/skills/
 
 EOF
 }
@@ -74,49 +76,56 @@ sync_skills() {
         exit 0
     fi
 
-    # Create target if needed
-    if [ "$dry_run" != "true" ]; then
-        mkdir -p "$TARGET_DIR"
-    fi
-
-    printf "${BLUE}Source:${NC} %s\n" "$REPO_SKILLS"
-    printf "${BLUE}Target:${NC} %s\n\n" "$TARGET_DIR"
+    printf "${BLUE}Source:${NC} %s\n\n" "$REPO_SKILLS"
 
     if [ "$dry_run" = "true" ]; then
         printf "${YELLOW}[DRY RUN]${NC} Would sync:\n\n"
     fi
 
-    local count=0
-    for skill_dir in "$REPO_SKILLS"/*/; do
-        [ -d "$skill_dir" ] || continue
+    local total_count=0
 
-        local skill_name=$(basename "$skill_dir")
-        local target_skill="$TARGET_DIR/$skill_name"
-
-        if [ -d "$target_skill" ]; then
-            local action="overwrite"
-            local color="$YELLOW"
-        else
-            local action="create"
-            local color="$GREEN"
+    for TARGET_DIR in "${TARGET_DIRS[@]}"; do
+        # Create target if needed
+        if [ "$dry_run" != "true" ]; then
+            mkdir -p "$TARGET_DIR"
         fi
 
-        if [ "$dry_run" = "true" ]; then
-            printf "  ${color}%-12s${NC} %s\n" "[$action]" "$skill_name"
-        else
-            # Remove trailing slash to ensure cp creates subdirectory correctly
-            cp -r "${skill_dir%/}" "$TARGET_DIR/"
-            printf "  ${color}✓${NC} %-12s %s\n" "[$action]" "$skill_name"
-        fi
+        printf "${BLUE}Target:${NC} %s\n" "$TARGET_DIR"
 
-        ((count++))
+        local count=0
+        for skill_dir in "$REPO_SKILLS"/*/; do
+            [ -d "$skill_dir" ] || continue
+
+            local skill_name=$(basename "$skill_dir")
+            local target_skill="$TARGET_DIR/$skill_name"
+
+            if [ -d "$target_skill" ]; then
+                local action="overwrite"
+                local color="$YELLOW"
+            else
+                local action="create"
+                local color="$GREEN"
+            fi
+
+            if [ "$dry_run" = "true" ]; then
+                printf "  ${color}%-12s${NC} %s\n" "[$action]" "$skill_name"
+            else
+                # Remove trailing slash to ensure cp creates subdirectory correctly
+                cp -r "${skill_dir%/}" "$TARGET_DIR/"
+                printf "  ${color}✓${NC} %-12s %s\n" "[$action]" "$skill_name"
+            fi
+
+            ((count++))
+        done
+
+        printf "  %d skill(s)\n\n" "$count"
+        ((total_count += count))
     done
 
-    echo ""
     if [ "$dry_run" = "true" ]; then
-        printf "Would sync ${BLUE}%d${NC} skill(s)\n" "$count"
+        printf "Would sync ${BLUE}%d${NC} skill(s) total\n" "$total_count"
     else
-        printf "Synced ${GREEN}%d${NC} skill(s)\n" "$count"
+        printf "Synced ${GREEN}%d${NC} skill(s) total\n" "$total_count"
     fi
 }
 

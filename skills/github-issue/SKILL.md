@@ -153,6 +153,7 @@ This skill includes Python scripts in `scripts/` that wrap GitHub API operations
 |---------|-------------|
 | `create` | Create a new issue |
 | `create-sub` | Create a sub-issue linked to a parent |
+| `edit` | Edit an existing issue's title or body |
 | `view` | View issue details |
 | `list` | List issues in a repository |
 | `link` | Link two issues (parent/child relationship) |
@@ -186,6 +187,14 @@ uv run scripts/gh_issue.py create-sub owner/repo \
   --parent 10 \
   --title "Implement caching middleware" \
   --body-file /tmp/sub-issue.md
+
+# Edit an issue's body
+uv run scripts/gh_issue.py edit owner/repo 123 \
+  --body-file /tmp/updated-body.md
+
+# Edit an issue's title
+uv run scripts/gh_issue.py edit owner/repo 123 \
+  --title "feat(api): updated title"
 
 # View an issue
 uv run scripts/gh_issue.py view owner/repo 123
@@ -324,6 +333,8 @@ Keywords that close issues: `fixes`, `closes`, `resolves` (followed by `#issue_n
 | Create issue | `uv run scripts/gh_issue.py create owner/repo --title "feat(scope): description" --body-file /tmp/issue.md` |
 | Create (skip preview) | `uv run scripts/gh_issue.py create owner/repo --title "..." --body-file ... --yes` |
 | Create sub-issue | `uv run scripts/gh_issue.py create-sub owner/repo --parent 10 --title "feat(scope): ..."` |
+| Edit issue body | `uv run scripts/gh_issue.py edit owner/repo 123 --body-file /tmp/updated.md` |
+| Edit issue title | `uv run scripts/gh_issue.py edit owner/repo 123 --title "feat(scope): new title"` |
 | View issue | `uv run scripts/gh_issue.py view owner/repo 123` |
 | List issues | `uv run scripts/gh_issue.py list owner/repo` |
 | Link issues | `uv run scripts/gh_issue.py link owner/repo --parent 10 --child 42` |
