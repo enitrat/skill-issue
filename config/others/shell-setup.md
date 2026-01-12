@@ -132,6 +132,7 @@ This repo includes custom CLI tools in the `tools/` directory. The zshrc adds th
 | `git-id` | Switch git identity + SSH key with one command |
 | `dev-check` | Verify dev environment is properly set up |
 | `ssh-sync` | Bootstrap remote Linux machines with your dev environment |
+| `slack-sanitize` | Anonymize names & clean up Slack thread pastes from clipboard |
 
 ### Manual Setup
 
@@ -209,6 +210,23 @@ ssh-sync user@server.example.com --skip-runtimes
 - `~/.zshrc`, `~/.p10k.zsh` (from your home)
 - `~/.gitconfig` (sanitized - user identity removed)
 - Claude skills (from this repo)
+
+## Raycast Integration
+
+This repo includes Raycast script commands in `raycast-scripts/`.
+
+### Setup
+
+1. Open Raycast → Settings → Extensions → Script Commands
+2. Click "Add Directories" and add `~/workspace/skill-issue/raycast-scripts`
+3. Scripts will appear in Raycast search
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| Sanitize Slack Thread | Anonymize names & clean up clipboard content |
+| Sanitize Slack Thread (Preview) | Preview without modifying clipboard |
 
 ## Aliases & Functions Reference
 

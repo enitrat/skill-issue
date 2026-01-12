@@ -1,0 +1,354 @@
+#!/usr/bin/env -S uv run --script --quiet
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""
+slack-sanitize: Sanitize Slack thread pastes from clipboard
+
+Anonymizes names, removes timestamps, and cleans up Slack formatting
+while preserving conversation structure.
+"""
+
+import re
+import subprocess
+import sys
+from typing import Optional
+
+VERSION = "1.0.0"
+
+# Common emoji codes to unicode mapping
+EMOJI_MAP = {
+    ":smile:": "😄",
+    ":sweat_smile:": "😅",
+    ":muscle:": "💪",
+    ":thumbsup:": "👍",
+    ":thumbsdown:": "👎",
+    ":heart:": "❤️",
+    ":fire:": "🔥",
+    ":rocket:": "🚀",
+    ":warning:": "⚠️",
+    ":check:": "✓",
+    ":x:": "✗",
+    ":eyes:": "👀",
+    ":thinking:": "🤔",
+    ":+1:": "👍",
+    ":-1:": "👎",
+    ":clap:": "👏",
+    ":tada:": "🎉",
+    ":pray:": "🙏",
+    ":100:": "💯",
+    ":ok_hand:": "👌",
+    ":wave:": "👋",
+    ":point_up:": "☝️",
+    ":point_down:": "👇",
+    ":point_left:": "👈",
+    ":point_right:": "👉",
+}
+
+HELP_TEXT = """
+NAME
+    slack-sanitize - sanitize Slack thread pastes from clipboard
+
+SYNOPSIS
+    slack-sanitize [OPTIONS]
+
+DESCRIPTION
+    Reads a Slack thread paste from clipboard, sanitizes it by:
+      - Anonymizing names (Person A, Person B, etc.)
+      - Removing timestamps
+      - Cleaning up Slack-specific formatting
+      - Optionally redacting URLs
+
+    The sanitized content replaces the clipboard contents.
+
+OPTIONS
+    --preview, -p
+        Preview the sanitized output without modifying clipboard.
+
+    --keep-urls
+        Keep URLs intact (by default, URLs are redacted to [URL]).
+
+    --keep-emojis
+        Keep emoji codes as-is instead of converting to unicode.
+
+    --remove-emojis
+        Remove emoji codes entirely instead of converting.
+
+    --help, -h
+        Show this help message.
+
+    --version, -v
+        Show version number.
+
+EXAMPLES
+    Sanitize clipboard:
+        $ slack-sanitize
+
+    Preview without modifying clipboard:
+        $ slack-sanitize --preview
+
+    Keep URLs visible:
+        $ slack-sanitize --keep-urls
+
+NOTES
+    Works on macOS using pbpaste/pbcopy.
+    Names are detected from the Slack paste format and anonymized consistently.
+"""
+
+
+def get_clipboard() -> str:
+    """Get clipboard contents using pbpaste (macOS)."""
+    try:
+        result = subprocess.run(
+            ["pbpaste"], capture_output=True, text=True, check=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError:
+        print("\033[0;31mError:\033[0m Failed to read clipboard", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("\033[0;31mError:\033[0m pbpaste not found (macOS only)", file=sys.stderr)
+        sys.exit(1)
+
+
+def set_clipboard(content: str) -> None:
+    """Set clipboard contents using pbcopy (macOS)."""
+    try:
+        subprocess.run(
+            ["pbcopy"], input=content, text=True, check=True
+        )
+    except subprocess.CalledProcessError:
+        print("\033[0;31mError:\033[0m Failed to write clipboard", file=sys.stderr)
+        sys.exit(1)
+
+
+def extract_names(text: str) -> list[str]:
+    """Extract unique names from Slack paste format."""
+    names = set()
+
+    # Pattern 1: Name at start of line followed by newline and timestamp
+    # "Clément Walter\n  Wednesday at 5:17 PM"
+    pattern1 = re.compile(r'^([A-Z][a-zA-Zéèêëàâäùûüôöîïç\-\' ]+?)\n\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Today|Yesterday|\d+\s+(?:minutes?|hours?|days?)\s+ago)', re.MULTILINE)
+    for match in pattern1.finditer(text):
+        name = match.group(1).strip()
+        if name and len(name) > 1 and not name.startswith("Thread"):
+            names.add(name)
+
+    # Pattern 2: @mentions
+    pattern2 = re.compile(r'@([A-Z][a-zA-Zéèêëàâäùûüôöîïç\-\' ]+?)(?=[\s,\.\!\?\]\)]|$)')
+    for match in pattern2.finditer(text):
+        name = match.group(1).strip()
+        if name and len(name) > 1:
+            names.add(name)
+
+    # Pattern 3: Single name followed by timestamp on same structure
+    pattern3 = re.compile(r'^([A-Z][a-zA-Zéèêëàâäùûüôöîïç\-\']+)\n\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Today|Yesterday|\d+\s+(?:minutes?|hours?|days?)\s+ago)', re.MULTILINE)
+    for match in pattern3.finditer(text):
+        name = match.group(1).strip()
+        if name and len(name) > 1:
+            names.add(name)
+
+    # Sort by length (longest first) to avoid partial replacements
+    sorted_names = sorted(list(names), key=len, reverse=True)
+
+    return sorted_names
+
+
+def build_name_map(names: list[str]) -> dict[str, str]:
+    """Build name to anonymous mapping, grouping related names together."""
+    name_map: dict[str, str] = {}
+    person_counter = 0
+
+    for name in names:
+        if name in name_map:
+            continue
+
+        # Check if this name is part of an already-mapped longer name
+        found_parent = None
+        for mapped_name, anon in name_map.items():
+            if mapped_name.startswith(name + " ") or mapped_name.endswith(" " + name):
+                found_parent = anon
+                break
+
+        if found_parent:
+            name_map[name] = found_parent
+        else:
+            letter = chr(ord('A') + person_counter) if person_counter < 26 else f"Person {person_counter + 1}"
+            name_map[name] = f"Person {letter}"
+            person_counter += 1
+
+    return name_map
+
+
+def sanitize_slack_paste(
+    text: str,
+    keep_urls: bool = False,
+    keep_emojis: bool = False,
+    remove_emojis: bool = False
+) -> str:
+    """Sanitize a Slack thread paste."""
+    result = text
+
+    # Extract and map names to anonymized versions
+    names = extract_names(result)
+    name_map = build_name_map(names)
+
+    # Replace @mentions first (before full names)
+    for name, anon in name_map.items():
+        result = re.sub(rf'@{re.escape(name)}', f'@{anon}', result)
+
+    # Replace full names
+    for name, anon in name_map.items():
+        result = re.sub(rf'\b{re.escape(name)}\b', anon, result)
+
+    # Remove timestamps - full format "Day at H:MM PM/AM"
+    result = re.sub(
+        r'\n\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Today|Yesterday)\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s*\n',
+        '\n',
+        result
+    )
+
+    # Remove timestamps - continuation format (just time, optionally indented)
+    result = re.sub(r'\n\s*\d{1,2}:\d{2}\s*\n', '\n', result)
+
+    # Remove relative timestamps "X minutes/hours/days ago"
+    result = re.sub(
+        r'\n\s+\d+\s+(?:minutes?|hours?|days?)\s+ago\s*\n',
+        '\n',
+        result
+    )
+
+    # Remove reply counts "57 replies"
+    result = re.sub(r'\n?\d+\s+repl(?:y|ies)\s*\n?', '\n', result)
+
+    # Remove "(edited)" markers
+    result = re.sub(r'\s*\(edited\)\s*', ' ', result)
+
+    # Remove thread references "Thread in X | Date | View message"
+    result = re.sub(r'Thread in [^\n]+\| View message\s*\n?', '', result)
+
+    # Remove "Saved for later" markers
+    result = re.sub(r'Saved for later[^\n]*\n?', '', result)
+
+    # Handle URLs
+    if not keep_urls:
+        # Replace URLs with [URL] placeholder
+        result = re.sub(
+            r'https?://[^\s\)>\]]+',
+            '[URL]',
+            result
+        )
+
+    # Handle emojis
+    if remove_emojis:
+        result = re.sub(r':[a-z_\+\-0-9]+:', '', result)
+    elif not keep_emojis:
+        for code, emoji in EMOJI_MAP.items():
+            result = result.replace(code, emoji)
+        # Remove any remaining unknown emoji codes
+        result = re.sub(r':[a-z_\+\-0-9]+:', '', result)
+
+    # Clean up excessive blank lines (more than 2 consecutive)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    # Clean up leading/trailing whitespace on lines while preserving indentation for quotes
+    lines = result.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Preserve intentional indentation (quotes) but strip trailing whitespace
+        cleaned_lines.append(line.rstrip())
+    result = '\n'.join(cleaned_lines)
+
+    # Trim leading/trailing whitespace from entire text
+    result = result.strip()
+
+    return result
+
+
+def show_name_mapping(text: str) -> None:
+    """Show the name mapping that will be applied."""
+    names = extract_names(text)
+    if names:
+        name_map = build_name_map(names)
+        # Show unique person mappings (avoid showing duplicates like Mathieu -> Person A twice)
+        shown = set()
+        print("\n\033[0;34mName mapping:\033[0m")
+        for name, anon in name_map.items():
+            if anon not in shown:
+                # Find all names mapping to this person
+                aliases = [n for n, a in name_map.items() if a == anon]
+                if len(aliases) > 1:
+                    print(f"  {', '.join(aliases)} → {anon}")
+                else:
+                    print(f"  {name} → {anon}")
+                shown.add(anon)
+        print()
+
+
+def main():
+    args = sys.argv[1:]
+
+    # Parse arguments
+    preview = False
+    keep_urls = False
+    keep_emojis = False
+    remove_emojis = False
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ('-h', '--help'):
+            print(HELP_TEXT)
+            sys.exit(0)
+        elif arg in ('-v', '--version'):
+            print(f"slack-sanitize version {VERSION}")
+            sys.exit(0)
+        elif arg in ('-p', '--preview'):
+            preview = True
+        elif arg == '--keep-urls':
+            keep_urls = True
+        elif arg == '--keep-emojis':
+            keep_emojis = True
+        elif arg == '--remove-emojis':
+            remove_emojis = True
+        else:
+            print(f"\033[0;31mError:\033[0m Unknown option: {arg}", file=sys.stderr)
+            print("Run 'slack-sanitize --help' for usage", file=sys.stderr)
+            sys.exit(1)
+        i += 1
+
+    # Get clipboard content
+    clipboard = get_clipboard()
+
+    if not clipboard.strip():
+        print("\033[0;33mWarning:\033[0m Clipboard is empty", file=sys.stderr)
+        sys.exit(0)
+
+    # Show name mapping
+    show_name_mapping(clipboard)
+
+    # Sanitize
+    sanitized = sanitize_slack_paste(
+        clipboard,
+        keep_urls=keep_urls,
+        keep_emojis=keep_emojis,
+        remove_emojis=remove_emojis
+    )
+
+    if preview:
+        print("\033[0;34m--- Sanitized output (preview) ---\033[0m\n")
+        print(sanitized)
+        print("\n\033[0;34m--- End preview ---\033[0m")
+    else:
+        set_clipboard(sanitized)
+        print("\033[0;32m✓\033[0m Clipboard sanitized")
+
+        # Show stats
+        original_lines = len(clipboard.split('\n'))
+        sanitized_lines = len(sanitized.split('\n'))
+        print(f"  Lines: {original_lines} → {sanitized_lines}")
+
+
+if __name__ == "__main__":
+    main()
