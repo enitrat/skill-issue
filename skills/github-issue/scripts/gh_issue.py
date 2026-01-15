@@ -14,15 +14,17 @@ Usage:
     uv run gh_issue.py <command> [options]
 
 Commands:
-    create      Create a new issue
-    create-sub  Create a sub-issue linked to a parent
-    edit        Edit an existing issue's title or body
-    view        View issue details
-    list        List issues in a repository
-    link        Link two issues (parent/child relationship)
-    close       Close an issue
-    comment     Add a comment to an issue
-    labels      Manage issue labels
+    create          Create a new issue
+    create-sub      Create a sub-issue linked to a parent
+    edit            Edit an existing issue's title or body
+    view            View issue details
+    list            List issues in a repository
+    list-subissues  List all sub-issues cross-referenced by a parent
+    dump-tree       Dump issue and all sub-issues to markdown files
+    link            Link two issues (parent/child relationship)
+    close           Close an issue
+    comment         Add a comment to an issue
+    labels          Manage issue labels
 
 Examples:
     uv run gh_issue.py create owner/repo --title "Bug: login fails" --body-file /tmp/issue.md
@@ -827,6 +829,241 @@ Key components:
     console.print(f"[green]Created issue template: {output}[/green]")
     console.print(f"[dim]Template: {template}[/dim]")
     print(str(output))
+
+
+@app.command()
+def list_subissues(
+    repo: str = typer.Argument(..., help="Repository in format 'owner/repo'"),
+    issue_number: int = typer.Argument(..., help="Parent issue number"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """List all sub-issues cross-referenced by a parent issue.
+
+    This command handles cross-repo references correctly by preserving
+    the full repository path for each sub-issue.
+
+    Examples:
+        uv run gh_issue.py list-subissues owner/repo 123
+        uv run gh_issue.py list-subissues owner/repo 123 --json
+    """
+    owner, repo_name = parse_repo(repo)
+
+    try:
+        # Use gh CLI to fetch timeline with pagination
+        result = subprocess.run(
+            ["gh", "api", f"repos/{owner}/{repo_name}/issues/{issue_number}/timeline", "--paginate"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        timeline = json.loads(result.stdout)
+
+        # Extract cross-referenced issues with full repo paths
+        subissues = []
+        for event in timeline:
+            if event.get("event") == "cross-referenced" and event.get("source", {}).get("issue"):
+                source_issue = event["source"]["issue"]
+                repo_full_name = source_issue["repository"]["full_name"]
+                issue_num = source_issue["number"]
+                subissues.append({
+                    "repo": repo_full_name,
+                    "number": issue_num,
+                    "title": source_issue["title"],
+                    "url": source_issue["html_url"],
+                    "state": source_issue["state"]
+                })
+
+        # Remove duplicates (same repo+number)
+        seen = set()
+        unique_subissues = []
+        for sub in subissues:
+            key = f"{sub['repo']}#{sub['number']}"
+            if key not in seen:
+                seen.add(key)
+                unique_subissues.append(sub)
+
+        if json_output:
+            print(json.dumps(unique_subissues, indent=2))
+        else:
+            if not unique_subissues:
+                console.print("[yellow]No sub-issues found[/yellow]")
+                return
+
+            console.print(f"\n[bold cyan]Sub-issues for {owner}/{repo_name}#{issue_number}:[/bold cyan]\n")
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Reference", style="cyan")
+            table.add_column("Title", style="white")
+            table.add_column("State", style="green")
+
+            for sub in unique_subissues:
+                ref = f"{sub['repo']}#{sub['number']}"
+                state_style = "green" if sub["state"] == "open" else "dim"
+                table.add_row(ref, sub["title"], f"[{state_style}]{sub['state'].upper()}[/{state_style}]")
+
+            console.print(table)
+            console.print(f"\n[dim]Total: {len(unique_subissues)} sub-issues[/dim]\n")
+
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Error fetching timeline: {e.stderr}[/red]")
+        raise typer.Exit(1)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Error parsing JSON response: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def dump_tree(
+    repo: str = typer.Argument(..., help="Repository in format 'owner/repo'"),
+    issue_number: int = typer.Argument(..., help="Parent issue number"),
+    output_dir: Path = typer.Argument(..., help="Output directory for markdown files"),
+    skip_validation: bool = typer.Option(False, "--skip-validation", help="Skip title validation"),
+):
+    """Dump an issue and all its sub-issues to markdown files.
+
+    Creates a directory structure with the parent issue as 00-OVERVIEW.md
+    and all sub-issues as separate markdown files.
+
+    Examples:
+        uv run gh_issue.py dump-tree owner/repo 123 thoughts/shared/issues/
+    """
+    owner, repo_name = parse_repo(repo)
+
+    # Create output directory based on issue title
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{owner}/{repo_name}/issues/{issue_number}"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        parent_issue = json.loads(result.stdout)
+
+        # Create safe directory name
+        title = parent_issue["title"]
+        safe_title = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+        issue_dir = output_dir / f"{issue_number}-{safe_title}"
+        issue_dir.mkdir(parents=True, exist_ok=True)
+
+        console.print(f"[cyan]Creating issue tree in: {issue_dir}[/cyan]\n")
+
+        # Save parent issue as 00-OVERVIEW.md
+        parent_file = issue_dir / "00-OVERVIEW.md"
+        parent_content = _format_issue_markdown(parent_issue)
+        parent_file.write_text(parent_content)
+        console.print(f"[green]✓[/green] Saved parent: {parent_file.name}")
+
+        # Fetch sub-issues using list-subissues logic
+        result = subprocess.run(
+            ["gh", "api", f"repos/{owner}/{repo_name}/issues/{issue_number}/timeline", "--paginate"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        timeline = json.loads(result.stdout)
+
+        # Extract sub-issues
+        subissues = []
+        for event in timeline:
+            if event.get("event") == "cross-referenced" and event.get("source", {}).get("issue"):
+                source_issue = event["source"]["issue"]
+                repo_full_name = source_issue["repository"]["full_name"]
+                issue_num = source_issue["number"]
+                subissues.append({
+                    "repo": repo_full_name,
+                    "number": issue_num,
+                })
+
+        # Remove duplicates
+        seen = set()
+        unique_refs = []
+        for sub in subissues:
+            key = f"{sub['repo']}#{sub['number']}"
+            if key not in seen:
+                seen.add(key)
+                unique_refs.append(sub)
+
+        # Fetch and save each sub-issue
+        for sub in unique_refs:
+            sub_owner, sub_repo = sub["repo"].split("/")
+            sub_number = sub["number"]
+
+            try:
+                # Fetch sub-issue using gh issue view
+                result = subprocess.run(
+                    ["gh", "issue", "view", str(sub_number), "--repo", sub["repo"],
+                     "--json", "number,title,body,state,labels,createdAt,author,url"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                sub_issue = json.loads(result.stdout)
+
+                # Create safe filename
+                sub_title = sub_issue["title"]
+                safe_sub_title = re.sub(r"[^a-z0-9]+", "-", sub_title.lower()).strip("-")[:80]
+                filename = f"{sub_number}-{safe_sub_title}.md"
+
+                # Format and save
+                sub_content = _format_issue_markdown(sub_issue, is_gh_cli_format=True)
+                sub_file = issue_dir / filename
+                sub_file.write_text(sub_content)
+                console.print(f"[green]✓[/green] Saved sub-issue: {filename}")
+
+            except subprocess.CalledProcessError as e:
+                console.print(f"[yellow]⚠[/yellow] Failed to fetch {sub['repo']}#{sub_number}: {e.stderr.strip()}")
+                continue
+
+        console.print(f"\n[bold green]Done![/bold green] Dumped to: {issue_dir}")
+        console.print(f"[dim]Total files: {len(list(issue_dir.glob('*.md')))}[/dim]\n")
+
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Error: {e.stderr}[/red]")
+        raise typer.Exit(1)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Error parsing JSON: {e}[/red]")
+        raise typer.Exit(1)
+
+
+def _format_issue_markdown(issue: dict, is_gh_cli_format: bool = False) -> str:
+    """Format issue data as markdown.
+
+    Args:
+        issue: Issue data from GitHub API
+        is_gh_cli_format: True if from gh CLI (different field names)
+    """
+    if is_gh_cli_format:
+        # gh CLI format
+        title = issue["title"]
+        url = issue["url"]
+        state = issue["state"]
+        labels = ", ".join(label["name"] for label in issue.get("labels", []))
+        created = issue["createdAt"]
+        author = issue["author"]["login"]
+        body = issue.get("body", "")
+    else:
+        # gh api format
+        title = issue["title"]
+        url = issue["html_url"]
+        state = issue["state"]
+        labels = ", ".join(label["name"] for label in issue.get("labels", []))
+        created = issue["created_at"]
+        author = issue["user"]["login"]
+        body = issue.get("body", "")
+
+    content = f"""# {title}
+
+**Issue:** {url}
+**State:** {state.upper()}
+**Labels:** {labels}
+**Created:** {created}
+**Author:** @{author}
+
+---
+
+{body if body else "(No description provided)"}
+"""
+    return content
 
 
 if __name__ == "__main__":

@@ -156,6 +156,8 @@ This skill includes Python scripts in `scripts/` that wrap GitHub API operations
 | `edit` | Edit an existing issue's title or body |
 | `view` | View issue details |
 | `list` | List issues in a repository |
+| `list-subissues` | List all sub-issues cross-referenced by a parent (handles cross-repo) |
+| `dump-tree` | Dump issue and all sub-issues to markdown files |
 | `link` | Link two issues (parent/child relationship) |
 | `close` | Close an issue |
 | `comment` | Add a comment to an issue |
@@ -204,6 +206,13 @@ uv run scripts/gh_issue.py list owner/repo
 
 # List issues by label
 uv run scripts/gh_issue.py list owner/repo --labels "bug"
+
+# List all sub-issues of a parent (handles cross-repo references)
+uv run scripts/gh_issue.py list-subissues owner/repo 123
+uv run scripts/gh_issue.py list-subissues owner/repo 123 --json
+
+# Dump issue and all sub-issues to markdown files
+uv run scripts/gh_issue.py dump-tree owner/repo 123 thoughts/shared/issues/
 
 # Link existing issues
 uv run scripts/gh_issue.py link owner/repo --parent 10 --child 42
@@ -324,6 +333,55 @@ Keywords that close issues: `fixes`, `closes`, `resolves` (followed by `#issue_n
 
 ---
 
+## Working with Sub-Issues and Cross-Repo References
+
+### List Sub-Issues
+
+When an issue references sub-issues from other repositories, use `list-subissues` to find them all:
+
+```bash
+uv run scripts/gh_issue.py list-subissues owner/repo 123
+```
+
+This command:
+- Fetches the issue timeline via GitHub API
+- Identifies all cross-referenced issues (including from other repositories)
+- Returns full repository paths (e.g., `owner/other-repo#456`)
+- Handles duplicates automatically
+
+**Output formats:**
+- Table view (default): Shows reference, title, and state
+- JSON (`--json`): Machine-readable format for scripting
+
+### Dump Issue Tree
+
+To save an issue and all its sub-issues as markdown files:
+
+```bash
+uv run scripts/gh_issue.py dump-tree owner/repo 123 thoughts/shared/issues/
+```
+
+This command:
+1. Fetches the parent issue and saves as `00-OVERVIEW.md`
+2. Lists all cross-referenced sub-issues (using timeline API)
+3. Fetches each sub-issue (handles cross-repo correctly)
+4. Saves each as a separate markdown file with metadata
+5. Creates directory: `{issue_number}-{safe-title}/`
+
+**Handles:**
+- Cross-repository references (e.g., planning-blockchain → fhevm-internal)
+- Control characters in issue bodies (using `gh issue view`)
+- Long titles (truncates to 80 chars for filenames)
+- Missing or empty bodies (shows "(No description provided)")
+
+**Use cases:**
+- Archive issue discussions locally
+- Offline reference during implementation
+- Create handoff documentation
+- Analyze issue structure and relationships
+
+---
+
 ## Quick Reference
 
 | Task | Command |
@@ -337,6 +395,8 @@ Keywords that close issues: `fixes`, `closes`, `resolves` (followed by `#issue_n
 | Edit issue title | `uv run scripts/gh_issue.py edit owner/repo 123 --title "feat(scope): new title"` |
 | View issue | `uv run scripts/gh_issue.py view owner/repo 123` |
 | List issues | `uv run scripts/gh_issue.py list owner/repo` |
+| List sub-issues | `uv run scripts/gh_issue.py list-subissues owner/repo 123` |
+| Dump issue tree | `uv run scripts/gh_issue.py dump-tree owner/repo 123 /path/to/output` |
 | Link issues | `uv run scripts/gh_issue.py link owner/repo --parent 10 --child 42` |
 | Add comment | `uv run scripts/gh_issue.py comment owner/repo 123 "message"` |
 | Add labels | `uv run scripts/gh_issue.py labels owner/repo 123 --add "bug,urgent"` |
