@@ -156,8 +156,9 @@ This skill includes Python scripts in `scripts/` that wrap GitHub API operations
 | `edit` | Edit an existing issue's title or body |
 | `view` | View issue details |
 | `list` | List issues in a repository |
-| `list-subissues` | List all sub-issues cross-referenced by a parent (handles cross-repo) |
-| `dump-tree` | Dump issue and all sub-issues to markdown files |
+| `list-subissues` | List all sub-issues of a parent (GraphQL API) |
+| `dump-tree` | Dump issue and sub-issues to markdown with frontmatter |
+| `push` | Push/sync issue from markdown file to GitHub |
 | `link` | Link two issues (parent/child relationship) |
 | `close` | Close an issue |
 | `comment` | Add a comment to an issue |
@@ -355,30 +356,107 @@ This command:
 
 ### Dump Issue Tree
 
-To save an issue and all its sub-issues as markdown files:
+To save an issue and all its sub-issues as markdown files with YAML frontmatter:
 
 ```bash
 uv run scripts/gh_issue.py dump-tree owner/repo 123 thoughts/shared/issues/
 ```
 
 This command:
-1. Fetches the parent issue and saves as `00-OVERVIEW.md`
-2. Lists all cross-referenced sub-issues (using timeline API)
-3. Fetches each sub-issue (handles cross-repo correctly)
-4. Saves each as a separate markdown file with metadata
+1. Fetches the parent issue and saves as `{issue_number}-{safe-title}.md`
+2. Lists actual sub-issues via GraphQL API (not just cross-references)
+3. Fetches each sub-issue with full metadata (assignees, milestone, etc.)
+4. Saves each as a markdown file with YAML frontmatter
 5. Creates directory: `{issue_number}-{safe-title}/`
 
-**Handles:**
-- Cross-repository references (e.g., planning-blockchain → fhevm-internal)
-- Control characters in issue bodies (using `gh issue view`)
-- Long titles (truncates to 80 chars for filenames)
-- Missing or empty bodies (shows "(No description provided)")
+**Output format (frontmatter):**
+
+```yaml
+---
+title: "feat(auth): add OAuth2 support"
+repo: owner/repo
+number: 123
+state: open
+labels:
+  - enhancement
+assignees:
+  - username
+milestone: "Q1 2026"
+parent: owner/repo#100
+created_at: 2026-01-14T12:00:00Z
+author: username
+url: https://github.com/owner/repo/issues/123
+---
+
+## Why
+... actual body content (clean, no metadata) ...
+```
+
+**Benefits:**
+- Clean separation of metadata and content
+- Machine-parseable frontmatter
+- Round-trip editing: dump → edit → push back
+- GitHub body stays clean (no metadata pollution)
+
+---
+
+### Push Issue from File
+
+Push a markdown file with frontmatter back to GitHub:
+
+```bash
+# Create new issue (no number in frontmatter)
+uv run scripts/gh_issue.py push new-feature.md
+
+# Update existing issue (has number in frontmatter)
+uv run scripts/gh_issue.py push 123-existing-issue.md
+
+# Skip confirmation
+uv run scripts/gh_issue.py push issue.md --yes
+```
+
+The `push` command:
+1. Parses YAML frontmatter for metadata
+2. Uses body content as the GitHub issue body (clean, no metadata)
+3. Creates new issue if `number` is omitted
+4. Updates existing issue if `number` is present
+5. Applies labels, assignees, milestone, project from frontmatter
+6. Links to parent issue if `parent` is specified
+
+**Required frontmatter fields:**
+- `title`: Issue title (must follow conventional commit format)
+- `repo`: Repository in owner/repo format
+
+**Optional frontmatter fields:**
+- `number`: Issue number (omit for new issues)
+- `labels`: List of labels to apply
+- `assignees`: List of GitHub usernames
+- `milestone`: Milestone name or number
+- `project`: Project name to add issue to
+- `parent`: Parent issue reference (e.g., "owner/repo#123")
+
+---
+
+### Round-Trip Workflow
+
+The frontmatter format enables a powerful workflow:
+
+```bash
+# 1. Export issue tree to local files
+uv run scripts/gh_issue.py dump-tree owner/repo 123 ./issues/
+
+# 2. Edit locally (modify body, add labels, change assignees, etc.)
+$EDITOR ./issues/123-feature/456-sub-task.md
+
+# 3. Push changes back to GitHub
+uv run scripts/gh_issue.py push ./issues/123-feature/456-sub-task.md
+```
 
 **Use cases:**
-- Archive issue discussions locally
-- Offline reference during implementation
-- Create handoff documentation
-- Analyze issue structure and relationships
+- Batch editing multiple issues offline
+- Template-based issue creation
+- Migrating issues between repositories
+- Version-controlled issue content
 
 ---
 
@@ -396,7 +474,8 @@ This command:
 | View issue | `uv run scripts/gh_issue.py view owner/repo 123` |
 | List issues | `uv run scripts/gh_issue.py list owner/repo` |
 | List sub-issues | `uv run scripts/gh_issue.py list-subissues owner/repo 123` |
-| Dump issue tree | `uv run scripts/gh_issue.py dump-tree owner/repo 123 /path/to/output` |
+| Dump issue tree | `uv run scripts/gh_issue.py dump-tree owner/repo 123 ./issues/` |
+| Push from file | `uv run scripts/gh_issue.py push ./issues/123-feature.md` |
 | Link issues | `uv run scripts/gh_issue.py link owner/repo --parent 10 --child 42` |
 | Add comment | `uv run scripts/gh_issue.py comment owner/repo 123 "message"` |
 | Add labels | `uv run scripts/gh_issue.py labels owner/repo 123 --add "bug,urgent"` |

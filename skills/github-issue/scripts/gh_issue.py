@@ -5,6 +5,7 @@
 #   "ghapi>=1.0.5",
 #   "typer>=0.9.0",
 #   "rich>=13.0.0",
+#   "pyyaml>=6.0",
 # ]
 # ///
 """
@@ -19,17 +20,39 @@ Commands:
     edit            Edit an existing issue's title or body
     view            View issue details
     list            List issues in a repository
-    list-subissues  List all sub-issues cross-referenced by a parent
-    dump-tree       Dump issue and all sub-issues to markdown files
+    list-subissues  List all sub-issues of a parent (GraphQL API)
+    dump-tree       Dump issue and all sub-issues to markdown files with frontmatter
+    push            Push/sync an issue from markdown file with frontmatter to GitHub
     link            Link two issues (parent/child relationship)
     close           Close an issue
     comment         Add a comment to an issue
     labels          Manage issue labels
+    init            Initialize an issue body template
+
+Frontmatter Format:
+    dump-tree and push commands use YAML frontmatter for metadata:
+
+    ---
+    title: "feat(auth): add OAuth2 support"
+    repo: owner/repo
+    number: 123          # omit for new issues
+    state: open
+    labels:
+      - enhancement
+    assignees:
+      - username
+    milestone: "Q1 2026"
+    project: "My Project"
+    parent: owner/repo#100
+    ---
+
+    Body content here...
 
 Examples:
     uv run gh_issue.py create owner/repo --title "Bug: login fails" --body-file /tmp/issue.md
     uv run gh_issue.py create-sub owner/repo --parent 10 --title "Sub-task" --body "..."
-    uv run gh_issue.py edit owner/repo 123 --body-file /tmp/updated-body.md
+    uv run gh_issue.py dump-tree owner/repo 123 ./issues/
+    uv run gh_issue.py push ./issues/123-my-issue.md
     uv run gh_issue.py view owner/repo 123
     uv run gh_issue.py link owner/repo --parent 10 --child 42
 """
@@ -39,10 +62,12 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import typer
+import yaml
 from ghapi.all import GhApi
 from rich.console import Console
 from rich.table import Table
@@ -52,6 +77,129 @@ from rich.syntax import Syntax
 
 app = typer.Typer(help="GitHub Issue CLI")
 console = Console()
+
+
+# =============================================================================
+# Frontmatter Types and Utilities
+# =============================================================================
+
+@dataclass
+class IssueMetadata:
+    """Structured metadata for an issue stored in YAML frontmatter."""
+    title: str
+    repo: str
+    number: int | None = None  # None for new issues
+    state: str = "open"
+    labels: list[str] = field(default_factory=list)
+    assignees: list[str] = field(default_factory=list)
+    milestone: str | None = None
+    project: str | None = None
+    parent: str | None = None  # Format: "owner/repo#number" or just "#number" for same repo
+    # Read-only fields (for reference, ignored on push)
+    created_at: str | None = None
+    author: str | None = None
+    url: str | None = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for YAML serialization."""
+        d = {
+            "title": self.title,
+            "repo": self.repo,
+        }
+        if self.number is not None:
+            d["number"] = self.number
+        d["state"] = self.state
+        if self.labels:
+            d["labels"] = self.labels
+        if self.assignees:
+            d["assignees"] = self.assignees
+        if self.milestone:
+            d["milestone"] = self.milestone
+        if self.project:
+            d["project"] = self.project
+        if self.parent:
+            d["parent"] = self.parent
+        # Read-only fields
+        if self.created_at:
+            d["created_at"] = self.created_at
+        if self.author:
+            d["author"] = self.author
+        if self.url:
+            d["url"] = self.url
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "IssueMetadata":
+        """Create from dictionary (parsed YAML)."""
+        return cls(
+            title=d.get("title", ""),
+            repo=d.get("repo", ""),
+            number=d.get("number"),
+            state=d.get("state", "open"),
+            labels=d.get("labels", []) or [],
+            assignees=d.get("assignees", []) or [],
+            milestone=d.get("milestone"),
+            project=d.get("project"),
+            parent=d.get("parent"),
+            created_at=d.get("created_at"),
+            author=d.get("author"),
+            url=d.get("url"),
+        )
+
+
+def parse_frontmatter(content: str) -> tuple[IssueMetadata | None, str]:
+    """Parse YAML frontmatter from markdown content.
+
+    Args:
+        content: Full markdown content with optional frontmatter
+
+    Returns:
+        Tuple of (metadata, body). metadata is None if no frontmatter found.
+    """
+    content = content.strip()
+    if not content.startswith("---"):
+        return None, content
+
+    # Find the closing ---
+    lines = content.split("\n")
+    end_idx = None
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            end_idx = i
+            break
+
+    if end_idx is None:
+        return None, content
+
+    # Parse YAML
+    yaml_content = "\n".join(lines[1:end_idx])
+    body = "\n".join(lines[end_idx + 1:]).strip()
+
+    try:
+        metadata_dict = yaml.safe_load(yaml_content) or {}
+        metadata = IssueMetadata.from_dict(metadata_dict)
+        return metadata, body
+    except yaml.YAMLError:
+        return None, content
+
+
+def format_frontmatter(metadata: IssueMetadata, body: str) -> str:
+    """Format metadata and body into markdown with YAML frontmatter.
+
+    Args:
+        metadata: Issue metadata
+        body: Markdown body content
+
+    Returns:
+        Full markdown content with frontmatter
+    """
+    yaml_content = yaml.dump(
+        metadata.to_dict(),
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+    )
+    return f"---\n{yaml_content}---\n\n{body}"
 
 # Conventional commit pattern: type(scope): description or type: description
 CONVENTIONAL_COMMIT_PATTERN = re.compile(
@@ -831,16 +979,70 @@ Key components:
     print(str(output))
 
 
+def _fetch_subissues_graphql(owner: str, repo_name: str, issue_number: int) -> list[dict]:
+    """Fetch actual sub-issues using GitHub's GraphQL API.
+
+    Returns only formal sub-issues, not all cross-referenced issues.
+    """
+    query = """
+    query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+            issue(number: $number) {
+                subIssues(first: 100) {
+                    nodes {
+                        number
+                        title
+                        state
+                        url
+                        repository {
+                            nameWithOwner
+                        }
+                    }
+                }
+            }
+        }
+    }
+    """
+
+    result = subprocess.run(
+        [
+            "gh", "api", "graphql",
+            "-f", f"query={query}",
+            "-F", f"owner={owner}",
+            "-F", f"repo={repo_name}",
+            "-F", f"number={issue_number}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True
+    )
+
+    data = json.loads(result.stdout)
+    sub_issues_data = data.get("data", {}).get("repository", {}).get("issue", {}).get("subIssues", {}).get("nodes", [])
+
+    subissues = []
+    for node in sub_issues_data:
+        subissues.append({
+            "repo": node["repository"]["nameWithOwner"],
+            "number": node["number"],
+            "title": node["title"],
+            "url": node["url"],
+            "state": node["state"].lower()
+        })
+
+    return subissues
+
+
 @app.command()
 def list_subissues(
     repo: str = typer.Argument(..., help="Repository in format 'owner/repo'"),
     issue_number: int = typer.Argument(..., help="Parent issue number"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
-    """List all sub-issues cross-referenced by a parent issue.
+    """List all sub-issues of a parent issue.
 
-    This command handles cross-repo references correctly by preserving
-    the full repository path for each sub-issue.
+    Uses GitHub's native sub-issues feature (GraphQL API) to fetch only
+    actual sub-issues, not all cross-referenced issues.
 
     Examples:
         uv run gh_issue.py list-subissues owner/repo 123
@@ -849,44 +1051,12 @@ def list_subissues(
     owner, repo_name = parse_repo(repo)
 
     try:
-        # Use gh CLI to fetch timeline with pagination
-        result = subprocess.run(
-            ["gh", "api", f"repos/{owner}/{repo_name}/issues/{issue_number}/timeline", "--paginate"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        timeline = json.loads(result.stdout)
-
-        # Extract cross-referenced issues with full repo paths
-        subissues = []
-        for event in timeline:
-            if event.get("event") == "cross-referenced" and event.get("source", {}).get("issue"):
-                source_issue = event["source"]["issue"]
-                repo_full_name = source_issue["repository"]["full_name"]
-                issue_num = source_issue["number"]
-                subissues.append({
-                    "repo": repo_full_name,
-                    "number": issue_num,
-                    "title": source_issue["title"],
-                    "url": source_issue["html_url"],
-                    "state": source_issue["state"]
-                })
-
-        # Remove duplicates (same repo+number)
-        seen = set()
-        unique_subissues = []
-        for sub in subissues:
-            key = f"{sub['repo']}#{sub['number']}"
-            if key not in seen:
-                seen.add(key)
-                unique_subissues.append(sub)
+        subissues = _fetch_subissues_graphql(owner, repo_name, issue_number)
 
         if json_output:
-            print(json.dumps(unique_subissues, indent=2))
+            print(json.dumps(subissues, indent=2))
         else:
-            if not unique_subissues:
+            if not subissues:
                 console.print("[yellow]No sub-issues found[/yellow]")
                 return
 
@@ -896,16 +1066,16 @@ def list_subissues(
             table.add_column("Title", style="white")
             table.add_column("State", style="green")
 
-            for sub in unique_subissues:
+            for sub in subissues:
                 ref = f"{sub['repo']}#{sub['number']}"
                 state_style = "green" if sub["state"] == "open" else "dim"
                 table.add_row(ref, sub["title"], f"[{state_style}]{sub['state'].upper()}[/{state_style}]")
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(unique_subissues)} sub-issues[/dim]\n")
+            console.print(f"\n[dim]Total: {len(subissues)} sub-issues[/dim]\n")
 
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]Error fetching timeline: {e.stderr}[/red]")
+        console.print(f"[red]Error fetching sub-issues: {e.stderr}[/red]")
         raise typer.Exit(1)
     except json.JSONDecodeError as e:
         console.print(f"[red]Error parsing JSON response: {e}[/red]")
@@ -919,10 +1089,12 @@ def dump_tree(
     output_dir: Path = typer.Argument(..., help="Output directory for markdown files"),
     skip_validation: bool = typer.Option(False, "--skip-validation", help="Skip title validation"),
 ):
-    """Dump an issue and all its sub-issues to markdown files.
+    """Dump an issue and all its sub-issues to markdown files with frontmatter.
 
-    Creates a directory structure with the parent issue as 00-OVERVIEW.md
-    and all sub-issues as separate markdown files.
+    Creates a directory structure with markdown files containing YAML frontmatter
+    for metadata (labels, assignees, milestone, etc.) and clean body content.
+
+    The frontmatter format enables round-trip editing: export → edit → push back.
 
     Examples:
         uv run gh_issue.py dump-tree owner/repo 123 thoughts/shared/issues/
@@ -947,52 +1119,29 @@ def dump_tree(
 
         console.print(f"[cyan]Creating issue tree in: {issue_dir}[/cyan]\n")
 
-        # Save parent issue as 00-OVERVIEW.md
-        parent_file = issue_dir / "00-OVERVIEW.md"
-        parent_content = _format_issue_markdown(parent_issue)
+        # Save parent issue with same naming convention as sub-issues
+        parent_filename = f"{issue_number}-{safe_title}.md"
+        parent_file = issue_dir / parent_filename
+        parent_content = _format_issue_markdown(parent_issue, repo=repo)
         parent_file.write_text(parent_content)
         console.print(f"[green]✓[/green] Saved parent: {parent_file.name}")
 
-        # Fetch sub-issues using list-subissues logic
-        result = subprocess.run(
-            ["gh", "api", f"repos/{owner}/{repo_name}/issues/{issue_number}/timeline", "--paginate"],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        timeline = json.loads(result.stdout)
+        # Fetch actual sub-issues via GraphQL (not cross-references)
+        subissues = _fetch_subissues_graphql(owner, repo_name, issue_number)
 
-        # Extract sub-issues
-        subissues = []
-        for event in timeline:
-            if event.get("event") == "cross-referenced" and event.get("source", {}).get("issue"):
-                source_issue = event["source"]["issue"]
-                repo_full_name = source_issue["repository"]["full_name"]
-                issue_num = source_issue["number"]
-                subissues.append({
-                    "repo": repo_full_name,
-                    "number": issue_num,
-                })
-
-        # Remove duplicates
-        seen = set()
-        unique_refs = []
-        for sub in subissues:
-            key = f"{sub['repo']}#{sub['number']}"
-            if key not in seen:
-                seen.add(key)
-                unique_refs.append(sub)
+        # Parent reference for sub-issues
+        parent_ref = f"{repo}#{issue_number}"
 
         # Fetch and save each sub-issue
-        for sub in unique_refs:
-            sub_owner, sub_repo = sub["repo"].split("/")
+        for sub in subissues:
+            sub_repo = sub["repo"]
             sub_number = sub["number"]
 
             try:
-                # Fetch sub-issue using gh issue view
+                # Fetch sub-issue with full metadata using gh issue view
                 result = subprocess.run(
-                    ["gh", "issue", "view", str(sub_number), "--repo", sub["repo"],
-                     "--json", "number,title,body,state,labels,createdAt,author,url"],
+                    ["gh", "issue", "view", str(sub_number), "--repo", sub_repo,
+                     "--json", "number,title,body,state,labels,createdAt,author,url,assignees,milestone"],
                     capture_output=True,
                     text=True,
                     check=True
@@ -1004,14 +1153,19 @@ def dump_tree(
                 safe_sub_title = re.sub(r"[^a-z0-9]+", "-", sub_title.lower()).strip("-")[:80]
                 filename = f"{sub_number}-{safe_sub_title}.md"
 
-                # Format and save
-                sub_content = _format_issue_markdown(sub_issue, is_gh_cli_format=True)
+                # Format and save with frontmatter
+                sub_content = _format_issue_markdown(
+                    sub_issue,
+                    repo=sub_repo,
+                    is_gh_cli_format=True,
+                    parent=parent_ref,
+                )
                 sub_file = issue_dir / filename
                 sub_file.write_text(sub_content)
                 console.print(f"[green]✓[/green] Saved sub-issue: {filename}")
 
             except subprocess.CalledProcessError as e:
-                console.print(f"[yellow]⚠[/yellow] Failed to fetch {sub['repo']}#{sub_number}: {e.stderr.strip()}")
+                console.print(f"[yellow]⚠[/yellow] Failed to fetch {sub_repo}#{sub_number}: {e.stderr.strip()}")
                 continue
 
         console.print(f"\n[bold green]Done![/bold green] Dumped to: {issue_dir}")
@@ -1025,45 +1179,292 @@ def dump_tree(
         raise typer.Exit(1)
 
 
-def _format_issue_markdown(issue: dict, is_gh_cli_format: bool = False) -> str:
-    """Format issue data as markdown.
+@app.command()
+def push(
+    file_path: Path = typer.Argument(..., help="Path to markdown file with frontmatter"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    skip_validation: bool = typer.Option(False, "--skip-validation", help="Skip title format validation"),
+):
+    """Push an issue from a markdown file with frontmatter to GitHub.
+
+    Reads metadata from YAML frontmatter and body from markdown content.
+    Creates a new issue if no 'number' in frontmatter, or updates existing.
+
+    Frontmatter fields:
+      - title: Issue title (required)
+      - repo: Repository in owner/repo format (required)
+      - number: Issue number (omit for new issues)
+      - labels: List of labels to apply
+      - assignees: List of GitHub usernames
+      - milestone: Milestone name or number
+      - project: Project name to add issue to
+      - parent: Parent issue reference (e.g., "owner/repo#123")
+
+    Examples:
+        uv run gh_issue.py push issue.md
+        uv run gh_issue.py push issue.md --yes
+    """
+    if not file_path.exists():
+        console.print(f"[red]Error: File not found: {file_path}[/red]")
+        raise typer.Exit(1)
+
+    content = file_path.read_text()
+    metadata, body = parse_frontmatter(content)
+
+    if metadata is None:
+        console.print("[red]Error: No valid YAML frontmatter found in file[/red]")
+        console.print("[dim]Frontmatter should be between --- markers at the start of the file[/dim]")
+        raise typer.Exit(1)
+
+    if not metadata.title:
+        console.print("[red]Error: 'title' is required in frontmatter[/red]")
+        raise typer.Exit(1)
+
+    if not metadata.repo:
+        console.print("[red]Error: 'repo' is required in frontmatter[/red]")
+        raise typer.Exit(1)
+
+    # Validate title format
+    if not skip_validation:
+        valid, error_msg = validate_title(metadata.title)
+        if not valid:
+            console.print(f"[red]Invalid title format:[/red]\n{error_msg}")
+            raise typer.Exit(1)
+
+    owner, repo_name = parse_repo(metadata.repo)
+    is_update = metadata.number is not None
+
+    # Preview
+    if not yes:
+        console.print("\n" + "=" * 60)
+        action = "UPDATE" if is_update else "CREATE"
+        console.print(f"[bold cyan]ISSUE {action} PREVIEW[/bold cyan]")
+        console.print("=" * 60)
+
+        console.print(f"\n[bold]Repository:[/bold] {metadata.repo}")
+        console.print(f"[bold]Title:[/bold] {metadata.title}")
+        if is_update:
+            console.print(f"[bold]Issue #:[/bold] {metadata.number}")
+        if metadata.labels:
+            console.print(f"[bold]Labels:[/bold] {', '.join(metadata.labels)}")
+        if metadata.assignees:
+            console.print(f"[bold]Assignees:[/bold] {', '.join(metadata.assignees)}")
+        if metadata.milestone:
+            console.print(f"[bold]Milestone:[/bold] {metadata.milestone}")
+        if metadata.project:
+            console.print(f"[bold]Project:[/bold] {metadata.project}")
+        if metadata.parent:
+            console.print(f"[bold]Parent:[/bold] {metadata.parent}")
+
+        console.print("\n[bold]Body:[/bold]")
+        console.print("-" * 40)
+        console.print(Markdown(body))
+        console.print("-" * 40)
+
+        console.print(f"\n[yellow]{action.lower().capitalize()} this issue?[/yellow]")
+        response = input("Choice [y/n]: ").strip().lower()
+        if response not in ("y", "yes"):
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise typer.Exit(0)
+
+    api = get_api(owner, repo_name)
+
+    try:
+        if is_update:
+            # Update existing issue
+            update_kwargs = {"title": metadata.title, "body": body}
+
+            # Update labels (replace all)
+            if metadata.labels is not None:
+                update_kwargs["labels"] = metadata.labels
+
+            # Update assignees (replace all)
+            if metadata.assignees is not None:
+                update_kwargs["assignees"] = metadata.assignees
+
+            # Update milestone
+            if metadata.milestone:
+                try:
+                    update_kwargs["milestone"] = int(metadata.milestone)
+                except ValueError:
+                    milestones = list(api.issues.list_milestones(state="open"))
+                    found = next((m for m in milestones if m.get("title") == metadata.milestone), None)
+                    if found:
+                        update_kwargs["milestone"] = found.get("number")
+                    else:
+                        console.print(f"[yellow]Warning: Milestone '{metadata.milestone}' not found[/yellow]")
+
+            api.issues.update(metadata.number, **update_kwargs)
+            console.print(f"[green]Issue #{metadata.number} updated successfully![/green]")
+            issue_url = f"https://github.com/{metadata.repo}/issues/{metadata.number}"
+
+        else:
+            # Create new issue
+            issue_kwargs = {"title": metadata.title, "body": body}
+
+            if metadata.labels:
+                issue_kwargs["labels"] = metadata.labels
+
+            if metadata.assignees:
+                issue_kwargs["assignees"] = metadata.assignees
+
+            if metadata.milestone:
+                try:
+                    issue_kwargs["milestone"] = int(metadata.milestone)
+                except ValueError:
+                    milestones = list(api.issues.list_milestones(state="open"))
+                    found = next((m for m in milestones if m.get("title") == metadata.milestone), None)
+                    if found:
+                        issue_kwargs["milestone"] = found.get("number")
+                    else:
+                        console.print(f"[yellow]Warning: Milestone '{metadata.milestone}' not found[/yellow]")
+
+            issue = api.issues.create(**issue_kwargs)
+            issue_number = issue.get("number")
+            issue_url = issue.get("html_url")
+
+            console.print(f"[green]Issue #{issue_number} created successfully![/green]")
+
+            # Link to parent if specified
+            if metadata.parent:
+                _link_to_parent(api, metadata.repo, issue_number, issue.get("node_id"), metadata.parent)
+
+        # Add to project if specified
+        if metadata.project:
+            issue_num = metadata.number if is_update else issue_number
+            try:
+                subprocess.run(
+                    ["gh", "issue", "edit", str(issue_num), "--add-project", metadata.project,
+                     "-R", metadata.repo],
+                    check=True,
+                    capture_output=True,
+                )
+                console.print(f"[dim]Added to project: {metadata.project}[/dim]")
+            except subprocess.CalledProcessError:
+                console.print(f"[yellow]Warning: Could not add to project '{metadata.project}'[/yellow]")
+
+        console.print(f"[dim]URL: {issue_url}[/dim]")
+        print(issue_url)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+def _link_to_parent(api: GhApi, child_repo: str, child_number: int, child_node_id: str, parent_ref: str):
+    """Link an issue to a parent issue.
+
+    Args:
+        api: GhApi instance
+        child_repo: Child issue repo (owner/repo)
+        child_number: Child issue number
+        child_node_id: Child issue GraphQL node ID
+        parent_ref: Parent reference like "owner/repo#123" or "#123" (same repo)
+    """
+    # Parse parent reference
+    if parent_ref.startswith("#"):
+        # Same repo
+        parent_repo = child_repo
+        parent_number = int(parent_ref[1:])
+    elif "#" in parent_ref:
+        parent_repo, parent_num_str = parent_ref.rsplit("#", 1)
+        parent_number = int(parent_num_str)
+    else:
+        console.print(f"[yellow]Warning: Invalid parent reference '{parent_ref}'[/yellow]")
+        return
+
+    try:
+        # Get parent node ID
+        parent_owner, parent_repo_name = parent_repo.split("/")
+        parent_api = get_api(parent_owner, parent_repo_name)
+        parent_issue = parent_api.issues.get(parent_number)
+        parent_node_id = parent_issue.get("node_id")
+
+        if parent_node_id and child_node_id:
+            # Use GraphQL to create sub-issue relationship
+            query = """
+                mutation($parentId: ID!, $childId: ID!) {
+                    addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
+                        issue { number }
+                    }
+                }
+            """
+            result = subprocess.run(
+                [
+                    "gh", "api", "graphql",
+                    "-f", f"parentId={parent_node_id}",
+                    "-f", f"childId={child_node_id}",
+                    "-f", f"query={query}",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                console.print(f"[dim]Linked as sub-issue of {parent_ref}[/dim]")
+            else:
+                console.print(f"[yellow]Note: Could not create formal sub-issue link[/yellow]")
+
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not link to parent: {e}[/yellow]")
+
+
+def _format_issue_markdown(
+    issue: dict,
+    repo: str,
+    is_gh_cli_format: bool = False,
+    parent: str | None = None,
+) -> str:
+    """Format issue data as markdown with YAML frontmatter.
 
     Args:
         issue: Issue data from GitHub API
+        repo: Repository in owner/repo format
         is_gh_cli_format: True if from gh CLI (different field names)
+        parent: Parent issue reference (e.g., "owner/repo#123")
+
+    Returns:
+        Markdown content with YAML frontmatter containing metadata
     """
     if is_gh_cli_format:
         # gh CLI format
         title = issue["title"]
         url = issue["url"]
         state = issue["state"]
-        labels = ", ".join(label["name"] for label in issue.get("labels", []))
+        labels = [label["name"] for label in issue.get("labels", [])]
         created = issue["createdAt"]
-        author = issue["author"]["login"]
-        body = issue.get("body", "")
+        author = issue["author"]["login"] if issue.get("author") else None
+        body = issue.get("body", "") or ""
+        assignees = [a["login"] for a in issue.get("assignees", [])]
+        milestone = issue.get("milestone", {}).get("title") if issue.get("milestone") else None
+        number = issue.get("number")
     else:
         # gh api format
         title = issue["title"]
         url = issue["html_url"]
         state = issue["state"]
-        labels = ", ".join(label["name"] for label in issue.get("labels", []))
+        labels = [label["name"] for label in issue.get("labels", [])]
         created = issue["created_at"]
-        author = issue["user"]["login"]
-        body = issue.get("body", "")
+        author = issue["user"]["login"] if issue.get("user") else None
+        body = issue.get("body", "") or ""
+        assignees = [a["login"] for a in issue.get("assignees", [])]
+        milestone = issue.get("milestone", {}).get("title") if issue.get("milestone") else None
+        number = issue.get("number")
 
-    content = f"""# {title}
+    metadata = IssueMetadata(
+        title=title,
+        repo=repo,
+        number=number,
+        state=state.lower(),
+        labels=labels,
+        assignees=assignees,
+        milestone=milestone,
+        parent=parent,
+        created_at=created,
+        author=author,
+        url=url,
+    )
 
-**Issue:** {url}
-**State:** {state.upper()}
-**Labels:** {labels}
-**Created:** {created}
-**Author:** @{author}
-
----
-
-{body if body else "(No description provided)"}
-"""
-    return content
+    return format_frontmatter(metadata, body)
 
 
 if __name__ == "__main__":
