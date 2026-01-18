@@ -1,6 +1,6 @@
 ---
 name: github-issue
-description: Guide structured GitHub issue creation and management. Use when creating bug reports, feature requests, or issue-related tasks.
+description: Comprehensive GitHub issue lifecycle management from creation through resolution. Use when creating/viewing/editing/managing GitHub issues, writing issue descriptions, creating sub-issues, linking parent/child issues, dumping issue trees to markdown, or pushing issues from files. Covers the full issue lifecycle - creating issues with conventional commit titles, managing sub-issues and cross-repo references, editing issue content, viewing and listing issues, dumping issue trees with YAML frontmatter, round-trip workflows (dump→edit→push), linking issues, commenting, labeling, and closing. Supports meta-tickets, component issues, and cross-repo sub-issue tracking.
 ---
 
 # GitHub Issue Management Skill

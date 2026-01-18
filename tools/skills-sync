@@ -1,150 +1,210 @@
-#!/bin/bash
-# skills-sync: Sync skills from this repo to ~/.claude/skills/ and ~/.codex/skills/
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "typer>=0.9.0",
+#   "rich>=13.0.0",
+# ]
+# ///
+"""skills-sync: Sync skills from this repo to ~/.claude/skills/ and ~/.codex/skills/"""
 
-VERSION="1.1.0"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_SKILLS="$SCRIPT_DIR/../skills"
-TARGET_DIRS=("$HOME/.claude/skills" "$HOME/.codex/skills")
+import filecmp
+import shutil
+import sys
+from pathlib import Path
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+import typer
+from rich.console import Console
 
-show_help() {
-    cat << 'EOF'
-NAME
-    skills-sync - sync Claude skills from repo to ~/.claude/skills/ and ~/.codex/skills/
+VERSION = "2.0.0"
 
-SYNOPSIS
-    skills-sync [--dry-run | -n]
-    skills-sync --help | -h
-    skills-sync --version | -v
+console = Console()
 
-DESCRIPTION
-    skills-sync copies skills from this repository's skills/ directory
-    to ~/.claude/skills/ and ~/.codex/skills/, making them available to
-    Claude Code and Codex.
+# Resolve paths relative to script location
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_SKILLS = SCRIPT_DIR.parent / "skills"
+TARGET_DIRS = [
+    Path.home() / ".claude" / "skills",
+    Path.home() / ".codex" / "skills",
+]
 
-    Behavior:
-      - Copies all skills from repo to both target directories
-      - Overwrites existing skills on conflict
-      - Preserves other skills already in target directories
+app = typer.Typer(
+    help="Sync Claude skills from repo to ~/.claude/skills/ and ~/.codex/skills/",
+    add_completion=False,
+    no_args_is_help=False,
+)
 
-OPTIONS
-    -n, --dry-run
-        Show what would be synced without making changes.
 
-    -h, --help
-        Show this help message.
+def directories_identical(src: Path, dst: Path) -> bool:
+    """Check if two directories have identical content recursively."""
+    if not dst.exists():
+        return False
 
-    -v, --version
-        Show version number.
+    # Use filecmp.dircmp for recursive comparison
+    comparison = filecmp.dircmp(src, dst)
+    return _dircmp_equal(comparison)
 
-EXAMPLES
-    Sync skills:
-        $ skills-sync
 
-    Preview changes:
-        $ skills-sync --dry-run
+def _dircmp_equal(dcmp: filecmp.dircmp) -> bool:
+    """Recursively check if dircmp shows directories are equal."""
+    # Check for any differences
+    if dcmp.left_only or dcmp.right_only or dcmp.diff_files or dcmp.funny_files:
+        return False
 
-FILES
-    Source: <repo>/skills/
-    Targets: ~/.claude/skills/
-             ~/.codex/skills/
+    # Recursively check subdirectories
+    for subdir in dcmp.common_dirs:
+        sub_dcmp = filecmp.dircmp(
+            Path(dcmp.left) / subdir,
+            Path(dcmp.right) / subdir,
+        )
+        if not _dircmp_equal(sub_dcmp):
+            return False
 
-EOF
-}
+    return True
 
-show_version() {
-    echo "skills-sync version $VERSION"
-}
 
-sync_skills() {
-    local dry_run="$1"
+def get_changed_files(src: Path, dst: Path) -> list[str]:
+    """Get list of files that differ between directories."""
+    if not dst.exists():
+        return ["(new skill)"]
 
+    changes = []
+    comparison = filecmp.dircmp(src, dst)
+    _collect_changes(comparison, "", changes)
+    return changes[:3]  # Limit to first 3 for brevity
+
+
+def _collect_changes(dcmp: filecmp.dircmp, prefix: str, changes: list[str]) -> None:
+    """Recursively collect changed files."""
+    for name in dcmp.left_only:
+        changes.append(f"+{prefix}{name}")
+    for name in dcmp.right_only:
+        changes.append(f"-{prefix}{name}")
+    for name in dcmp.diff_files:
+        changes.append(f"~{prefix}{name}")
+
+    for subdir in dcmp.common_dirs:
+        sub_dcmp = filecmp.dircmp(
+            Path(dcmp.left) / subdir,
+            Path(dcmp.right) / subdir,
+        )
+        _collect_changes(sub_dcmp, f"{prefix}{subdir}/", changes)
+
+
+def sync_skills(dry_run: bool = False) -> None:
+    """Main sync logic."""
     # Check source exists
-    if [ ! -d "$REPO_SKILLS" ]; then
-        printf "${RED}Error:${NC} Source directory not found: %s\n" "$REPO_SKILLS"
-        exit 1
-    fi
+    if not REPO_SKILLS.is_dir():
+        console.print(f"[red]Error:[/red] Source directory not found: {REPO_SKILLS}")
+        raise typer.Exit(1)
 
     # Check if any skills exist
-    if [ -z "$(ls -A "$REPO_SKILLS" 2>/dev/null)" ]; then
-        printf "${YELLOW}Warning:${NC} No skills found in %s\n" "$REPO_SKILLS"
-        exit 0
-    fi
+    skill_dirs = [d for d in REPO_SKILLS.iterdir() if d.is_dir()]
+    if not skill_dirs:
+        console.print(f"[yellow]Warning:[/yellow] No skills found in {REPO_SKILLS}")
+        raise typer.Exit(0)
 
-    printf "${BLUE}Source:${NC} %s\n\n" "$REPO_SKILLS"
+    console.print(f"[blue]Source:[/blue] {REPO_SKILLS}\n")
 
-    if [ "$dry_run" = "true" ]; then
-        printf "${YELLOW}[DRY RUN]${NC} Would sync:\n\n"
-    fi
+    if dry_run:
+        console.print("[yellow][DRY RUN][/yellow] Would sync:\n")
 
-    local total_count=0
+    total_count = 0
 
-    for TARGET_DIR in "${TARGET_DIRS[@]}"; do
+    for target_dir in TARGET_DIRS:
         # Create target if needed
-        if [ "$dry_run" != "true" ]; then
-            mkdir -p "$TARGET_DIR"
-        fi
+        if not dry_run:
+            target_dir.mkdir(parents=True, exist_ok=True)
 
-        printf "${BLUE}Target:${NC} %s\n" "$TARGET_DIR"
+        console.print(f"[blue]Target:[/blue] {target_dir}")
 
-        local count=0
-        for skill_dir in "$REPO_SKILLS"/*/; do
-            [ -d "$skill_dir" ] || continue
+        synced_count = 0
+        skipped_count = 0
 
-            local skill_name=$(basename "$skill_dir")
-            local target_skill="$TARGET_DIR/$skill_name"
+        for skill_dir in sorted(skill_dirs):
+            skill_name = skill_dir.name
+            target_skill = target_dir / skill_name
 
-            if [ -d "$target_skill" ]; then
-                local action="overwrite"
-                local color="$YELLOW"
-            else
-                local action="create"
-                local color="$GREEN"
-            fi
+            # Check if content is identical
+            if directories_identical(skill_dir, target_skill):
+                console.print(f"  [dim]\\[skip]      [/dim] {skill_name}")
+                skipped_count += 1
+                continue
 
-            if [ "$dry_run" = "true" ]; then
-                printf "  ${color}%-12s${NC} %s\n" "[$action]" "$skill_name"
-            else
-                # Remove trailing slash to ensure cp creates subdirectory correctly
-                cp -r "${skill_dir%/}" "$TARGET_DIR/"
-                printf "  ${color}✓${NC} %-12s %s\n" "[$action]" "$skill_name"
-            fi
+            # Determine action
+            if target_skill.exists():
+                action = "update"
+                style = "yellow"
+            else:
+                action = "create"
+                style = "green"
 
-            ((count++))
-        done
+            # Get changed files for verbose output
+            changes = get_changed_files(skill_dir, target_skill)
+            changes_str = f" [dim]({', '.join(changes)})[/dim]" if changes else ""
 
-        printf "  %d skill(s)\n\n" "$count"
-        ((total_count += count))
-    done
+            # Format action tag with escaped brackets
+            action_tag = f"\\[{action}]"
 
-    if [ "$dry_run" = "true" ]; then
-        printf "Would sync ${BLUE}%d${NC} skill(s) total\n" "$total_count"
-    else
-        printf "Synced ${GREEN}%d${NC} skill(s) total\n" "$total_count"
-    fi
-}
+            if dry_run:
+                console.print(f"  [{style}]{action_tag:<12}[/{style}] {skill_name}{changes_str}")
+            else:
+                # Remove old target and copy fresh
+                if target_skill.exists():
+                    shutil.rmtree(target_skill)
+                shutil.copytree(skill_dir, target_skill)
+                console.print(f"  [{style}]\u2713[/{style}] {action_tag:<12} {skill_name}{changes_str}")
 
-case "$1" in
-    -h|--help)
-        show_help
-        ;;
-    -v|--version)
-        show_version
-        ;;
-    -n|--dry-run)
-        sync_skills true
-        ;;
-    "")
-        sync_skills false
-        ;;
-    *)
-        echo "Unknown option: $1"
-        echo "Run 'skills-sync --help' for usage"
-        exit 1
-        ;;
-esac
+            synced_count += 1
+
+        console.print(f"  {synced_count} synced, {skipped_count} skipped (up-to-date)\n")
+        total_count += synced_count
+
+    if dry_run:
+        console.print(f"Would sync [blue]{total_count}[/blue] skill(s) total")
+    else:
+        console.print(f"Synced [green]{total_count}[/green] skill(s) total")
+
+
+def version_callback(value: bool) -> None:
+    """Show version and exit."""
+    if value:
+        console.print(f"skills-sync version {VERSION}")
+        raise typer.Exit()
+
+
+@app.command()
+def main(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        "-n",
+        help="Show what would be synced without making changes.",
+    ),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-v",
+        callback=version_callback,
+        is_eager=True,
+        help="Show version number.",
+    ),
+) -> None:
+    """
+    Sync Claude skills from repo to ~/.claude/skills/ and ~/.codex/skills/.
+
+    Behavior:
+      - Checks content similarity before syncing (SKILL.md, scripts/, references/)
+      - Skips skills that are already up-to-date (identical content)
+      - Overwrites only skills that have changed
+      - Preserves other skills already in target directories
+
+    Examples:
+      $ skills-sync              # Sync skills
+      $ skills-sync --dry-run    # Preview changes
+    """
+    sync_skills(dry_run=dry_run)
+
+
+if __name__ == "__main__":
+    app()
