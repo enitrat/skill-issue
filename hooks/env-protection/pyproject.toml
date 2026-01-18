@@ -1,0 +1,13 @@
+[project]
+name = "env-protection-hook"
+version = "0.1.0"
+description = "Claude Code hook to prevent reading .env files"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]

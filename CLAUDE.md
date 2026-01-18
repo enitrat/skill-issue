@@ -15,6 +15,12 @@ skills/              # Claude Skills (synced to ~/.claude/skills/)
     scripts/         # Python scripts with uv inline dependencies
     references/      # Reference documentation (optional)
 
+hooks/               # Claude Code hooks
+  <hook-name>/
+    hook.py          # Hook implementation (Python with uv)
+    wrapper.sh       # Shell wrapper for Claude Code
+    README.md        # Installation instructions
+
 tools/               # Shell scripts and CLI utilities
   <tool-name>        # Executable script (no extension)
 
@@ -70,6 +76,16 @@ uv run scripts/my_script.py command --option value
 4. Make executable: `chmod +x tools/<tool-name>`
 
 Style: See existing tools for consistent patterns (colors, help format, version).
+
+### Hooks
+
+1. Create `hooks/<hook-name>/` directory
+2. Write hook script (`hook.py`) using uv inline dependencies
+3. Create shell wrapper (`wrapper.sh`) that pipes stdin to the script
+4. Add `README.md` with installation instructions
+5. Make scripts executable: `chmod +x hooks/<hook-name>/*.py hooks/<hook-name>/*.sh`
+
+Installation: Add hook config to `~/.claude/settings.json` or `.claude/settings.json`
 
 ### Configs
 
