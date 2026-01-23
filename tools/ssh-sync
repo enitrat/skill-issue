@@ -22,6 +22,7 @@ DRY_RUN=false
 TOOLS_ONLY=false
 CONFIGS_ONLY=false
 SKIP_RUNTIMES=false
+FORCE_INSTALL=false
 SSH_PORT=22
 SSH_IDENTITY=""
 SSH_TARGET=""
@@ -61,6 +62,10 @@ OPTIONS
 
     --skip-runtimes
         Skip installing language runtimes (uv, bun, node, go).
+
+    -f, --force
+        Force reinstall all tools even if already present.
+        Useful when tools are corrupted or partially installed.
 
     -p, --port <port>
         SSH port (default: 22).
@@ -186,6 +191,10 @@ parse_args() {
                 ;;
             --skip-runtimes)
                 SKIP_RUNTIMES=true
+                shift
+                ;;
+            -f|--force)
+                FORCE_INSTALL=true
                 shift
                 ;;
             --password)
@@ -343,6 +352,7 @@ set -e
 SKIP_RUNTIMES="__SKIP_RUNTIMES__"
 TOOLS_ONLY="__TOOLS_ONLY__"
 CONFIGS_ONLY="__CONFIGS_ONLY__"
+FORCE_INSTALL="__FORCE_INSTALL__"
 
 # Colors
 RED='\033[0;31m'
@@ -418,6 +428,11 @@ install_system_deps() {
 install_ohmyzsh() {
     log_phase "Installing oh-my-zsh..."
 
+    if [ "$FORCE_INSTALL" = "true" ] && [ -d "$HOME/.oh-my-zsh" ]; then
+        rm -rf "$HOME/.oh-my-zsh"
+        log_info "Removed existing oh-my-zsh (--force)"
+    fi
+
     if [ -d "$HOME/.oh-my-zsh" ]; then
         log_skip "oh-my-zsh" "already installed"
     else
@@ -437,6 +452,9 @@ install_zsh_plugins() {
     local ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
 
     # Autosuggestions
+    if [ "$FORCE_INSTALL" = "true" ] && [ -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
+        rm -rf "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+    fi
     if [ -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
         log_skip "autosuggestions" "already installed"
     elif git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions" >/dev/null 2>&1; then
@@ -446,6 +464,9 @@ install_zsh_plugins() {
     fi
 
     # Syntax highlighting
+    if [ "$FORCE_INSTALL" = "true" ] && [ -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
+        rm -rf "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+    fi
     if [ -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
         log_skip "syntax-highlight" "already installed"
     elif git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" >/dev/null 2>&1; then
@@ -455,6 +476,9 @@ install_zsh_plugins() {
     fi
 
     # History substring search
+    if [ "$FORCE_INSTALL" = "true" ] && [ -d "$ZSH_CUSTOM/plugins/zsh-history-substring-search" ]; then
+        rm -rf "$ZSH_CUSTOM/plugins/zsh-history-substring-search"
+    fi
     if [ -d "$ZSH_CUSTOM/plugins/zsh-history-substring-search" ]; then
         log_skip "hist-search" "already installed"
     elif git clone --depth=1 https://github.com/zsh-users/zsh-history-substring-search "$ZSH_CUSTOM/plugins/zsh-history-substring-search" >/dev/null 2>&1; then
@@ -470,6 +494,9 @@ install_powerlevel10k() {
 
     local P10K_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"
 
+    if [ "$FORCE_INSTALL" = "true" ] && [ -d "$P10K_DIR" ]; then
+        rm -rf "$P10K_DIR"
+    fi
     if [ -d "$P10K_DIR" ]; then
         log_skip "powerlevel10k" "already installed"
     elif git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR" >/dev/null 2>&1; then
@@ -484,7 +511,10 @@ install_shell_enhancements() {
     log_phase "Installing shell enhancements..."
 
     # fzf
-    if command -v fzf &>/dev/null; then
+    if [ "$FORCE_INSTALL" = "true" ] && [ -d ~/.fzf ]; then
+        rm -rf ~/.fzf
+    fi
+    if [ "$FORCE_INSTALL" != "true" ] && command -v fzf &>/dev/null; then
         log_skip "fzf" "already installed"
     elif git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf >/dev/null 2>&1 && ~/.fzf/install --all --no-bash --no-fish >/dev/null 2>&1; then
         log_ok "fzf" "installed"
@@ -493,7 +523,7 @@ install_shell_enhancements() {
     fi
 
     # zoxide
-    if command -v zoxide &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v zoxide &>/dev/null; then
         log_skip "zoxide" "already installed"
     elif curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash >/dev/null 2>&1; then
         log_ok "zoxide" "installed"
@@ -502,7 +532,7 @@ install_shell_enhancements() {
     fi
 
     # atuin
-    if command -v atuin &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v atuin &>/dev/null; then
         log_skip "atuin" "already installed"
     elif curl -sSL https://setup.atuin.sh | bash >/dev/null 2>&1; then
         log_ok "atuin" "installed"
@@ -516,7 +546,10 @@ install_modern_cli() {
     log_phase "Installing modern CLI tools..."
 
     # bat
-    if command -v bat &>/dev/null || command -v batcat &>/dev/null; then
+    if [ "$FORCE_INSTALL" = "true" ]; then
+        rm -f ~/.local/bin/bat
+    fi
+    if [ "$FORCE_INSTALL" != "true" ] && { command -v bat &>/dev/null || command -v batcat &>/dev/null; }; then
         log_skip "bat" "already installed"
     elif pkg_install bat; then
         # Create symlink for apt (batcat -> bat)
@@ -530,7 +563,10 @@ install_modern_cli() {
     fi
 
     # fd
-    if command -v fd &>/dev/null || command -v fdfind &>/dev/null; then
+    if [ "$FORCE_INSTALL" = "true" ]; then
+        rm -f ~/.local/bin/fd
+    fi
+    if [ "$FORCE_INSTALL" != "true" ] && { command -v fd &>/dev/null || command -v fdfind &>/dev/null; }; then
         log_skip "fd" "already installed"
     else
         local fd_pkg
@@ -551,7 +587,7 @@ install_modern_cli() {
     fi
 
     # ripgrep
-    if command -v rg &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v rg &>/dev/null; then
         log_skip "ripgrep" "already installed"
     elif pkg_install ripgrep; then
         log_ok "ripgrep" "installed"
@@ -560,7 +596,10 @@ install_modern_cli() {
     fi
 
     # eza (apt doesn't have it, need GitHub release)
-    if command -v eza &>/dev/null; then
+    if [ "$FORCE_INSTALL" = "true" ]; then
+        rm -f ~/.local/bin/eza
+    fi
+    if [ "$FORCE_INSTALL" != "true" ] && command -v eza &>/dev/null; then
         log_skip "eza" "already installed"
     elif [ "$PKG_MGR" = "apt" ]; then
         # Install from GitHub releases for apt
@@ -576,7 +615,10 @@ install_modern_cli() {
     fi
 
     # delta
-    if command -v delta &>/dev/null; then
+    if [ "$FORCE_INSTALL" = "true" ]; then
+        rm -f ~/.local/bin/delta
+    fi
+    if [ "$FORCE_INSTALL" != "true" ] && command -v delta &>/dev/null; then
         log_skip "delta" "already installed"
     else
         local delta_pkg
@@ -654,7 +696,7 @@ install_runtimes() {
     log_phase "Installing runtimes..."
 
     # uv (Python)
-    if command -v uv &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v uv &>/dev/null; then
         log_skip "uv" "already installed"
     elif curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1; then
         log_ok "uv" "installed"
@@ -663,7 +705,7 @@ install_runtimes() {
     fi
 
     # bun
-    if command -v bun &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v bun &>/dev/null; then
         log_skip "bun" "already installed"
     elif curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1; then
         log_ok "bun" "installed"
@@ -672,7 +714,7 @@ install_runtimes() {
     fi
 
     # node (via NodeSource for apt, package manager for others)
-    if command -v node &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v node &>/dev/null; then
         log_skip "node" "already installed"
     else
         case $PKG_MGR in
@@ -701,7 +743,10 @@ install_runtimes() {
     fi
 
     # go
-    if command -v go &>/dev/null; then
+    if [ "$FORCE_INSTALL" = "true" ]; then
+        sudo rm -rf /usr/local/go
+    fi
+    if [ "$FORCE_INSTALL" != "true" ] && command -v go &>/dev/null; then
         log_skip "go" "already installed"
     else
         local GO_VERSION="1.22.0"
@@ -722,7 +767,7 @@ install_runtimes() {
     fi
 
     # rust (via rustup)
-    if command -v rustc &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v rustc &>/dev/null; then
         log_skip "rust" "already installed"
     elif curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y >/dev/null 2>&1; then
         log_ok "rust" "installed"
@@ -735,7 +780,7 @@ install_runtimes() {
 install_gh_cli() {
     log_phase "Installing GitHub CLI..."
 
-    if command -v gh &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v gh &>/dev/null; then
         log_skip "gh" "already installed"
     else
         case $PKG_MGR in
@@ -775,7 +820,7 @@ install_gh_cli() {
 install_docker() {
     log_phase "Installing Docker..."
 
-    if command -v docker &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v docker &>/dev/null; then
         log_skip "docker" "already installed"
     elif curl -fsSL https://get.docker.com | sudo sh >/dev/null 2>&1; then
         # Add current user to docker group
@@ -790,7 +835,7 @@ install_docker() {
 install_claude_code() {
     log_phase "Installing Claude Code..."
 
-    if command -v claude &>/dev/null; then
+    if [ "$FORCE_INSTALL" != "true" ] && command -v claude &>/dev/null; then
         log_skip "claude" "already installed"
     elif curl -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1; then
         log_ok "claude" "installed"
@@ -988,6 +1033,9 @@ print_summary() {
 main() {
     printf "${BLUE}${BOLD}SSH Environment Sync${NC}\n"
     printf "Package manager: ${CYAN}%s${NC}\n" "$PKG_MGR"
+    if [ "$FORCE_INSTALL" = "true" ]; then
+        printf "${YELLOW}Force mode: reinstalling all tools${NC}\n"
+    fi
 
     if [ "$PKG_MGR" = "unknown" ]; then
         printf "${RED}Error: No supported package manager found (apt/dnf/pacman)${NC}\n"
@@ -1091,6 +1139,7 @@ create_payload() {
     setup_script="${setup_script//__SKIP_RUNTIMES__/$SKIP_RUNTIMES}"
     setup_script="${setup_script//__TOOLS_ONLY__/$TOOLS_ONLY}"
     setup_script="${setup_script//__CONFIGS_ONLY__/$CONFIGS_ONLY}"
+    setup_script="${setup_script//__FORCE_INSTALL__/$FORCE_INSTALL}"
     echo "$setup_script" > "$tmpdir/_setup.sh"
     chmod +x "$tmpdir/_setup.sh"
 
@@ -1124,6 +1173,9 @@ show_dry_run() {
 
     if [[ "$TOOLS_ONLY" != "true" && "$CONFIGS_ONLY" != "true" ]]; then
         printf "\n${BOLD}Tools to install:${NC}\n"
+        if [[ "$FORCE_INSTALL" == "true" ]]; then
+            printf "  ${CYAN}(--force: reinstalling all tools)${NC}\n"
+        fi
         printf "  Shell:    zsh, oh-my-zsh, powerlevel10k, plugins\n"
         printf "  CLI:      bat, eza, fd, ripgrep, delta, gh\n"
         printf "  Utils:    fzf, zoxide, atuin\n"
