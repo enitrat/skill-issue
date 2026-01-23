@@ -4,25 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Purpose
 
-Personal Claude Skills, developer tools, and software configurations.
+Personal Claude Code skills marketplace (`eni-skills`) containing productivity workflows, developer tools, and software configurations.
 
 ## Directory Structure
 
 ```
-skills/              # Claude Skills (synced to ~/.claude/skills/)
-  <skill-name>/
-    SKILL.md         # Skill definition
-    scripts/         # Python scripts with uv inline dependencies
-    references/      # Reference documentation (optional)
+.claude-plugin/
+  marketplace.json   # Marketplace catalog definition
 
-hooks/               # Claude Code hooks
+plugins/             # Claude Code plugins
+  personal-skills/
+    .claude-plugin/
+      plugin.json    # Plugin manifest
+    skills/          # Skill definitions (SKILL.md format)
+      <skill-name>/
+        SKILL.md     # Skill definition
+        scripts/     # Python scripts with uv inline dependencies
+        references/  # Reference documentation (optional)
+
+hooks/               # Claude Code hooks (not part of plugin)
   <hook-name>/
     hook.py          # Hook implementation (Python with uv)
     wrapper.sh       # Shell wrapper for Claude Code
+    hook.json        # Hook configuration for skills-sync
     README.md        # Installation instructions
 
 tools/               # Shell scripts and CLI utilities
   <tool-name>        # Executable script (no extension)
+  skills-sync        # Sync skills/hooks to ~/.claude/ (legacy)
 
 config/
   claude/            # Claude Code configuration files
@@ -33,10 +42,13 @@ config/
 
 ### Skills
 
-1. Create `skills/<skill-name>/SKILL.md`
+1. Create `plugins/personal-skills/skills/<skill-name>/SKILL.md`
 2. Follow the format: YAML frontmatter (`name`, `description`) + markdown body
 3. Add `scripts/` directory with Python scripts using uv inline dependencies
-4. Run `tools/skills-sync` to deploy to `~/.claude/skills/`
+
+Skills can be used via two methods:
+- **Plugin-based**: Users install via `/plugin install personal-skills@eni-skills` and invoke with `/personal-skills:<skill-name>`
+- **Direct sync**: Users run `tools/skills-sync` to copy to `~/.claude/skills/` and invoke without namespace (e.g., `/pr-creator`)
 
 Reference: https://github.com/anthropics/skills
 
@@ -92,9 +104,43 @@ Installation: Add hook config to `~/.claude/settings.json` or `.claude/settings.
 1. Place in `config/claude/` for Claude-specific or `config/others/` for third-party
 2. Document setup steps if manual intervention required
 
-## Syncing Skills
+## Using Skills
+
+### Option 1: Plugin System
+
+Install from the marketplace:
 
 ```bash
-tools/skills-sync           # Copy skills to ~/.claude/skills/
+# Add marketplace (one-time setup)
+/plugin marketplace add enitrat/skill-issue
+
+# Install skills plugin
+/plugin install personal-skills@eni-skills
+
+# Use skills with plugin namespace
+/personal-skills:pr-creator
+```
+
+### Option 2: Direct Sync
+
+Copy skills directly to `~/.claude/skills/`:
+
+```bash
+tools/skills-sync           # Copy skills and hooks to ~/.claude/
 tools/skills-sync --dry-run # Preview without changes
+
+# Use skills without namespace
+/pr-creator
+```
+
+## Local Development Testing
+
+Test changes locally before pushing:
+
+```bash
+# Add local marketplace
+/plugin marketplace add /Users/msaug/workspace/skill-issue
+
+# Install from local
+/plugin install personal-skills@eni-skills
 ```

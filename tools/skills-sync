@@ -24,7 +24,7 @@ console = Console()
 
 # Resolve paths relative to script location
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_SKILLS = SCRIPT_DIR.parent / "skills"
+REPO_SKILLS = SCRIPT_DIR.parent / "plugins" / "personal-skills" / "skills"
 REPO_HOOKS = SCRIPT_DIR.parent / "hooks"
 TARGET_DIRS = [
     Path.home() / ".claude" / "skills",

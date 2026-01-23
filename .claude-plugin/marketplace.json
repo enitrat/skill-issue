@@ -1,0 +1,23 @@
+{
+  "name": "eni-skills",
+  "owner": {
+    "name": "msaug"
+  },
+  "metadata": {
+    "description": "Personal Claude Code skills, workflows, and developer tools",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "personal-skills",
+      "source": "./plugins/personal-skills",
+      "description": "Collection of productivity skills for GitHub workflows, PR creation/review, and code quality",
+      "version": "1.0.0",
+      "author": {
+        "name": "msaug"
+      },
+      "keywords": ["github", "pr", "review", "workflow", "productivity"],
+      "category": "development-tools"
+    }
+  ]
+}
