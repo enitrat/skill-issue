@@ -228,6 +228,22 @@ This repo includes Raycast script commands in `raycast-scripts/`.
 | Sanitize Slack Thread | Anonymize names & clean up clipboard content |
 | Sanitize Slack Thread (Preview) | Preview without modifying clipboard |
 
+## macOS Utilities
+
+### Hidden Bar
+
+Hidden Bar helps manage menu bar icons that are hidden by the MacBook notch.
+
+**Installation:**
+```bash
+brew install --cask hiddenbar
+```
+
+**Usage:**
+- After installation, launch Hidden Bar from Applications
+- Configure which icons to hide/show in the menu bar
+- Use the separator bar to toggle visibility of hidden icons
+
 ## Aliases & Functions Reference
 
 The zshrc includes these productivity aliases and functions:
