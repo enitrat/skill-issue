@@ -94,29 +94,27 @@ def is_marketplace_added() -> bool:
     return False
 
 
-def run_claude_command(args: list[str], dry_run: bool = False) -> bool:
-    """Run a claude CLI command."""
+def run_claude_command(args: list[str], dry_run: bool = False) -> tuple[bool, str]:
+    """Run a claude CLI command. Returns (success, output)."""
     cmd = ["claude", "plugin"] + args
     cmd_str = " ".join(cmd)
 
     if dry_run:
         console.print(f"  [dim]Would run:[/dim] {cmd_str}")
-        return True
+        return True, ""
 
     console.print(f"  [dim]Running:[/dim] {cmd_str}")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        output = result.stderr.strip() or result.stdout.strip()
         if result.returncode == 0:
-            return True
+            return True, output
         else:
-            console.print(f"  [red]Error:[/red] {result.stderr.strip() or result.stdout.strip()}")
-            return False
+            return False, output
     except FileNotFoundError:
-        console.print("  [red]Error:[/red] 'claude' command not found. Is Claude Code CLI installed?")
-        return False
+        return False, "'claude' command not found. Is Claude Code CLI installed?"
     except subprocess.TimeoutExpired:
-        console.print("  [red]Error:[/red] Command timed out")
-        return False
+        return False, "Command timed out"
 
 
 def ensure_claude_plugin(dry_run: bool = False) -> bool:
@@ -129,23 +127,32 @@ def ensure_claude_plugin(dry_run: bool = False) -> bool:
         console.print(f"  [green]✓[/green] Plugin [bold]{PLUGIN_NAME}@{MARKETPLACE_NAME}[/bold] is already installed")
         return True
 
-    # Need to install - first check marketplace
-    if not is_marketplace_added():
-        console.print(f"  [yellow]→[/yellow] Adding marketplace [bold]{MARKETPLACE_NAME}[/bold]...")
-        if not run_claude_command(["marketplace", "add", MARKETPLACE_REPO], dry_run):
-            return False
+    # Need to install - first ensure marketplace is added
+    console.print(f"  [yellow]→[/yellow] Adding marketplace [bold]{MARKETPLACE_NAME}[/bold]...")
+    success, output = run_claude_command(["marketplace", "add", MARKETPLACE_REPO], dry_run)
+
+    if success:
         if not dry_run:
             console.print(f"  [green]✓[/green] Marketplace added")
-    else:
+    elif "already installed" in output.lower():
+        # Marketplace already exists - that's fine
         console.print(f"  [green]✓[/green] Marketplace [bold]{MARKETPLACE_NAME}[/bold] already added")
+    else:
+        console.print(f"  [red]Error:[/red] {output}")
+        return False
 
     # Install plugin
     console.print(f"  [yellow]→[/yellow] Installing plugin [bold]{PLUGIN_NAME}[/bold]...")
-    if not run_claude_command(["install", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"], dry_run):
-        return False
+    success, output = run_claude_command(["install", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"], dry_run)
 
-    if not dry_run:
-        console.print(f"  [green]✓[/green] Plugin installed successfully")
+    if success:
+        if not dry_run:
+            console.print(f"  [green]✓[/green] Plugin installed successfully")
+    elif "already installed" in output.lower():
+        console.print(f"  [green]✓[/green] Plugin already installed")
+    else:
+        console.print(f"  [red]Error:[/red] {output}")
+        return False
 
     return True
 
