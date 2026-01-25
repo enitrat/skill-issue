@@ -1,22 +1,22 @@
 {
   "name": "eni-skills",
   "owner": {
-    "name": "msaug"
+    "name": "enitrat"
   },
   "metadata": {
-    "description": "Personal Claude Code skills, workflows, and developer tools",
+    "description": "Personal Claude Code skills, workflows, hooks, and developer tools",
     "version": "1.0.0"
   },
   "plugins": [
     {
-      "name": "personal-skills",
-      "source": "./plugins/personal-skills",
-      "description": "Collection of productivity skills for GitHub workflows, PR creation/review, and code quality",
+      "name": "base-config",
+      "source": "./plugins/base-config",
+      "description": "Personal Claude Code configuration with productivity skills and hooks. Includes GitHub workflows, skill development tools, env protection, and TTS notifications.",
       "version": "1.0.0",
       "author": {
-        "name": "msaug"
+        "name": "enitrat"
       },
-      "keywords": ["github", "pr", "review", "workflow", "productivity"],
+      "keywords": ["github", "pr", "review", "workflow", "productivity", "hooks", "tts"],
       "category": "development-tools"
     }
   ]
