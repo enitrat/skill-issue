@@ -1,0 +1,272 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "typer>=0.9.0",
+#   "rich>=13.0.0",
+# ]
+# ///
+"""skills-sync: Ensure plugin is installed on Claude Code and sync skills to Codex."""
+
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import typer
+from rich.console import Console
+
+VERSION = "4.0.0"
+
+console = Console()
+
+# Resolve paths relative to script location
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+PLUGIN_SKILLS = REPO_ROOT / "plugins" / "base-config" / "skills"
+
+# Plugin/marketplace configuration
+MARKETPLACE_REPO = "enitrat/skill-issue"
+MARKETPLACE_NAME = "eni-skills"
+PLUGIN_NAME = "base-config"
+
+# Target directories
+CODEX_SKILLS_DIR = Path.home() / ".codex" / "skills"
+CLAUDE_SETTINGS_FILE = Path.home() / ".claude" / "settings.json"
+
+app = typer.Typer(
+    help="Ensure Claude Code plugin is active and sync skills to Codex",
+    add_completion=False,
+    no_args_is_help=False,
+)
+
+
+def load_claude_settings() -> dict:
+    """Load Claude settings.json."""
+    if not CLAUDE_SETTINGS_FILE.exists():
+        return {}
+    try:
+        return json.loads(CLAUDE_SETTINGS_FILE.read_text())
+    except json.JSONDecodeError:
+        console.print(f"[yellow]Warning:[/yellow] Invalid JSON in {CLAUDE_SETTINGS_FILE}")
+        return {}
+
+
+def is_plugin_installed() -> bool:
+    """Check if base-config plugin is installed in Claude Code."""
+    settings = load_claude_settings()
+
+    # Check in plugins array for the plugin
+    plugins = settings.get("plugins", [])
+    for plugin in plugins:
+        if isinstance(plugin, dict):
+            # Check by name or by marketplace reference
+            name = plugin.get("name", "")
+            if name == PLUGIN_NAME or name == f"{PLUGIN_NAME}@{MARKETPLACE_NAME}":
+                return True
+        elif isinstance(plugin, str):
+            # String format: "plugin-name@marketplace-name"
+            if plugin == f"{PLUGIN_NAME}@{MARKETPLACE_NAME}" or plugin == PLUGIN_NAME:
+                return True
+
+    return False
+
+
+def is_marketplace_added() -> bool:
+    """Check if eni-skills marketplace is added."""
+    settings = load_claude_settings()
+
+    # Check in pluginMarketplaces array
+    marketplaces = settings.get("pluginMarketplaces", [])
+    for marketplace in marketplaces:
+        if isinstance(marketplace, dict):
+            if marketplace.get("name") == MARKETPLACE_NAME:
+                return True
+            # Also check source/url
+            source = marketplace.get("source", marketplace.get("url", ""))
+            if MARKETPLACE_REPO in source:
+                return True
+        elif isinstance(marketplace, str):
+            if MARKETPLACE_NAME in marketplace or MARKETPLACE_REPO in marketplace:
+                return True
+
+    return False
+
+
+def run_claude_command(args: list[str], dry_run: bool = False) -> bool:
+    """Run a claude CLI command."""
+    cmd = ["claude", "plugin"] + args
+    cmd_str = " ".join(cmd)
+
+    if dry_run:
+        console.print(f"  [dim]Would run:[/dim] {cmd_str}")
+        return True
+
+    console.print(f"  [dim]Running:[/dim] {cmd_str}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            return True
+        else:
+            console.print(f"  [red]Error:[/red] {result.stderr.strip() or result.stdout.strip()}")
+            return False
+    except FileNotFoundError:
+        console.print("  [red]Error:[/red] 'claude' command not found. Is Claude Code CLI installed?")
+        return False
+    except subprocess.TimeoutExpired:
+        console.print("  [red]Error:[/red] Command timed out")
+        return False
+
+
+def ensure_claude_plugin(dry_run: bool = False) -> bool:
+    """Ensure the plugin is installed on Claude Code."""
+    console.print("\n[blue]Claude Code Plugin[/blue]")
+    console.print(f"[blue]{'─' * 40}[/blue]")
+
+    # Check if plugin is already installed
+    if is_plugin_installed():
+        console.print(f"  [green]✓[/green] Plugin [bold]{PLUGIN_NAME}@{MARKETPLACE_NAME}[/bold] is already installed")
+        return True
+
+    # Need to install - first check marketplace
+    if not is_marketplace_added():
+        console.print(f"  [yellow]→[/yellow] Adding marketplace [bold]{MARKETPLACE_NAME}[/bold]...")
+        if not run_claude_command(["marketplace", "add", MARKETPLACE_REPO], dry_run):
+            return False
+        if not dry_run:
+            console.print(f"  [green]✓[/green] Marketplace added")
+    else:
+        console.print(f"  [green]✓[/green] Marketplace [bold]{MARKETPLACE_NAME}[/bold] already added")
+
+    # Install plugin
+    console.print(f"  [yellow]→[/yellow] Installing plugin [bold]{PLUGIN_NAME}[/bold]...")
+    if not run_claude_command(["install", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"], dry_run):
+        return False
+
+    if not dry_run:
+        console.print(f"  [green]✓[/green] Plugin installed successfully")
+
+    return True
+
+
+def sync_codex_skills(dry_run: bool = False) -> int:
+    """Sync skills to Codex directory."""
+    console.print("\n[blue]Codex Skills Sync[/blue]")
+    console.print(f"[blue]{'─' * 40}[/blue]")
+    console.print(f"[blue]Source:[/blue] {PLUGIN_SKILLS}")
+    console.print(f"[blue]Target:[/blue] {CODEX_SKILLS_DIR}\n")
+
+    if not PLUGIN_SKILLS.is_dir():
+        console.print(f"[red]Error:[/red] Skills directory not found: {PLUGIN_SKILLS}")
+        return 0
+
+    # Find skill directories
+    skill_dirs = [d for d in PLUGIN_SKILLS.iterdir() if d.is_dir()]
+    if not skill_dirs:
+        console.print("[dim]No skills found[/dim]")
+        return 0
+
+    if dry_run:
+        console.print("[yellow][DRY RUN][/yellow] Would sync:\n")
+
+    # Create target if needed
+    if not dry_run:
+        CODEX_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+
+    synced_count = 0
+    skipped_count = 0
+
+    for skill_dir in sorted(skill_dirs):
+        skill_name = skill_dir.name
+        target_skill = CODEX_SKILLS_DIR / skill_name
+
+        # Check if identical (simple check: target exists and has same files)
+        if target_skill.exists():
+            # Quick check: compare file count and SKILL.md
+            src_skill_md = skill_dir / "SKILL.md"
+            dst_skill_md = target_skill / "SKILL.md"
+
+            if src_skill_md.exists() and dst_skill_md.exists():
+                if src_skill_md.read_text() == dst_skill_md.read_text():
+                    console.print(f"  [dim]\\[skip]      [/dim] {skill_name}")
+                    skipped_count += 1
+                    continue
+
+            action = "update"
+            style = "yellow"
+        else:
+            action = "create"
+            style = "green"
+
+        action_tag = f"\\[{action}]"
+
+        if dry_run:
+            console.print(f"  [{style}]{action_tag:<12}[/{style}] {skill_name}")
+        else:
+            # Remove old and copy fresh
+            if target_skill.exists():
+                shutil.rmtree(target_skill)
+            shutil.copytree(skill_dir, target_skill)
+            console.print(f"  [{style}]✓[/{style}] {action_tag:<12} {skill_name}")
+
+        synced_count += 1
+
+    console.print(f"\n  {synced_count} synced, {skipped_count} skipped (up-to-date)")
+    return synced_count
+
+
+def version_callback(value: bool) -> None:
+    """Show version and exit."""
+    if value:
+        console.print(f"skills-sync version {VERSION}")
+        raise typer.Exit()
+
+
+@app.command()
+def main(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        "-n",
+        help="Show what would be done without making changes.",
+    ),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-v",
+        callback=version_callback,
+        is_eager=True,
+        help="Show version number.",
+    ),
+) -> None:
+    """
+    Sync Claude Code plugin and Codex skills.
+
+    For Claude Code:
+      - Checks if base-config plugin is installed
+      - If not, adds marketplace and installs plugin via CLI
+
+    For Codex:
+      - Copies skills to ~/.codex/skills/ (direct file sync)
+
+    Examples:
+      $ skills-sync              # Sync everything
+      $ skills-sync --dry-run    # Preview changes
+    """
+    console.print(f"[bold]skills-sync v{VERSION}[/bold]")
+
+    # Ensure Claude Code plugin is active
+    claude_ok = ensure_claude_plugin(dry_run=dry_run)
+
+    if not claude_ok:
+        console.print("\n[yellow]Warning:[/yellow] Claude Code plugin setup incomplete")
+
+    # Sync to Codex
+    sync_codex_skills(dry_run=dry_run)
+
+    console.print("\n[green]Done![/green]")
+
+
+if __name__ == "__main__":
+    app()
