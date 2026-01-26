@@ -11,17 +11,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/tts-notify/wrapper.sh",
-            "timeout": 120
-          }
-        ]
-      }
     ]
   }
 }

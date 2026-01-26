@@ -7,7 +7,6 @@ Custom hooks for Claude Code that extend or restrict its behavior.
 | Hook | Type | Description |
 |------|------|-------------|
 | [env-protection](./env-protection/) | PreToolUse | Prevents reading `.env` files with secrets |
-| [tts-notify](./tts-notify/) | Stop | Converts Claude's responses to speech using Kyutai Pocket TTS |
 
 ## Hook Types
 
