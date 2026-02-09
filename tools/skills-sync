@@ -6,7 +6,7 @@
 #   "rich>=13.0.0",
 # ]
 # ///
-"""skills-sync: Ensure plugin is installed on Claude Code and sync skills to Codex."""
+"""skills-sync: Ensure plugin is installed and sync skills/subagents for Claude + Codex."""
 
 import json
 import shutil
@@ -17,7 +17,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-VERSION = "4.0.0"
+VERSION = "4.3.0"
 
 console = Console()
 
@@ -25,18 +25,24 @@ console = Console()
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 PLUGIN_SKILLS = REPO_ROOT / "plugins" / "base-config" / "skills"
+SUBAGENTS_ROOT = REPO_ROOT / "subagents"
+RULES_ROOT = REPO_ROOT / "rules"
 
 # Plugin/marketplace configuration
 MARKETPLACE_REPO = "enitrat/skill-issue"
 MARKETPLACE_NAME = "eni-skills"
-PLUGIN_NAME = "base-config"
+PLUGIN_NAMES = ["base-config", "personal-skills"]
 
 # Target directories
 CODEX_SKILLS_DIR = Path.home() / ".codex" / "skills"
+CODEX_PROMPTS_DIR = Path.home() / ".codex" / "prompts"
+CODEX_AGENT_MIGRATION_FILE = Path.home() / ".codex" / "AGENT_MIGRATION.md"
+CLAUDE_AGENTS_DIR = Path.home() / ".claude" / "agents"
+CLAUDE_RULES_DIR = Path.home() / ".claude" / "rules"
 CLAUDE_SETTINGS_FILE = Path.home() / ".claude" / "settings.json"
 
 app = typer.Typer(
-    help="Ensure Claude Code plugin is active and sync skills to Codex",
+    help="Ensure Claude plugin is active and sync skills/subagents to Claude and Codex",
     add_completion=False,
     no_args_is_help=False,
 )
@@ -53,8 +59,8 @@ def load_claude_settings() -> dict:
         return {}
 
 
-def is_plugin_installed() -> bool:
-    """Check if base-config plugin is installed in Claude Code."""
+def is_plugin_installed(plugin_name: str) -> bool:
+    """Check if a plugin is installed in Claude Code."""
     settings = load_claude_settings()
 
     # Check in plugins array for the plugin
@@ -63,11 +69,11 @@ def is_plugin_installed() -> bool:
         if isinstance(plugin, dict):
             # Check by name or by marketplace reference
             name = plugin.get("name", "")
-            if name == PLUGIN_NAME or name == f"{PLUGIN_NAME}@{MARKETPLACE_NAME}":
+            if name == plugin_name or name == f"{plugin_name}@{MARKETPLACE_NAME}":
                 return True
         elif isinstance(plugin, str):
             # String format: "plugin-name@marketplace-name"
-            if plugin == f"{PLUGIN_NAME}@{MARKETPLACE_NAME}" or plugin == PLUGIN_NAME:
+            if plugin == f"{plugin_name}@{MARKETPLACE_NAME}" or plugin == plugin_name:
                 return True
 
     return False
@@ -117,44 +123,48 @@ def run_claude_command(args: list[str], dry_run: bool = False) -> tuple[bool, st
         return False, "Command timed out"
 
 
-def ensure_claude_plugin(dry_run: bool = False) -> bool:
-    """Ensure the plugin is installed on Claude Code."""
-    console.print("\n[blue]Claude Code Plugin[/blue]")
+def ensure_claude_plugins(dry_run: bool = False) -> bool:
+    """Ensure all plugins are installed on Claude Code."""
+    console.print("\n[blue]Claude Code Plugins[/blue]")
     console.print(f"[blue]{'─' * 40}[/blue]")
 
-    # Check if plugin is already installed
-    if is_plugin_installed():
-        console.print(f"  [green]✓[/green] Plugin [bold]{PLUGIN_NAME}@{MARKETPLACE_NAME}[/bold] is already installed")
-        return True
+    # First ensure marketplace is added (do this once)
+    marketplace_added = is_marketplace_added()
+    if not marketplace_added:
+        console.print(f"  [yellow]→[/yellow] Adding marketplace [bold]{MARKETPLACE_NAME}[/bold]...")
+        success, output = run_claude_command(["marketplace", "add", MARKETPLACE_REPO], dry_run)
 
-    # Need to install - first ensure marketplace is added
-    console.print(f"  [yellow]→[/yellow] Adding marketplace [bold]{MARKETPLACE_NAME}[/bold]...")
-    success, output = run_claude_command(["marketplace", "add", MARKETPLACE_REPO], dry_run)
-
-    if success:
-        if not dry_run:
-            console.print(f"  [green]✓[/green] Marketplace added")
-    elif "already installed" in output.lower():
-        # Marketplace already exists - that's fine
+        if success:
+            if not dry_run:
+                console.print(f"  [green]✓[/green] Marketplace added")
+        elif "already installed" in output.lower() or "already added" in output.lower():
+            console.print(f"  [green]✓[/green] Marketplace [bold]{MARKETPLACE_NAME}[/bold] already added")
+        else:
+            console.print(f"  [red]Error:[/red] {output}")
+            return False
+    else:
         console.print(f"  [green]✓[/green] Marketplace [bold]{MARKETPLACE_NAME}[/bold] already added")
-    else:
-        console.print(f"  [red]Error:[/red] {output}")
-        return False
 
-    # Install plugin
-    console.print(f"  [yellow]→[/yellow] Installing plugin [bold]{PLUGIN_NAME}[/bold]...")
-    success, output = run_claude_command(["install", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"], dry_run)
+    # Install each plugin
+    all_success = True
+    for plugin_name in PLUGIN_NAMES:
+        if is_plugin_installed(plugin_name):
+            console.print(f"  [green]✓[/green] Plugin [bold]{plugin_name}@{MARKETPLACE_NAME}[/bold] is already installed")
+            continue
 
-    if success:
-        if not dry_run:
-            console.print(f"  [green]✓[/green] Plugin installed successfully")
-    elif "already installed" in output.lower():
-        console.print(f"  [green]✓[/green] Plugin already installed")
-    else:
-        console.print(f"  [red]Error:[/red] {output}")
-        return False
+        console.print(f"  [yellow]→[/yellow] Installing plugin [bold]{plugin_name}[/bold]...")
+        success, output = run_claude_command(["install", f"{plugin_name}@{MARKETPLACE_NAME}"], dry_run)
 
-    return True
+        if success:
+            if not dry_run:
+                console.print(f"  [green]✓[/green] Plugin [bold]{plugin_name}[/bold] installed successfully")
+        elif "already installed" in output.lower():
+            console.print(f"  [green]✓[/green] Plugin [bold]{plugin_name}[/bold] already installed")
+        else:
+            console.print(f"  [red]Error:[/red] {output}")
+            all_success = False
+
+    return all_success
 
 
 def sync_codex_skills(dry_run: bool = False) -> int:
@@ -223,6 +233,145 @@ def sync_codex_skills(dry_run: bool = False) -> int:
     return synced_count
 
 
+def sync_subagents(dry_run: bool = False) -> int:
+    """Sync subagent definitions for Claude and Codex."""
+    console.print("\n[blue]Subagents Sync[/blue]")
+    console.print(f"[blue]{'─' * 40}[/blue]")
+
+    claude_src = SUBAGENTS_ROOT / "claude"
+    codex_prompts_src = SUBAGENTS_ROOT / "codex" / "prompts"
+    codex_doc_src = SUBAGENTS_ROOT / "codex" / "docs" / "AGENT_MIGRATION.md"
+
+    if not SUBAGENTS_ROOT.is_dir():
+        console.print(f"[dim]No subagents config found:[/dim] {SUBAGENTS_ROOT}")
+        return 0
+
+    if dry_run:
+        console.print("[yellow][DRY RUN][/yellow] Would sync:\n")
+
+    synced_count = 0
+
+    def sync_file(src: Path, dst: Path) -> None:
+        nonlocal synced_count
+        if not src.exists():
+            return
+
+        if dst.exists() and src.read_text() == dst.read_text():
+            console.print(f"  [dim]\\[skip]      [/dim] {dst}")
+            return
+
+        action = "update" if dst.exists() else "create"
+        style = "yellow" if dst.exists() else "green"
+        action_tag = f"\\[{action}]"
+
+        if dry_run:
+            console.print(f"  [{style}]{action_tag:<12}[/{style}] {dst}")
+            synced_count += 1
+            return
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        console.print(f"  [{style}]✓[/{style}] {action_tag:<12} {dst}")
+        synced_count += 1
+
+    # Claude agents (.json + optional .md)
+    if claude_src.is_dir():
+        console.print(f"[blue]Claude:[/blue] {claude_src} -> {CLAUDE_AGENTS_DIR}")
+        for src in sorted(claude_src.iterdir()):
+            if src.is_file() and src.suffix in {".json", ".md"}:
+                sync_file(src, CLAUDE_AGENTS_DIR / src.name)
+    else:
+        console.print(f"[dim]Missing:[/dim] {claude_src}")
+
+    # Codex prompts
+    if codex_prompts_src.is_dir():
+        console.print(f"[blue]Codex prompts:[/blue] {codex_prompts_src} -> {CODEX_PROMPTS_DIR}")
+        for src in sorted(codex_prompts_src.iterdir()):
+            if src.is_file() and src.suffix == ".md":
+                sync_file(src, CODEX_PROMPTS_DIR / src.name)
+    else:
+        console.print(f"[dim]Missing:[/dim] {codex_prompts_src}")
+
+    # Codex migration doc
+    if codex_doc_src.is_file():
+        console.print(f"[blue]Codex docs:[/blue] {codex_doc_src} -> {CODEX_AGENT_MIGRATION_FILE}")
+        sync_file(codex_doc_src, CODEX_AGENT_MIGRATION_FILE)
+
+    # Ensure project-local cache directories exist for codex subagent outputs
+    local_cache_dirs = [
+        Path.cwd() / ".codex" / "cache" / "agents" / "scout",
+        Path.cwd() / ".codex" / "cache" / "agents" / "oracle",
+        Path.cwd() / ".codex" / "cache" / "agents" / "spark",
+    ]
+    for cache_dir in local_cache_dirs:
+        if dry_run:
+            if not cache_dir.exists():
+                console.print(f"  [green]\\[create]    [/green] {cache_dir}")
+                synced_count += 1
+            continue
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"\n  {synced_count} subagent files synced")
+    return synced_count
+
+
+def sync_rules(dry_run: bool = False) -> int:
+    """Sync rules to Claude Code directory."""
+    console.print("\n[blue]Rules Sync[/blue]")
+    console.print(f"[blue]{'─' * 40}[/blue]")
+    console.print(f"[blue]Source:[/blue] {RULES_ROOT}")
+    console.print(f"[blue]Target:[/blue] {CLAUDE_RULES_DIR}\n")
+
+    if not RULES_ROOT.is_dir():
+        console.print(f"[dim]No rules directory found:[/dim] {RULES_ROOT}")
+        return 0
+
+    # Find rule files (markdown)
+    rule_files = [f for f in RULES_ROOT.iterdir() if f.is_file() and f.suffix == ".md"]
+    if not rule_files:
+        console.print("[dim]No rules found[/dim]")
+        return 0
+
+    if dry_run:
+        console.print("[yellow][DRY RUN][/yellow] Would sync:\n")
+
+    # Create target if needed
+    if not dry_run:
+        CLAUDE_RULES_DIR.mkdir(parents=True, exist_ok=True)
+
+    synced_count = 0
+    skipped_count = 0
+
+    for rule_file in sorted(rule_files):
+        rule_name = rule_file.name
+        target_rule = CLAUDE_RULES_DIR / rule_name
+
+        # Check if identical
+        if target_rule.exists():
+            if rule_file.read_text() == target_rule.read_text():
+                console.print(f"  [dim]\\[skip]      [/dim] {rule_name}")
+                skipped_count += 1
+                continue
+            action = "update"
+            style = "yellow"
+        else:
+            action = "create"
+            style = "green"
+
+        action_tag = f"\\[{action}]"
+
+        if dry_run:
+            console.print(f"  [{style}]{action_tag:<12}[/{style}] {rule_name}")
+        else:
+            shutil.copy2(rule_file, target_rule)
+            console.print(f"  [{style}]✓[/{style}] {action_tag:<12} {rule_name}")
+
+        synced_count += 1
+
+    console.print(f"\n  {synced_count} synced, {skipped_count} skipped (up-to-date)")
+    return synced_count
+
+
 def version_callback(value: bool) -> None:
     """Show version and exit."""
     if value:
@@ -248,11 +397,12 @@ def main(
     ),
 ) -> None:
     """
-    Sync Claude Code plugin and Codex skills.
+    Sync Claude Code plugins, Codex skills, subagent configs, and rules.
 
     For Claude Code:
-      - Checks if base-config plugin is installed
-      - If not, adds marketplace and installs plugin via CLI
+      - Checks if plugins (base-config, personal-skills) are installed
+      - If not, adds marketplace and installs plugins via CLI
+      - Syncs rules to ~/.claude/rules/ (custom behavior overrides)
 
     For Codex:
       - Copies skills to ~/.codex/skills/ (direct file sync)
@@ -263,14 +413,16 @@ def main(
     """
     console.print(f"[bold]skills-sync v{VERSION}[/bold]")
 
-    # Ensure Claude Code plugin is active
-    claude_ok = ensure_claude_plugin(dry_run=dry_run)
+    # Ensure Claude Code plugins are active
+    claude_ok = ensure_claude_plugins(dry_run=dry_run)
 
     if not claude_ok:
         console.print("\n[yellow]Warning:[/yellow] Claude Code plugin setup incomplete")
 
-    # Sync to Codex
+    # Sync to Codex and Claude
     sync_codex_skills(dry_run=dry_run)
+    sync_subagents(dry_run=dry_run)
+    sync_rules(dry_run=dry_run)
 
     console.print("\n[green]Done![/green]")
 
