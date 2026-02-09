@@ -44,23 +44,46 @@ Personal Claude Code configuration with productivity skills and hooks.
 skill-issue/
 ├── .claude-plugin/
 │   └── marketplace.json          # Marketplace catalog
-└── plugins/
-    └── base-config/
-        ├── .claude-plugin/
-        │   └── plugin.json       # Plugin manifest
-        ├── skills/               # Skill definitions
-        │   ├── pr-creator/
-        │   ├── pr-review/
-        │   ├── github-issue/
-        │   ├── skill-creator/
-        │   └── ask-questions-if-underspecified/
-        └── hooks/                # Hook definitions
-            ├── hooks.json        # Hook configuration
-            ├── env-protection/
-            └── tts-notify/
+├── plugins/
+│   └── base-config/
+│       ├── .claude-plugin/
+│       │   └── plugin.json       # Plugin manifest
+│       ├── skills/               # Skill definitions
+│       │   ├── pr-creator/
+│       │   ├── pr-review/
+│       │   ├── github-issue/
+│       │   ├── skill-creator/
+│       │   └── ask-questions-if-underspecified/
+│       └── hooks/                # Hook definitions
+│           ├── hooks.json        # Hook configuration
+│           ├── env-protection/
+│           └── tts-notify/
+├── rules/                        # Claude Code behavior rules
+│   └── no-plan-mode.md          # Disable automatic plan mode
+├── subagents/                    # Subagent definitions
+│   ├── claude/                  # Claude Code agents
+│   └── codex/                   # Codex prompts
+└── tools/
+    └── skills-sync              # Auto-sync script
 ```
 
 ## Development
+
+### Auto-Sync Setup
+
+The `tools/skills-sync` script automatically syncs:
+- **Claude Code plugins** - Ensures plugins are installed
+- **Rules** - Syncs `.md` files from `rules/` to `~/.claude/rules/`
+- **Skills** - Copies to `~/.codex/skills/`
+- **Subagents** - Syncs to `~/.claude/agents/` and `~/.codex/prompts/`
+
+```bash
+# Sync everything
+./tools/skills-sync
+
+# Preview changes without applying
+./tools/skills-sync --dry-run
+```
 
 ### Local Testing
 
@@ -85,6 +108,26 @@ skill-issue/
 2. Add `hook.py` (or script) and `wrapper.sh`
 3. Register in `plugins/base-config/hooks/hooks.json`
 4. Test locally by reinstalling the plugin
+
+### Adding New Rules
+
+Rules override Claude Code's default behavior:
+
+1. Create a new `.md` file in `rules/`
+2. Write clear instructions for Claude to follow
+3. Run `./tools/skills-sync` to sync to `~/.claude/rules/`
+4. Restart Claude Code or `/clear` to load the new rule
+
+**Example rule:**
+```markdown
+# No Automatic Plan Mode
+
+**NEVER use the EnterPlanMode tool automatically.**
+
+## What to Do Instead
+- Implement changes directly
+- Only create plans if explicitly requested
+```
 
 ## License
 

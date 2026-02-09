@@ -31,7 +31,11 @@ hooks/               # Claude Code hooks (not part of plugin)
 
 tools/               # Shell scripts and CLI utilities
   <tool-name>        # Executable script (no extension)
-  skills-sync        # Sync skills/hooks to ~/.claude/ (legacy)
+  skills-sync        # Sync skills + subagents to Claude/Codex homes
+
+subagents/           # Source-of-truth subagent configs
+  claude/            # Synced to ~/.claude/agents/
+  codex/             # Synced to ~/.codex/prompts/ + docs
 
 config/
   claude/            # Claude Code configuration files
@@ -48,7 +52,7 @@ config/
 
 Skills can be used via two methods:
 - **Plugin-based**: Users install via `/plugin install personal-skills@eni-skills` and invoke with `/personal-skills:<skill-name>`
-- **Direct sync**: Users run `tools/skills-sync` to copy to `~/.claude/skills/` and invoke without namespace (e.g., `/pr-creator`)
+- **Direct sync**: Users run `tools/skills-sync` to copy skills and subagent configs into local Claude/Codex homes
 
 Reference: https://github.com/anthropics/skills
 
@@ -123,10 +127,10 @@ Install from the marketplace:
 
 ### Option 2: Direct Sync
 
-Copy skills directly to `~/.claude/skills/`:
+Copy skills and subagent configs to local homes:
 
 ```bash
-tools/skills-sync           # Copy skills and hooks to ~/.claude/
+tools/skills-sync           # Sync skills + subagents to ~/.claude/ and ~/.codex/
 tools/skills-sync --dry-run # Preview without changes
 
 # Use skills without namespace
