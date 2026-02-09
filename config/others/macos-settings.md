@@ -49,6 +49,47 @@ for spacing in 6 8 10 12 15 20; do
 done
 ```
 
+## Keep Mac Awake with Lid Closed
+
+Use Amphetamine to keep your Mac running even when the lid is closed (e.g., in a backpack with network/terminal sessions active).
+
+### Why Amphetamine?
+
+The built-in `caffeinate` command doesn't reliably prevent sleep when the MacBook lid is closed. Amphetamine is a free Mac App Store app with "closed-lid mode" that actually works.
+
+### Installation
+
+```bash
+# Install via Homebrew
+brew install --cask amphetamine
+
+# Or download from Mac App Store
+open "macappstore://apps.apple.com/app/amphetamine/id937984704"
+```
+
+### Configuration
+
+1. Launch Amphetamine
+2. Settings → General → Enable "Allow closed-display sleep prevention"
+3. Start a session with "Closed-Display Mode" enabled
+
+### Alternative: caffeinate (requires external display or won't close lid)
+
+```bash
+# Basic usage (won't survive lid close alone)
+caffeinate -s -i
+
+# Run with a specific command
+caffeinate -s -i claude
+```
+
+Flags:
+- `-s` prevents system sleep
+- `-i` prevents idle sleep
+- `-d` prevents display sleep
+
+**Note**: For reliable closed-lid operation, use Amphetamine instead.
+
 ## Other macOS Tweaks
 
 (Add more macOS system customizations here as needed)
