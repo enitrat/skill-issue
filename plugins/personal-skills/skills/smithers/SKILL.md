@@ -144,6 +144,63 @@ new CodexAgent({
 });
 ```
 
+## Git Commit Rules (Per Step Type)
+
+Every workflow step that modifies files should include git commit instructions in its MDX prompt.
+Agents must make **atomic commits** — one logical change per commit, not one giant batch.
+
+**Format**: `EMOJI type(scope): description` where scope = `{props.phase}` or phase ID.
+
+### Research / Context Gathering
+
+```
+git add docs/context/{props.phase}.md && git commit -m "♻️ refactor({props.phase}): gather context and reference materials"
+```
+
+### Implementation
+
+```mdx
+## GIT COMMIT RULES
+- Make atomic commits — one logical change per commit
+- Commit EACH smallest unit of work separately, do NOT batch everything into one commit
+- Use emoji prefixes: 🐛 fix, ♻️ refactor, 🧪 test, ⚡ perf
+- Format: "EMOJI type(scope): description"
+- Examples:
+  - "♻️ refactor({props.phase}): add RocksDB adapter with get/put/delete"
+  - "🧪 test({props.phase}): add unit tests for RocksDB adapter"
+  - "🐛 fix({props.phase}): handle missing key edge case in get()"
+- git add the specific files changed, then git commit with the emoji message
+```
+
+### Tests
+
+```mdx
+## GIT COMMIT RULES
+If any tests fail and you need to fix code to make them pass, commit each fix atomically:
+- git add the specific files, then commit
+- Format: "🐛 fix(SCOPE): what was fixed"
+- Example: "🐛 fix({props.phase}): correct batch write ordering"
+
+If you add new test files, commit them:
+- Format: "🧪 test(SCOPE): what was tested"
+- Example: "🧪 test({props.phase}): add edge case tests for iterator"
+```
+
+### Refactors / ReviewFix
+
+```mdx
+## GIT COMMIT RULES
+- Make atomic commits — one refactor per commit
+- Use emoji prefixes: ♻️ refactor, 🐛 fix, 🧪 test, ⚡ perf
+- Format: "EMOJI type(scope): description"
+- Examples:
+  - "♻️ refactor({props.phase}): extract shared iterator logic into helper"
+  - "🐛 fix({props.phase}): correct error propagation in iterator"
+  - "🧪 test({props.phase}): add coverage for iterator edge cases"
+- git add the specific files changed, then git commit with the emoji message
+- Each meaningful refactor gets its own atomic commit
+```
+
 ## MDX Prompt Template
 
 ```mdx

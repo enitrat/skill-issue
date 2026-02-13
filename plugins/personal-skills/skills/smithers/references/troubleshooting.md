@@ -195,3 +195,148 @@ bunx smithers cancel workflow.tsx --run-id <run-id>
 1. System prompt must include the `CRITICAL OUTPUT REQUIREMENT` block
 2. Every MDX prompt must end with `## REQUIRED OUTPUT\n{props.schema}`
 3. `outputSchema` must be passed to every `<Task>` (enables auto-retry on validation failure — up to 2 retries with error details)
+
+---
+
+## 11. MDX Prompts Render as `[object Object]`
+
+**Symptom**: Agent receives `[object Object]` as its prompt instead of rendered markdown. The agent has no instructions and improvises. Visible in the DB:
+```bash
+sqlite3 smithers.db "SELECT substr(meta_json, 1, 200) FROM _smithers_attempts LIMIT 1;"
+# {"prompt":"[object Object]", ...}
+```
+
+**Cause**: MDX files need Smithers' MDX compilation plugin registered via Bun's preload system. Without it, `.mdx` imports are raw JSX element objects, not rendered strings.
+
+**Fix**: Create `preload.ts` and register it in `bunfig.toml`:
+```ts
+// preload.ts
+import { mdxPlugin } from "smithers-orchestrator/mdx-plugin";
+mdxPlugin();
+```
+```toml
+# bunfig.toml
+preload = ["./preload.ts"]
+```
+
+---
+
+## 12. Claude Agent Delegates to Sub-Agents, JSON Lost
+
+**Symptom**: Task times out or produces no JSON. The agent's response text says something like *"All the structured JSON output was provided at the end of my earlier response"* or references sub-agent results.
+
+**Cause**: Claude Code's `Task` tool spawns background sub-agents. The JSON output ends up in a sub-agent's response, not in the main stdout that Smithers captures. Smithers only reads `stdout.trim()` from the final CLI execution — it does not accumulate text across multi-turn conversations or sub-agent results.
+
+**How Smithers extracts JSON** (6 strategies in order):
+1. Check `result._output` / `result.output` (structured output)
+2. Parse full `result.text` if it starts with `{`
+3. Search for ` ```json\n{...}\n``` ` code fences in main text
+4. Search code fences in `result.steps[]` backwards
+5. `extractBalancedJson()` from steps (balanced brace matching)
+6. `extractBalancedJson()` from full text
+7. If all fail → follow-up prompt: "output ONLY a valid JSON"
+
+**Fix**: Add these rules to the system prompt:
+```
+## CRITICAL: Output Rules
+
+1. DO NOT delegate to sub-agents or background tasks. Do all work yourself
+   in the main conversation. Do not use the Task tool to spawn agents.
+2. DO NOT respond early. Wait until ALL your work is fully complete before
+   producing any final output. Never say "I'll do X" — do X, then report.
+3. Your FINAL message MUST end with a raw JSON object matching the schema
+   in your task prompt. No markdown fences. No text after the JSON.
+4. Never reference "earlier responses" — your output is captured from a
+   single response. All content must be in that one response.
+```
+
+---
+
+## 13. Task Timeout (Default 300s)
+
+**Symptom**: Task fails with `CLI timed out after 300000ms`. The agent was doing real work but didn't finish in time.
+
+**Cause**: Smithers defaults to a 5-minute timeout per task. Complex tasks (research across large codebases, multi-file implementation) easily exceed this.
+
+**Fix**: Add `timeoutMs` to heavy tasks:
+```tsx
+<Task
+  id={props.id}
+  agent={researcher}
+  output={tables.research}
+  outputSchema={ResearchSchema}
+  timeoutMs={3_600_000}  // 1 hour
+  retries={3}            // generous retry budget
+>
+```
+
+**Recommended timeouts**:
+| Task Type | Timeout | Retries |
+|-----------|---------|---------|
+| Research / Context Gather | 1 hr (3,600,000ms) | 3 |
+| Implement | 1 hr (3,600,000ms) | 5 |
+| Validate (build/test) | 10 min (600,000ms) | 2 |
+| Review | 10 min (600,000ms) | 1 |
+| FinalReview | 10 min (600,000ms) | 1 |
+| ReviewFix | 30 min (1,800,000ms) | 3 |
+
+**Why generous retries**: When a task exhausts its retry budget, `smithers resume` cannot re-attempt it — the run fails immediately. Setting retries high (3-5) for long tasks avoids dead runs from transient failures (network timeouts, API errors, schema issues). Unused retries cost nothing.
+
+---
+
+## 14. Zod 4 Schema Conversion — `type: "None"` Error
+
+**Symptom**: Codex agent fails immediately with:
+```
+Invalid schema for response_format 'codex_output_schema':
+schema must be a JSON Schema of 'type: "object"', got 'type: "None"'.
+```
+
+**Root cause**: A chain of three interacting issues in `smithers-orchestrator@0.6.0`:
+
+1. Smithers depends on `zod@^4.3.6` but dropped `zod-to-json-schema` from its own deps when migrating to Zod 4
+2. `zod-to-json-schema@3.25.1` gets pulled in **transitively** via `ai` → `@ai-sdk/ui-utils`
+3. `zod-to-json-schema` v3 doesn't understand Zod 4 schemas — it **silently** returns `{"$schema":"..."}` with no `type`, no `properties`
+4. The Codex CLI reads `type: undefined` → sends `type: "None"` → OpenAI rejects it
+
+**Verified**: The dynamic `await import("zod-to-json-schema")` in `CodexAgent.buildCommand` is wrapped in try/catch and designed to silently skip when the module isn't installed. But since v3 IS installed (transitively), the import succeeds and produces garbage.
+
+```ts
+// What zodToJsonSchema v3 produces for a Zod 4 schema:
+zodToJsonSchema(z.object({ name: z.string() }));
+// → {"$schema":"http://json-schema.org/draft-07/schema#"}  ← EMPTY
+
+// What Zod 4's built-in produces:
+z.object({ name: z.string() }).toJSONSchema();
+// → {"type":"object","properties":{"name":{"type":"string"}},...}  ← CORRECT
+```
+
+**Fix**: Apply a patch to replace `zodToJsonSchema()` with Zod 4's native `.toJSONSchema()`:
+
+1. Create `patches/smithers-orchestrator@0.6.0.patch`:
+```diff
+--- a/src/agents/cli.ts
++++ b/src/agents/cli.ts
+@@ -830,8 +830,7 @@
+     if (!this.opts.outputSchema && params.options?.outputSchema) {
+       try {
+-        const { zodToJsonSchema } = await import("zod-to-json-schema");
+-        const jsonSchema = zodToJsonSchema(params.options.outputSchema);
++        const jsonSchema = params.options.outputSchema.toJSONSchema();
+         const schemaFile = join(
+```
+
+2. Add to `package.json`:
+```json
+"patchedDependencies": {
+  "smithers-orchestrator@0.6.0": "patches/smithers-orchestrator@0.6.0.patch"
+}
+```
+
+3. Run `bun install` — Bun auto-applies the patch.
+
+**Verify**: Check the patched file:
+```bash
+grep -A1 "outputSchema" node_modules/smithers-orchestrator/src/agents/cli.ts | grep toJSONSchema
+# Should show: const jsonSchema = params.options.outputSchema.toJSONSchema();
+```
