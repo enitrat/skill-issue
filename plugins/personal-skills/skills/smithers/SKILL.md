@@ -15,6 +15,14 @@ description: >
 TypeScript framework for deterministic, resumable AI workflows using JSX.
 Runtime: Bun >= 1.3. State: SQLite via Drizzle ORM. Validation: Zod schemas.
 
+## Workflow Philosophy: Atomic Unit Pipeline
+
+**Preferred pattern**: Run the full pipeline (implement → test → review → fix → refactor → final-review) for each **small atomic unit of work**. Do NOT implement everything then review once.
+
+The outer Ralph loop drives this: each iteration implements 1-2 atomic units, validates them through the full quality pipeline, then the final-review gate either approves (phase done) or rejects (loop for more units). The `nextSmallestUnit` field in the implement schema chains work across iterations.
+
+See [references/atomic-workflow.md](references/atomic-workflow.md) for the full pattern with examples.
+
 ## Core Execution Model
 
 Render-schedule-execute loop:
@@ -83,7 +91,12 @@ export default smithers((ctx) => {
 
 ## Production Patterns
 
-See [references/patterns.md](references/patterns.md) for battle-tested patterns:
+See [references/atomic-workflow.md](references/atomic-workflow.md) for the **recommended atomic unit pipeline** pattern:
+- **nextSmallestUnit Chaining** — each implement outputs what to do next, creating a directed chain across Ralph iterations
+- **Full Pipeline Per Unit** — implement → test → review → fix → refactor → final-review for each 1-2 atomic units
+- **Strict Final-Review Gate** — reject unless ALL criteria met, forcing more iterations until complete
+
+See [references/patterns.md](references/patterns.md) for additional battle-tested patterns:
 - **Outer Ralph Loop** — wrap multiple phases in one loop with per-phase gating
 - **readyToMoveOn Gating** — FinalReview decides per-phase completion
 - **Phase-Prefixed nodeIds** — avoid collisions in shared loops
@@ -118,6 +131,7 @@ If jj is not set up, ask the user to install and initialize it:
 2. **End every MDX prompt** with `## REQUIRED OUTPUT\n{props.schema}` — agents need explicit format instructions
 3. **System prompt must include** JSON output requirement — CLI agents default to natural language
 4. **Use `ctx.outputMaybe()`** not `ctx.output()` — gracefully handles missing outputs during first render
+4b. **Use `ctx.latest()` for cross-iteration decisions** — `outputMaybe` is scoped to the current Ralph iteration; use `ctx.latest(table, nodeId)` for `skipIf`, loop `until`, and `allPhasesComplete` checks (see [troubleshooting #14](references/troubleshooting.md))
 5. **Thread data precisely** — pass only the fields each step needs, not entire output objects
 6. **Phase-prefix nodeIds** when multiple phases share a loop — `${phaseId}:step-name`
 7. **Use `skipIf` on `<Sequence>` and `<Task>`** for conditional execution
@@ -225,15 +239,21 @@ You MUST end your response with a JSON object matching this schema:
 ```ts
 import { z } from "zod";
 
-export const StepSchema = z.object({
-  summary: z.string(),
+// Implement schema with nextSmallestUnit for atomic chaining
+export const ImplementSchema = z.object({
   filesCreated: z.array(z.string()),
   filesModified: z.array(z.string()),
+  commitMessage: z.string(),
+  whatWasDone: z.string().describe("What atomic unit was implemented"),
+  nextSmallestUnit: z.string().describe("Next smallest atomic unit to implement"),
+});
+
+// Generic step schema
+export const StepSchema = z.object({
+  summary: z.string(),
   line: z.number().nullable(),      // use .nullable() for optional fields
   suggestion: z.string().nullable(), // NEVER use .optional()
 });
-
-export type StepOutput = z.infer<typeof StepSchema>;
 ```
 
 Smithers auto-adds `runId`, `nodeId`, `iteration` columns — don't include them in your schema.
@@ -248,5 +268,6 @@ Use `.nullable()` instead — the agent sends `null` for absent values, and the 
 ## Resources
 
 ### references/
+- [atomic-workflow.md](references/atomic-workflow.md) — **Recommended**: Atomic unit pipeline pattern (nextSmallestUnit chaining, full pipeline per unit, strict gates)
 - [patterns.md](references/patterns.md) — Production workflow patterns (outer Ralph, gating, data threading, pass tracking)
 - [troubleshooting.md](references/troubleshooting.md) — Common failures and fixes (dirty git, OpenAI schema errors, stale runs, SQLite debugging)

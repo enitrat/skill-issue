@@ -284,7 +284,43 @@ preload = ["./preload.ts"]
 
 ---
 
-## 14. Zod 4 Schema Conversion — `type: "None"` Error
+## 14. Completed Phases Re-Run on Next Ralph Iteration
+
+**Symptom**: A phase completed with `readyToMoveOn: true` in iteration N, but re-runs from scratch in iteration N+1. Tokens and time are wasted re-doing work.
+
+**Cause**: `ctx.outputMaybe()` is **scoped to the current Ralph iteration**. When the loop advances to iteration N+1, `outputMaybe` looks for `iteration = N+1` in the database and finds nothing — so `isPhaseComplete` evaluates to `false` and the phase's `skipIf` doesn't trigger.
+
+Internally, `outputMaybe` resolves like:
+```ts
+// key.iteration is undefined → falls back to the Ralph's current iteration
+return (row.iteration ?? 0) === (key.iteration ?? currentIteration);
+```
+
+**Fix**: Use `ctx.latest()` instead of `ctx.outputMaybe()` for any cross-iteration decision:
+
+```tsx
+// WRONG — only sees current iteration, completed phases re-run
+const finalReview = ctx.outputMaybe("finalReview", {
+  nodeId: `${id}:final-review`,
+});
+
+// CORRECT — scans all iterations, returns highest
+const finalReview = ctx.latest(
+  "finalReview",
+  `${id}:final-review`,
+);
+```
+
+**Where to apply**: Any lookup whose result feeds into `skipIf`, loop `until` conditions, or `allPhasesComplete` checks. Keep `outputMaybe` for lookups that feed into prompts (you want the current iteration's data there).
+
+| Method | Iteration Scope | Use For |
+|---|---|---|
+| `ctx.outputMaybe(table, { nodeId })` | Current iteration only | Reading earlier steps in same iteration for prompts |
+| `ctx.latest(table, nodeId)` | Highest iteration across all | `skipIf`, loop termination, cross-iteration decisions |
+
+---
+
+## 15. Zod 4 Schema Conversion — `type: "None"` Error
 
 **Symptom**: Codex agent fails immediately with:
 ```

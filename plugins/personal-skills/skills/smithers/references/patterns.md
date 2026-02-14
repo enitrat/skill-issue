@@ -11,10 +11,14 @@ Phases that complete (`readyToMoveOn: true`) are skipped on subsequent passes.
 
 ```tsx
 export default smithers((ctx) => {
+  // ⚠️ CRITICAL: Use ctx.latest() for cross-iteration decisions (skipIf, loop termination).
+  // ctx.outputMaybe() is SCOPED TO THE CURRENT ITERATION — it won't see outputs
+  // from previous Ralph iterations. ctx.latest() returns the highest-iteration output.
   const phaseComplete = (id: string) => {
-    const finalReview = ctx.outputMaybe("finalReview", {
-      nodeId: `${id}:final-review`,
-    });
+    const finalReview = ctx.latest(
+      "finalReview",
+      `${id}:final-review`,
+    );
     return finalReview?.readyToMoveOn ?? false;
   };
 
@@ -319,6 +323,7 @@ Without this, CLI agents (claude, codex) produce natural language and forget the
 
 | Anti-Pattern | Why It Fails | Do Instead |
 |---|---|---|
+| `ctx.outputMaybe()` for `skipIf` / loop termination | Scoped to current iteration — can't see previous iterations' outputs, so completed phases re-run | Use `ctx.latest(table, nodeId)` for any cross-iteration decision |
 | Nested Ralph loops (per-phase inner loop) | Complex state, no cross-phase benefits | Single outer Ralph with `skipIf` gating |
 | Hardcoded nodeIds in shared loop | Phases clobber each other's outputs | Phase-prefix: `${id}:step-name` |
 | Passing entire output objects as props | Bloated prompts, wasted tokens | Destructure and pass only needed fields |
