@@ -86,23 +86,7 @@ bunx smithers list workflow.tsx --limit 5
 
 ---
 
-## 5. React "key" Warning on Mapped Elements
-
-**Symptom**: Runtime warning: `Each child in a list should have a unique "key" prop.`
-
-**Cause**: When using `PHASES.map()` to render `<Sequence>` elements inside a Ralph loop, React needs a `key` prop on each mapped element. But Smithers' `SequenceProps` type doesn't include `key`, so TypeScript rejects it.
-
-**Root cause**: Smithers' `jsxImportSource` re-exports React's runtime functions but not the JSX type namespace that includes `IntrinsicAttributes` (which provides `key`). This is a Smithers bug.
-
-**Workaround**:
-```tsx
-// @ts-expect-error — Smithers SequenceProps lacks key but React runtime needs it
-<Sequence key={id} skipIf={...}>
-```
-
----
-
-## 6. Diagnosing Suspiciously Fast Tasks
+## 5. Diagnosing Suspiciously Fast Tasks
 
 **Symptom**: A task (e.g., implement) completes in seconds when it should take minutes.
 
@@ -122,7 +106,7 @@ sqlite3 smithers.db "SELECT node_id, state, started_at_ms, finished_at_ms FROM _
 
 ---
 
-## 7. Manual Task Re-run via SQLite
+## 6. Manual Task Re-run via SQLite
 
 When `smithers revert` isn't available (no jj), you can force a task to re-run by clearing its records:
 
@@ -149,7 +133,7 @@ Smithers will re-render, see the missing output, and re-execute the task.
 
 ---
 
-## 8. Useful SQLite Inspection Queries
+## 7. Useful SQLite Inspection Queries
 
 ```bash
 # List all tables
@@ -171,7 +155,7 @@ sqlite3 smithers.db "SELECT * FROM pass_tracker WHERE run_id = '<run-id>';"
 
 ---
 
-## 9. System Prompt Not Taking Effect
+## 8. System Prompt Not Taking Effect
 
 **Symptom**: Agent ignores system prompt instructions (e.g., workspace policy, JSON output requirement).
 
@@ -185,43 +169,19 @@ bunx smithers cancel workflow.tsx --run-id <run-id>
 
 ---
 
-## 10. Agent Produces Natural Language Instead of JSON
+## 9. Agent Produces Natural Language Instead of JSON
 
 **Symptom**: Task fails with schema validation error. Agent output is prose without a JSON block.
 
 **Cause**: CLI agents (claude, codex) default to natural language. Without explicit instructions, they forget to output JSON.
 
-**Fix** (all three are needed):
+**Fix** (both are needed):
 1. System prompt must include the `CRITICAL OUTPUT REQUIREMENT` block
-2. Every MDX prompt must end with `## REQUIRED OUTPUT\n{props.schema}`
-3. `outputSchema` must be passed to every `<Task>` (enables auto-retry on validation failure — up to 2 retries with error details)
+2. `output={outputs.xxx}` must be passed to every `<Task>` (enables auto-retry on validation failure — up to 2 retries with error details)
 
 ---
 
-## 11. MDX Prompts Render as `[object Object]`
-
-**Symptom**: Agent receives `[object Object]` as its prompt instead of rendered markdown. The agent has no instructions and improvises. Visible in the DB:
-```bash
-sqlite3 smithers.db "SELECT substr(meta_json, 1, 200) FROM _smithers_attempts LIMIT 1;"
-# {"prompt":"[object Object]", ...}
-```
-
-**Cause**: MDX files need Smithers' MDX compilation plugin registered via Bun's preload system. Without it, `.mdx` imports are raw JSX element objects, not rendered strings.
-
-**Fix**: Create `preload.ts` and register it in `bunfig.toml`:
-```ts
-// preload.ts
-import { mdxPlugin } from "smithers-orchestrator/mdx-plugin";
-mdxPlugin();
-```
-```toml
-# bunfig.toml
-preload = ["./preload.ts"]
-```
-
----
-
-## 12. Claude Agent Delegates to Sub-Agents, JSON Lost
+## 10. Claude Agent Delegates to Sub-Agents, JSON Lost
 
 **Symptom**: Task times out or produces no JSON. The agent's response text says something like *"All the structured JSON output was provided at the end of my earlier response"* or references sub-agent results.
 
@@ -252,7 +212,7 @@ preload = ["./preload.ts"]
 
 ---
 
-## 13. Task Timeout (Default 300s)
+## 11. Task Timeout (Default 300s)
 
 **Symptom**: Task fails with `CLI timed out after 300000ms`. The agent was doing real work but didn't finish in time.
 
@@ -263,8 +223,7 @@ preload = ["./preload.ts"]
 <Task
   id={props.id}
   agent={researcher}
-  output={tables.research}
-  outputSchema={ResearchSchema}
+  output={outputs.research}
   timeoutMs={3_600_000}  // 1 hour
   retries={3}            // generous retry budget
 >
@@ -284,7 +243,7 @@ preload = ["./preload.ts"]
 
 ---
 
-## 14. Completed Phases Re-Run on Next Ralph Iteration
+## 12. Completed Phases Re-Run on Next Ralph Iteration
 
 **Symptom**: A phase completed with `readyToMoveOn: true` in iteration N, but re-runs from scratch in iteration N+1. Tokens and time are wasted re-doing work.
 
@@ -317,62 +276,3 @@ const finalReview = ctx.latest(
 |---|---|---|
 | `ctx.outputMaybe(table, { nodeId })` | Current iteration only | Reading earlier steps in same iteration for prompts |
 | `ctx.latest(table, nodeId)` | Highest iteration across all | `skipIf`, loop termination, cross-iteration decisions |
-
----
-
-## 15. Zod 4 Schema Conversion — `type: "None"` Error
-
-**Symptom**: Codex agent fails immediately with:
-```
-Invalid schema for response_format 'codex_output_schema':
-schema must be a JSON Schema of 'type: "object"', got 'type: "None"'.
-```
-
-**Root cause**: A chain of three interacting issues in `smithers-orchestrator@0.6.0`:
-
-1. Smithers depends on `zod@^4.3.6` but dropped `zod-to-json-schema` from its own deps when migrating to Zod 4
-2. `zod-to-json-schema@3.25.1` gets pulled in **transitively** via `ai` → `@ai-sdk/ui-utils`
-3. `zod-to-json-schema` v3 doesn't understand Zod 4 schemas — it **silently** returns `{"$schema":"..."}` with no `type`, no `properties`
-4. The Codex CLI reads `type: undefined` → sends `type: "None"` → OpenAI rejects it
-
-**Verified**: The dynamic `await import("zod-to-json-schema")` in `CodexAgent.buildCommand` is wrapped in try/catch and designed to silently skip when the module isn't installed. But since v3 IS installed (transitively), the import succeeds and produces garbage.
-
-```ts
-// What zodToJsonSchema v3 produces for a Zod 4 schema:
-zodToJsonSchema(z.object({ name: z.string() }));
-// → {"$schema":"http://json-schema.org/draft-07/schema#"}  ← EMPTY
-
-// What Zod 4's built-in produces:
-z.object({ name: z.string() }).toJSONSchema();
-// → {"type":"object","properties":{"name":{"type":"string"}},...}  ← CORRECT
-```
-
-**Fix**: Apply a patch to replace `zodToJsonSchema()` with Zod 4's native `.toJSONSchema()`:
-
-1. Create `patches/smithers-orchestrator@0.6.0.patch`:
-```diff
---- a/src/agents/cli.ts
-+++ b/src/agents/cli.ts
-@@ -830,8 +830,7 @@
-     if (!this.opts.outputSchema && params.options?.outputSchema) {
-       try {
--        const { zodToJsonSchema } = await import("zod-to-json-schema");
--        const jsonSchema = zodToJsonSchema(params.options.outputSchema);
-+        const jsonSchema = params.options.outputSchema.toJSONSchema();
-         const schemaFile = join(
-```
-
-2. Add to `package.json`:
-```json
-"patchedDependencies": {
-  "smithers-orchestrator@0.6.0": "patches/smithers-orchestrator@0.6.0.patch"
-}
-```
-
-3. Run `bun install` — Bun auto-applies the patch.
-
-**Verify**: Check the patched file:
-```bash
-grep -A1 "outputSchema" node_modules/smithers-orchestrator/src/agents/cli.ts | grep toJSONSchema
-# Should show: const jsonSchema = params.options.outputSchema.toJSONSchema();
-```

@@ -24,7 +24,6 @@ console = Console()
 # Resolve paths relative to script location
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-PLUGIN_SKILLS = REPO_ROOT / "plugins" / "base-config" / "skills"
 SUBAGENTS_ROOT = REPO_ROOT / "subagents"
 RULES_ROOT = REPO_ROOT / "rules"
 
@@ -169,18 +168,37 @@ def ensure_claude_plugins(dry_run: bool = False) -> bool:
 
 def sync_codex_skills(dry_run: bool = False) -> int:
     """Sync skills to Codex directory."""
+    plugin_skill_roots = [(name, REPO_ROOT / "plugins" / name / "skills") for name in PLUGIN_NAMES]
+
     console.print("\n[blue]Codex Skills Sync[/blue]")
     console.print(f"[blue]{'─' * 40}[/blue]")
-    console.print(f"[blue]Source:[/blue] {PLUGIN_SKILLS}")
     console.print(f"[blue]Target:[/blue] {CODEX_SKILLS_DIR}\n")
+    for _, root in plugin_skill_roots:
+        console.print(f"[blue]Source:[/blue] {root}")
+    console.print("")
 
-    if not PLUGIN_SKILLS.is_dir():
-        console.print(f"[red]Error:[/red] Skills directory not found: {PLUGIN_SKILLS}")
-        return 0
+    # Build skill map from all plugin skill roots. Later plugins in PLUGIN_NAMES
+    # intentionally take precedence if a skill name appears multiple times.
+    skill_map: dict[str, Path] = {}
+    missing_roots: list[Path] = []
+    for plugin_name, root in plugin_skill_roots:
+        if not root.is_dir():
+            missing_roots.append(root)
+            continue
+        for skill_dir in sorted(root.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_name = skill_dir.name
+            if skill_name in skill_map:
+                console.print(
+                    f"  [yellow]Note:[/yellow] '{skill_name}' overridden by plugin [bold]{plugin_name}[/bold]"
+                )
+            skill_map[skill_name] = skill_dir
 
-    # Find skill directories
-    skill_dirs = [d for d in PLUGIN_SKILLS.iterdir() if d.is_dir()]
-    if not skill_dirs:
+    for root in missing_roots:
+        console.print(f"  [yellow]Warning:[/yellow] Skills directory not found: {root}")
+
+    if not skill_map:
         console.print("[dim]No skills found[/dim]")
         return 0
 
@@ -194,8 +212,8 @@ def sync_codex_skills(dry_run: bool = False) -> int:
     synced_count = 0
     skipped_count = 0
 
-    for skill_dir in sorted(skill_dirs):
-        skill_name = skill_dir.name
+    for skill_name in sorted(skill_map):
+        skill_dir = skill_map[skill_name]
         target_skill = CODEX_SKILLS_DIR / skill_name
 
         # Check if identical (simple check: target exists and has same files)

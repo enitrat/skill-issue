@@ -1,0 +1,39 @@
+# REVIEW FIX — {props.phaseName}
+
+Phase ID: {props.phaseId}
+
+## Spec Review Issues (Severity: {props.prdSeverity})
+
+{props.prdIssues}
+
+## Code Review Issues (Severity: {props.codeSeverity})
+
+{props.codeIssues}
+
+## Test Status
+
+- Build/tests passing: {props.testsPassed}
+
+## Project-Specific Instructions
+
+{props.projectInstructions}
+
+## Generic Fix Instructions
+
+For EACH issue listed above:
+
+1. **Read the issue description carefully**
+2. **Determine if it's valid or a false positive**:
+   - If valid: fix it and commit
+   - If false positive: document why it's incorrect
+3. **Make the fix** — one atomic commit per fix
+4. **Run build + tests** after each fix to verify no regressions
+5. **Commit each fix separately**
+
+## Rules
+
+- Fix issues in order of severity: critical > major > minor
+- One commit per fix — keep changes atomic
+- If a fix would break other things, note it as a blocker
+- Run tests after EVERY fix
+- If an issue is a false positive, explain WHY clearly

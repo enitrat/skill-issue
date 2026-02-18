@@ -1,12 +1,18 @@
-# Atomic Unit Pipeline Pattern
+# Logical Unit Pipeline Pattern
 
-The preferred workflow architecture: run the **full pipeline** (implement → test → review → fix → refactor → final-review) for each **small atomic unit of work**, not implement everything then review once.
+The preferred workflow architecture: run the **full pipeline** (implement → test → review → fix → refactor → final-review) for each **logically complete unit of work**, not implement everything then review once.
 
 ---
 
 ## Core Principle
 
-**Small changes, full validation.** Each Ralph iteration implements 1-2 atomic units (one struct, one function, one interface), then runs the entire quality pipeline. The final-review gate decides whether to loop for more units or move to the next phase.
+**Logical completeness, full validation.** Each Ralph iteration implements 1-2 logical units, then runs the entire quality pipeline. The final-review gate decides whether to loop for more units or move to the next phase.
+
+**"Atomic" = one logical concern, NOT smallest possible diff.** A logical unit is the smallest change that is *independently meaningful*. Repetitive boilerplate that follows the same pattern N times is ONE unit:
+- Adding 20 similar operator functions to a test suite = ONE unit
+- Porting a test file with 14 similar test cases = ONE unit
+- Copying 5 related contracts for a feature = ONE unit
+- Adding a single complex function with novel logic = ONE unit
 
 ```
 Pass 1: context → implement (unit A, B) → test → review → fix → refactor → final-review
@@ -20,7 +26,7 @@ Pass 2: context → implement (unit C, D) → test → review → fix → refact
 
 ---
 
-## nextSmallestUnit Chaining
+## nextLogicalUnit Chaining
 
 The key mechanism: each implement step outputs what to do next. The next iteration's implement step receives this as its instruction.
 
@@ -31,8 +37,12 @@ export const ImplementSchema = z.object({
   filesCreated: z.array(z.string()),
   filesModified: z.array(z.string()),
   commitMessage: z.string(),
-  whatWasDone: z.string().describe("Detailed description of the atomic unit implemented"),
-  nextSmallestUnit: z.string().describe("The next smallest atomic unit of work to implement"),
+  whatWasDone: z.string().describe("Detailed description of the logical unit implemented"),
+  nextLogicalUnit: z.string().describe(
+    "Next logical unit of work. A logical unit is the smallest LOGICALLY COMPLETE change, " +
+    "not the smallest possible diff. Repetitive boilerplate (e.g. adding N similar functions, " +
+    "porting N similar test cases) is ONE unit, not N units."
+  ),
 });
 ```
 
@@ -42,30 +52,37 @@ export const ImplementSchema = z.object({
 # Implement — {props.phase} — Pass {props.pass}
 
 RULES:
-- Implement the SMALLEST ATOMIC UNIT of work possible — one struct, one function, one interface
-- Do NOT batch multiple unrelated changes
+- Implement one LOGICALLY COMPLETE unit of work
+- Do NOT batch multiple UNRELATED changes
+- DO batch RELATED repetitive work (same pattern applied N times = ONE unit)
+- If the next work is templated boilerplate, do ALL of it in one step
 
 {props.previousWork
-  ? `Previous implementation did: ${props.previousWork.whatWasDone}\nNext smallest unit to implement: ${props.previousWork.nextSmallestUnit}`
+  ? `Previous implementation did: ${props.previousWork.whatWasDone}\nNext logical unit to implement: ${props.previousWork.nextLogicalUnit}`
   : "Start with the first item from the plan."}
 
 {props.failingTests ? `FIX THESE FAILING TESTS FIRST:\n${props.failingTests}` : ""}
 {props.reviewFixes ? `Review fixes just applied: ${props.reviewFixes}` : ""}
 
+## BATCHING RULE
+If the next unit involves repetitive/templated work (same pattern applied N times),
+do ALL instances in one step. Examples:
+- Adding 10 operators with identical function signatures → ONE step
+- Adding 3 test files that follow the same helper pattern → ONE step
+- Porting N similar contracts with the same structure → ONE step
+
 ## GIT COMMIT RULES
-- Make atomic commits — one logical change per commit
+- Make atomic commits — one logical concern per commit
+- Repetitive/templated work (N similar items) is ONE commit, not N commits
 - Format: "EMOJI type(scope): description"
 - git add the specific files changed, then git commit
-
-## REQUIRED OUTPUT
-{props.schema}
 ```
 
 ### Workflow Threading
 
 ```tsx
-// implement-1 does unit A, outputs nextSmallestUnit: "implement iterator interface"
-<Task id={`${id}:implement-1`} output={tables.implement} outputSchema={ImplementSchema} agent={codex}>
+// implement-1 does unit A, outputs nextLogicalUnit: "add all euint32 operator tests"
+<Task id={`${id}:implement-1`} output={outputs.implement} agent={codex}>
   {render(ImplementPrompt, {
     phase,
     previousWork: latestImplement1 ?? null,  // from previous Ralph pass
@@ -75,8 +92,8 @@ RULES:
   })}
 </Task>
 
-// implement-2 picks up nextSmallestUnit from implement-1
-<Task id={`${id}:implement-2`} output={tables.implement} outputSchema={ImplementSchema} agent={codex}>
+// implement-2 picks up nextLogicalUnit from implement-1
+<Task id={`${id}:implement-2`} output={outputs.implement} agent={codex}>
   {render(ImplementPrompt, {
     phase,
     previousWork: latestImplement1 ?? null,  // chains from implement-1
@@ -85,7 +102,30 @@ RULES:
 </Task>
 ```
 
-The chain crosses Ralph iterations too: pass N's implement-2 outputs `nextSmallestUnit` → pass N+1's implement-1 picks it up.
+The chain crosses Ralph iterations too: pass N's implement-2 outputs `nextLogicalUnit` → pass N+1's implement-1 picks it up.
+
+### Final-Review Unit Override
+
+The final-review agent has broader PRD context than the implementer. It can override an over-granular `nextLogicalUnit` with a properly batched instruction:
+
+```ts
+export const FinalReviewSchema = z.object({
+  readyToMoveOn: z.boolean(),
+  remainingIssues: z.array(z.string()),
+  reasoning: z.string(),
+  nextUnitOverride: z.string().nullable().describe(
+    "If the implementer's nextLogicalUnit is too granular (e.g. 'add one more operator' when " +
+    "10 similar operators remain), override with a batched instruction. Null if appropriate."
+  ),
+});
+```
+
+In `workflow.tsx`, prefer the reviewer's override:
+```tsx
+nextLogicalUnit={
+  latestFinalReview?.nextUnitOverride ?? latestImplement?.nextLogicalUnit ?? null
+}
+```
 
 ---
 
@@ -172,15 +212,27 @@ The `reasoning` field from a rejected final-review feeds back into the next iter
 
 ## Why This Pattern Works
 
-| Aspect | Big-Batch (anti-pattern) | Atomic Pipeline |
-|--------|--------------------------|-----------------|
-| Implement scope | Everything at once | 1-2 units per pass |
-| Review quality | Reviewer overwhelmed by massive diff | Reviewer focuses on small change |
-| Test feedback | Tests run once at the end | Tests run after each unit |
-| Fix cost | Late-discovered issues require large rewrites | Issues caught early, cheap to fix |
-| Git history | 1-3 giant commits | Many small atomic commits |
-| Agent reliability | Agents struggle with large tasks | Agents excel at focused tasks |
-| Resumability | Failed run loses all progress | Failed run keeps completed units |
+| Aspect | Big-Batch (anti-pattern) | Over-Granular (anti-pattern) | Logical Unit Pipeline |
+|--------|--------------------------|------------------------------|----------------------|
+| Implement scope | Everything at once | One function per iteration | 1-2 logical units per pass |
+| Review quality | Reviewer overwhelmed | Reviewer rubber-stamps trivial diffs | Reviewer focuses on meaningful change |
+| Test feedback | Tests run once at end | Tests run but catch nothing new | Tests run after each logical change |
+| Fix cost | Large rewrites | Wasted iterations on boilerplate | Issues caught early, cheap to fix |
+| Git history | 1-3 giant commits | 50 trivial commits | Clean, meaningful commits |
+| Iteration count | 1-2 (too few) | 20+ (too many) | 3-8 (right-sized) |
+| Agent reliability | Agents struggle with huge tasks | Agents waste capacity on repetition | Agents work on focused, meaningful tasks |
+
+---
+
+## Anti-Pattern: Over-Granular Chaining
+
+**Symptom:** `nextLogicalUnit` says "add operator X" → next iteration adds one operator → says "add operator Y" → repeat 15 times.
+
+**Root cause:** Agent interprets "atomic" as "smallest possible diff" instead of "smallest logically complete change".
+
+**Fix:** The batching rule in the implement prompt + the final-review `nextUnitOverride` field. If the reviewer sees over-granular chaining, it overrides with a batched instruction like "add ALL remaining operators in one step".
+
+**Detection heuristic:** If 3+ consecutive iterations each produce structurally identical diffs (same pattern, different values), the unit size is too small. The final-review should batch the remaining instances.
 
 ---
 
@@ -191,5 +243,6 @@ The `reasoning` field from a rejected final-review feeds back into the next iter
 | Simple (1 struct + tests) | 1 | 3 |
 | Medium (module with 3-5 functions) | 2 | 5 |
 | Complex (subsystem with multiple modules) | 2 | 8-10 |
+| Repetitive (N similar items, same pattern) | 1-2 (batch ALL) | 3 |
 
-For complex phases, prefer more passes with fewer units each over fewer passes with more units.
+**Repetitive work sizing:** If a phase involves N items following the same pattern (operators, test cases, similar contracts), size it as 1-2 implement steps that batch ALL items, not N steps with 1 item each. The agent should recognize templated work and do it all at once.

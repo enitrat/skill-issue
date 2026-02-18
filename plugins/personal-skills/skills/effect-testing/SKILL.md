@@ -1,3 +1,8 @@
+---
+name: effect-testing
+description: Comprehensive testing patterns for Effect-TS services, errors, layers, and effects. Use this skill when writing tests for Effect-based code.
+---
+
 # Effect-TS Testing Patterns
 
 Comprehensive testing patterns for Effect-TS services, errors, layers, and effects. Use this skill when writing tests for Effect-based code.

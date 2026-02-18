@@ -1,0 +1,59 @@
+# IMPLEMENTATION PHASE — {props.phaseName} (Pass {props.pass})
+
+Phase ID: {props.phaseId}
+
+## Context
+
+Read the plan file: {props.planFilePath}
+Read the context file: {props.contextFilePath}
+
+## Implementation Steps
+
+{props.implementationSteps}
+
+{props.previousSummary ? `## Previous Implementation (Pass ${Number(props.pass) - 1})
+
+What was done: ${props.previousSummary}
+${props.previousNextSteps ? `Next steps identified: ${props.previousNextSteps}` : ""}
+` : ""}
+
+{props.failingTests ? `## FAILING TESTS — FIX THESE FIRST
+
+${props.failingTests}
+` : ""}
+
+{props.prdReviewFeedback ? `## Spec Review Feedback (from previous pass)
+
+${props.prdReviewFeedback}
+` : ""}
+
+{props.codeReviewFeedback ? `## Code Review Feedback (from previous pass)
+
+${props.codeReviewFeedback}
+` : ""}
+
+{props.finalReviewFeedback ? `## Final Review Feedback (from previous pass)
+
+${props.finalReviewFeedback}
+` : ""}
+
+{props.reviewFixSummary ? `## Review Fix Summary (from previous pass)
+
+${props.reviewFixSummary}
+` : ""}
+
+## Project-Specific Rules
+
+{props.projectInstructions}
+
+## Generic Implementation Rules
+
+1. **Read the plan and context files** before writing any code
+2. **Implement the SMALLEST ATOMIC UNIT** of work possible
+3. **Run build after every change** to check compilation
+4. **Write tests alongside implementation**
+5. **Commit your work** — after each logical unit of implementation:
+   - Stage and commit: `git add <files> && git commit -m "<prefix>: <description>"`
+   - Do NOT leave work uncommitted when you produce your final JSON
+   - Every file you create or modify must be in a commit before you finish
+   - Your `commitMessages` output field must list every commit you made (non-empty)

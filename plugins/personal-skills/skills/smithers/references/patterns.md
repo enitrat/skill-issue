@@ -42,7 +42,7 @@ export default smithers((ctx) => {
           ))}
 
           {/* Pass tracker at the end */}
-          <Task id="pass-tracker" output={tables.passTracker} outputSchema={PassTrackerSchema}>
+          <Task id="pass-tracker" output={outputs.passTracker}>
             {{ totalIterations: currentPass + 1, /* ... */ }}
           </Task>
         </Sequence>
@@ -172,7 +172,7 @@ export const PassTrackerSchema = z.object({
 ```
 
 ```tsx
-<Task id="pass-tracker" output={tables.passTracker} outputSchema={PassTrackerSchema}>
+<Task id="pass-tracker" output={outputs.passTracker}>
   {{
     totalIterations: currentPass + 1,
     phasesRun: PHASES.filter(({ id }) => !SKIP_PHASES.has(id) && !phaseComplete(id)).map(({ id }) => id),
@@ -191,13 +191,12 @@ export const PassTrackerSchema = z.object({
 Run two reviewers in parallel, each with `continueOnFail` so one failing doesn't block the other.
 
 ```tsx
-export function Review({ nodeIdClaude, nodeIdCodex, outputSchema, ...props }) {
+export function Review({ nodeIdClaude, nodeIdCodex, ...props }) {
   return (
     <Parallel>
       <Task
         id={nodeIdClaude}
-        output={tables.reviewClaude}
-        outputSchema={outputSchema}
+        output={outputs.reviewClaude}
         agent={reviewerClaude}
         continueOnFail
       >
@@ -205,8 +204,7 @@ export function Review({ nodeIdClaude, nodeIdCodex, outputSchema, ...props }) {
       </Task>
       <Task
         id={nodeIdCodex}
-        output={tables.reviewCodex}
-        outputSchema={outputSchema}
+        output={outputs.reviewCodex}
         agent={reviewerCodex}
         continueOnFail
       >
@@ -228,8 +226,7 @@ Skip the fix step when both reviewers approved (nothing to fix).
 ```tsx
 <Task
   id={nodeId}
-  output={tables.reviewFix}
-  outputSchema={outputSchema}
+  output={outputs.reviewFix}
   agent={implementer}
   skipIf={allApproved || totalIssues === 0}
 >
@@ -328,7 +325,6 @@ Without this, CLI agents (claude, codex) produce natural language and forget the
 | Hardcoded nodeIds in shared loop | Phases clobber each other's outputs | Phase-prefix: `${id}:step-name` |
 | Passing entire output objects as props | Bloated prompts, wasted tokens | Destructure and pass only needed fields |
 | `ctx.output()` (not Maybe) | Throws on first render when no output exists | Always use `ctx.outputMaybe()` |
-| MDX prompt without `{props.schema}` | Agents guess the JSON format, fail validation | Always end with `## REQUIRED OUTPUT\n{props.schema}` |
-| Missing `outputSchema` on `<Task>` | No auto-validation, no retry, no schema injection | Always pass `outputSchema` |
+| Missing `output={outputs.xxx}` on `<Task>` | No auto-validation, no retry, no JSON output instructions | Always pass `output={outputs.xxx}` |
 | No `continueOnFail` on parallel reviews | One timeout kills both | Add `continueOnFail` to each parallel Task |
 | `.optional()` in Zod schemas | OpenAI structured outputs rejects properties missing from `required` array | Use `.nullable()` — agent sends `null`, property stays required |

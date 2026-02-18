@@ -1,0 +1,36 @@
+# RESEARCH PHASE — {props.phaseName}
+
+Phase ID: {props.phaseId}
+
+## Objective
+
+Gather all reference material needed to implement this phase.
+Write your findings to `{props.outputPath}`.
+
+## Phase Description
+
+{props.phaseDescription}
+
+## Project-Specific Instructions
+
+{props.projectInstructions}
+
+## Generic Research Steps
+
+1. **Read any spec/PRD documents** referenced in the instructions above
+2. **Read each reference file** listed. For each file, note:
+   - Function signatures and their parameters
+   - Key logic / business rules
+   - Error conditions and revert messages
+   - How the reference implementation handles the behavior
+3. **If referenced**, read the test spec tree for applicable test cases:
+   - List every test case leaf that applies to this phase
+   - Note the expected behavior for each test case
+4. Only if the above did not provide enough information, run scout subagents to gather additional information.
+5. **Write a context document** to `{props.outputPath}` containing:
+   - Interface signatures to implement
+   - Key behavior from reference implementations
+   - Test cases from spec tree (if applicable)
+   - Important implementation details
+   - Open questions or ambiguities
+6. **Commit** the context file

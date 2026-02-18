@@ -1,0 +1,61 @@
+# FINAL REVIEW — {props.phaseName} (Pass {props.pass})
+
+Phase ID: {props.phaseId}
+
+## Phase Description
+
+{props.phaseDescription}
+
+## Implementation Summary
+
+What was done: {props.whatWasDone}
+Implementer believes complete: {props.believesComplete}
+
+## Test Results
+
+- Build passed: {props.buildPassed}
+- Tests passing: {props.testsPassCount}
+- Tests failing: {props.testsFailCount}
+
+## Review Results
+
+- Spec Review severity: {props.prdReviewSeverity} (approved: {props.prdReviewApproved})
+- Code Review severity: {props.codeReviewSeverity} (approved: {props.codeReviewApproved})
+- All review issues resolved: {props.allIssuesResolved}
+
+## Project-Specific Instructions
+
+{props.projectInstructions}
+
+## Your Task
+
+You are the GATEKEEPER. Decide whether this phase is complete and ready to move on.
+
+Read the actual source files to verify — do NOT just trust the summaries above.
+
+## Decision Criteria
+
+Set `readyToMoveOn: true` ONLY if ALL of these are met:
+
+1. **Tests pass**: Build and test suite both succeed
+2. **Spec compliance**: Spec review severity is "none" or "minor" only
+3. **Code quality**: Code review severity is "none" or "minor" only
+4. **Completeness**: The phase description's core deliverables are implemented
+5. **Quality score >= 7**: Overall implementation quality
+
+Set `readyToMoveOn: false` if ANY of these:
+
+- Tests failing
+- Spec review has "critical" or "major" issues
+- Code review has "critical" or "major" issues
+- Core deliverables are missing
+
+## Reasoning
+
+Your `reasoning` field is CRITICAL — it feeds back into the next pass's Implement step.
+Be specific about:
+
+- What's still missing
+- What needs to change
+- Which test cases are uncovered
+- Which requirements are not met

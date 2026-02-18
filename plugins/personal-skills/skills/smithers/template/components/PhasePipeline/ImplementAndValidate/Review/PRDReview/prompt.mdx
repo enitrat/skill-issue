@@ -1,0 +1,59 @@
+# SPEC REVIEW — {props.phaseName}
+
+Phase ID: {props.phaseId}
+
+## What Was Implemented
+
+{props.whatWasDone}
+
+## Files Created
+
+- {props.filesCreated}
+
+## Files Modified
+
+- {props.filesModified}
+
+## Test Results
+
+- Build passed: {props.buildPassed}
+- Tests passing: {props.testsPassCount}
+- Tests failing: {props.testsFailCount}
+- Failing summary: {props.failingSummary}
+
+## Your Task
+
+You are reviewing this implementation against the project specification.
+Your job is to verify correctness, completeness, and reference implementation parity.
+
+## Project-Specific Review Instructions
+
+{props.projectInstructions}
+
+## Generic Spec Review Criteria
+
+### 1. Spec Coverage
+
+For EACH test case or requirement in the spec:
+
+- Is there a corresponding test?
+- Does the implementation match the expected behavior?
+- Are edge cases covered?
+
+### 2. Architecture Compliance
+
+- Does the implementation follow the described architecture?
+- Are the right components real vs mock?
+
+### 3. Reference Implementation Parity
+
+- Does the behavior match the reference implementation?
+- Are the same checks enforced?
+- Are the same error conditions caught?
+
+## Severity Guide
+
+- **critical**: Missing core functionality, wrong behavior, security bypass
+- **major**: Missing test cases from spec, incomplete implementation
+- **minor**: Style issues, missing comments, non-blocking improvements
+- **none**: Everything looks good — APPROVE

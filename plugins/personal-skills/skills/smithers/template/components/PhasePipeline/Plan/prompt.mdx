@@ -1,0 +1,41 @@
+# PLAN PHASE — {props.phaseName}
+
+Phase ID: {props.phaseId}
+
+## Objective
+
+Create a detailed implementation plan based on the research findings.
+Write the plan to `{props.planOutputPath}`.
+
+## Context
+
+Read the context file: {props.contextFilePath}
+
+### Key Research Findings
+
+- {props.findings}
+
+## Phase Description
+
+{props.phaseDescription}
+
+## Project-Specific Instructions
+
+{props.projectInstructions}
+
+## Generic Planning Steps
+
+1. **Read the context file** written by the Research phase
+2. **Read any spec documents** referenced in the instructions above
+3. **Design the implementation plan** with these principles:
+   - **Smallest atomic units** — each step should be one function, one contract, one test file
+   - **Test-first where possible** — write tests before or alongside implementation
+   - **Dependency order** — order steps so each builds on the previous
+4. **List all files** that will be created or modified
+5. **Identify dependencies** on other phases
+6. **Write the plan** to `{props.planOutputPath}` with:
+   - Ordered implementation steps
+   - File-level design (what goes where)
+   - Key decisions and tradeoffs
+   - Test strategy
+7. **Commit** the plan file
