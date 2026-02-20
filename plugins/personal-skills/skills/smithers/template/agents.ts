@@ -5,6 +5,8 @@
 // is self-contained and independently readable.
 
 import { ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+// Also available: GeminiAgent, KimiAgent, PiAgent — import directly from "smithers-orchestrator"
+// and provide as agent overrides in your project config.
 import { project } from "./project.js";
 
 // ─────────────────────────────────────────────────────────────

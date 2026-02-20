@@ -3,7 +3,13 @@
 // Any project using the smithers workflow must export a config satisfying this interface.
 // Domain-specific content lives in the project config, not in the core workflow.
 
-import type { ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import type {
+  ClaudeCodeAgent,
+  CodexAgent,
+  GeminiAgent,
+  KimiAgent,
+  PiAgent,
+} from "smithers-orchestrator";
 
 export interface Phase {
   id: string;
@@ -22,7 +28,12 @@ export type AgentRole =
 
 /** A fully-constructed agent instance. Project configs provide these directly,
  *  giving full control over model, systemPrompt, cwd, timeoutMs, etc. */
-export type BaseCliAgent = ClaudeCodeAgent | CodexAgent;
+export type BaseCliAgent =
+  | ClaudeCodeAgent
+  | CodexAgent
+  | GeminiAgent
+  | KimiAgent
+  | PiAgent;
 
 export interface ProjectConfig {
   /** Project display name */

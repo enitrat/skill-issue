@@ -8,7 +8,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
     "@ai-sdk/openai": "^1.0.0",
-    "smithers-orchestrator": "github:evmts/smithers#8e1cfa9bb0dcff4b2821a20dd43914c60c99e842",
+    "smithers-orchestrator": "github:evmts/smithers#539554d13443039c17fad054f630ad09d8f33cde",
     "zod": "^4.3.6"
   },
   "devDependencies": {

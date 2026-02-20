@@ -217,6 +217,41 @@ export function Review({ nodeIdClaude, nodeIdCodex, ...props }) {
 
 **Why**: Different models catch different issue classes. Claude Opus excels at architectural judgment; Codex at implementation rigor. `continueOnFail` prevents one timeout from blocking the entire pipeline.
 
+## 6b. `fallbackAgent` for Rate-Limit Resilience (v0.7.1+)
+
+When a primary agent (e.g. Codex) gets rate-limited, retries on the same model hit the same limit. Use `fallbackAgent` to switch models automatically on attempt ≥ 2:
+
+```tsx
+import { CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
+
+const primaryImplementer = new CodexAgent({ model: "gpt-5.3-codex", yolo: true, cwd: project.cwd });
+const fallbackImplementer = new ClaudeCodeAgent({ model: "claude-opus-4-6", permissionMode: "bypassPermissions", cwd: project.cwd });
+
+<Task
+  id={`${id}:implement`}
+  output={outputs.implement}
+  agent={primaryImplementer}
+  fallbackAgent={fallbackImplementer}
+  retries={3}
+  timeoutMs={3_600_000}
+>
+  <ImplementPrompt {...props} />
+</Task>
+```
+
+**Why**: Retries on a rate-limited model always fail immediately. Switching to a different provider on retry keeps the pipeline progressing. The primary agent is used on attempt 1; `fallbackAgent` is used on all subsequent attempts.
+
+**Also useful for KimiAgent**: Use `KimiAgent` as a fallback when Claude or Codex are unavailable:
+
+```tsx
+import { KimiAgent } from "smithers-orchestrator";
+const kimiBackup = new KimiAgent({ model: "kimi-latest", thinking: true, cwd: project.cwd });
+
+<Task id={`${id}:research`} output={outputs.research} agent={researcher} fallbackAgent={kimiBackup} retries={2}>
+  ...
+</Task>
+```
+
 ---
 
 ## 7. ReviewFix with Skip Logic
@@ -265,11 +300,13 @@ export type PhaseId = (typeof PHASES)[number]["id"];
 
 export const MODELS = {
   implementer: "gpt-5.3-codex",
+  implementerFallback: "claude-opus-4-6",   // fallbackAgent for rate-limit resilience
   reviewerClaude: "claude-opus-4-6",
   reviewerCodex: "gpt-5.3-codex",
   contextGatherer: "claude-opus-4-6",
   finalReviewer: "claude-opus-4-6",
   refactorer: "gpt-5.3-codex",
+  kimi: "kimi-latest",                      // KimiAgent — CLI-only, good fallback option
 } as const;
 ```
 
@@ -285,18 +322,27 @@ export const MODELS = {
 Maps table names to Zod schemas. Auto-generates SQLite tables with `runId`, `nodeId`, `iteration` columns.
 
 ```ts
-export const { smithers, tables } = createSmithers({
-  contextGather: ContextGatherSchema,
-  implement: ImplementSchema,
-  validate: ValidateSchema,
-  reviewClaude: ReviewSchema,
-  reviewCodex: ReviewSchema,   // same schema, different table
-  reviewFix: ReviewFixSchema,
-  refactor: RefactorSchema,
-  finalReview: FinalReviewSchema,
-  passTracker: PassTrackerSchema,
-});
+// smithers.ts
+const api = createSmithers(
+  {
+    contextGather: ContextGatherSchema,
+    implement: ImplementSchema,
+    validate: ValidateSchema,
+    reviewClaude: ReviewSchema,
+    reviewCodex: ReviewSchema,   // same schema, different table
+    reviewFix: ReviewFixSchema,
+    refactor: RefactorSchema,
+    finalReview: FinalReviewSchema,
+    passTracker: PassTrackerSchema,
+  },
+  { dbPath: "./my-workflow.db" },
+);
+
+// Destructure what you need — Task and outputs are the key additions vs the bare imports
+export const { Workflow, Task, useCtx, smithers, outputs, db } = api;
 ```
+
+Pass `outputs.implement` (a ZodObject reference) to `<Task output={outputs.implement}>` — **never a string key**. String keys were removed in v0.7.1.
 
 `ctx.outputMaybe("implement", { nodeId: "phase-1:implement" })` returns typed output from the `implement` table filtered by nodeId. Type inference works automatically — no casts needed.
 

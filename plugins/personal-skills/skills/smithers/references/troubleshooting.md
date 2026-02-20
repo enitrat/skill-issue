@@ -243,7 +243,72 @@ bunx smithers cancel workflow.tsx --run-id <run-id>
 
 ---
 
-## 12. Completed Phases Re-Run on Next Ralph Iteration
+## 12. Rate-Limited Agent Exhausts Retry Budget
+
+**Symptom**: Task fails all retries immediately (sub-second each). Run log shows HTTP 429 or "rate limit exceeded" in the agent's stderr.
+
+**Cause**: All retry attempts hit the same rate-limited model. Retrying Codex when Codex is rate-limited always fails immediately, burning the entire retry budget.
+
+**Fix (v0.7.1+)**: Set `fallbackAgent` on the task. Smithers uses `fallbackAgent` starting from attempt 2, automatically switching to a different provider:
+
+```tsx
+import { CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
+
+const primary = new CodexAgent({ model: "gpt-5.3-codex", yolo: true, cwd });
+const fallback = new ClaudeCodeAgent({ model: "claude-opus-4-6", permissionMode: "bypassPermissions", cwd });
+
+<Task
+  id={`${id}:implement`}
+  output={outputs.implement}
+  agent={primary}
+  fallbackAgent={fallback}
+  retries={3}
+>
+  ...
+</Task>
+```
+
+**Without v0.7.1**: Cancel the run, wait for the rate limit to expire, then resume. Alternatively set `timeoutMs` high enough that the model's backoff period is covered, but this wastes wall-clock time.
+
+---
+
+## 13. Worktree Auto-Creation Failure
+
+**Symptom**: Workflow fails at startup with an error like `fatal: '<path>' already exists` or `fatal: not a git repository` when using `<Worktree>`.
+
+**Context (v0.7.1+)**: Smithers now auto-creates git/jj worktrees when `<Worktree path="...">` is used and the path doesn't exist. It walks up from the workflow file's directory to find the VCS root, then runs `git worktree add` or `jj workspace add`.
+
+**Common causes and fixes**:
+
+1. **Path already exists but isn't a worktree**: Git refuses to add a worktree at an existing directory.
+   ```bash
+   # Remove the stale directory first
+   rm -rf /path/to/worktree
+   # Then re-run — Smithers will recreate it
+   ```
+
+2. **No git/jj root found**: The workflow file is outside any git repository.
+   ```bash
+   # Check VCS root
+   git -C /path/to/workflow/dir rev-parse --show-toplevel
+   # If this fails, init a repo or move the workflow inside one
+   ```
+
+3. **Detached worktree from deleted branch**: A previous worktree was created from a branch that was since deleted.
+   ```bash
+   git worktree prune       # clean up stale worktree metadata
+   git worktree list        # verify state
+   ```
+
+4. **jj workspace conflict**: `jj workspace add` fails if the workspace name conflicts.
+   ```bash
+   jj workspace list
+   jj workspace forget <name>   # remove the stale one
+   ```
+
+---
+
+## 14. Completed Phases Re-Run on Next Ralph Iteration
 
 **Symptom**: A phase completed with `readyToMoveOn: true` in iteration N, but re-runs from scratch in iteration N+1. Tokens and time are wasted re-doing work.
 

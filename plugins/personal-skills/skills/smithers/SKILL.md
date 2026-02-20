@@ -1,7 +1,7 @@
 ---
 name: smithers
 description: >
-  Build multi-phase AI development pipelines with the Smithers workflow engine. Use when:
+  Build multi-phase AI development pipelines with the Smithers workflow engine (v0.7.1). Use when:
   (1) Initializing a new Smithers project in a target directory (use the init CLI)
   (2) Adding phases or steps to existing workflows
   (3) Implementing review loops, pass tracking, or phase gating
@@ -13,7 +13,7 @@ description: >
 # Smithers Workflow Engine
 
 TypeScript framework for deterministic, resumable AI workflows using JSX.
-Runtime: Bun >= 1.3. State: SQLite via Drizzle ORM. Validation: Zod schemas.
+Runtime: Bun >= 1.3. State: SQLite via Drizzle ORM. Validation: Zod schemas. Version: 0.7.1.
 
 ## Init CLI
 
@@ -81,15 +81,40 @@ Render-schedule-execute loop:
 | `<Parallel>` | Concurrent execution with `maxConcurrency`     |
 | `<Ralph>`    | Loop with `until` condition + `maxIterations`  |
 | `<Branch>`   | Conditional routing                            |
+| `<Worktree>` | Run tasks in an isolated git/jj worktree (auto-created if missing) |
+
+## Task Props
+
+| Prop            | Type        | Purpose                                                             |
+|----------------|-------------|---------------------------------------------------------------------|
+| `id`           | `string`    | Unique node ID (phase-prefix for multi-phase loops)                 |
+| `output`       | `ZodObject` | **Required.** Pass `outputs.xxx` from `createSmithers`. Enables schema validation, auto-retry, and JSON instructions. Never pass a string — that API was removed in v0.7.1. |
+| `agent`        | `AgentLike` | Primary agent to run the task                                       |
+| `fallbackAgent`| `AgentLike` | Agent used on retry attempt ≥ 2 (e.g. a cheaper model when primary is rate-limited) |
+| `retries`      | `number`    | Retry budget on failure                                             |
+| `timeoutMs`    | `number`    | Per-attempt timeout in milliseconds                                 |
+| `skipIf`       | `boolean`   | Skip execution when true                                            |
+| `continueOnFail`| `boolean`  | Don't block siblings when this task fails                           |
+
+## Available Agents
+
+| Agent             | Import                        | CLI Required  | Notes                                      |
+|------------------|-------------------------------|---------------|--------------------------------------------|
+| `ClaudeCodeAgent` | `smithers-orchestrator`       | `claude`      | Default reviewer/researcher                |
+| `CodexAgent`      | `smithers-orchestrator`       | `codex`       | Default implementer                        |
+| `GeminiAgent`     | `smithers-orchestrator`       | `gemini`      | Google Gemini CLI                          |
+| `KimiAgent`       | `smithers-orchestrator`       | `kimi`        | Kimi CLI; supports `thinking`, `agent: "okabe"`, MCP configs |
+| `PiAgent`         | `smithers-orchestrator`       | `pi`          | Pi CLI                                     |
 
 ## Key Rules
 
-1. **Always pass `output={outputs.xxx}`** to `<Task>` — enables schema validation, auto-retry, and auto-appended JSON output instructions
+1. **Always pass `output={outputs.xxx}`** to `<Task>` — enables schema validation, auto-retry, and auto-appended JSON output instructions. Pass the ZodObject from `createSmithers`'s `outputs` return — string keys were removed in v0.7.1.
 2. **Use `ctx.outputMaybe()`** not `ctx.output()` — gracefully handles missing outputs during first render
 3. **Use `ctx.latest()` for cross-iteration decisions** — `outputMaybe` is scoped to the current Ralph iteration; use `ctx.latest(table, nodeId)` for `skipIf`, loop `until`, and `allPhasesComplete` checks
 4. **Use `.nullable()` never `.optional()` in Zod schemas** — OpenAI structured outputs rejects `.optional()` fields
 5. **Phase-prefix nodeIds** when multiple phases share a loop — `${phaseId}:step-name`
 6. **Set `continueOnFail` on review Tasks** — one reviewer failing shouldn't block the other
+7. **Use `fallbackAgent` for rate-limit resilience** — set `fallbackAgent` on heavy tasks so retry attempts switch to a different model automatically
 
 ## Workflow Philosophy
 
