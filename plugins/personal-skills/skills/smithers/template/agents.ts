@@ -5,8 +5,15 @@
 // is self-contained and independently readable.
 
 import { ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
-// Also available: GeminiAgent, KimiAgent, PiAgent — import directly from "smithers-orchestrator"
+// Also available: AmpAgent, GeminiAgent, KimiAgent, PiAgent — import directly from "smithers-orchestrator"
 // and provide as agent overrides in your project config.
+//
+// Agent arrays (v0.8.0+): pass [primary, fallback1, fallback2] to any Task's `agent` prop.
+// Attempt 1 uses agents[0], attempt 2 uses agents[1], etc. (capped at last).
+// The old `fallbackAgent` prop was removed in v0.8.0.
+//
+// KimiAgent defaults (v0.8.0+): thinking=true and stream-json output by default.
+// Set thinking: false explicitly if you need the old non-thinking behavior.
 import { project } from "./project.js";
 
 // ─────────────────────────────────────────────────────────────

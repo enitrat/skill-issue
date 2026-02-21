@@ -1,7 +1,7 @@
 ---
 name: smithers
 description: >
-  Build multi-phase AI development pipelines with the Smithers workflow engine (v0.7.1). Use when:
+  Build multi-phase AI development pipelines with the Smithers workflow engine (v0.8.0). Use when:
   (1) Initializing a new Smithers project in a target directory (use the init CLI)
   (2) Adding phases or steps to existing workflows
   (3) Implementing review loops, pass tracking, or phase gating
@@ -13,7 +13,7 @@ description: >
 # Smithers Workflow Engine
 
 TypeScript framework for deterministic, resumable AI workflows using JSX.
-Runtime: Bun >= 1.3. State: SQLite via Drizzle ORM. Validation: Zod schemas. Version: 0.7.1.
+Runtime: Bun >= 1.3. State: SQLite via Drizzle ORM. Validation: Zod schemas. Version: 0.8.0.
 
 ## Init CLI
 
@@ -85,16 +85,15 @@ Render-schedule-execute loop:
 
 ## Task Props
 
-| Prop            | Type        | Purpose                                                             |
-|----------------|-------------|---------------------------------------------------------------------|
-| `id`           | `string`    | Unique node ID (phase-prefix for multi-phase loops)                 |
-| `output`       | `ZodObject` | **Required.** Pass `outputs.xxx` from `createSmithers`. Enables schema validation, auto-retry, and JSON instructions. Never pass a string — that API was removed in v0.7.1. |
-| `agent`        | `AgentLike` | Primary agent to run the task                                       |
-| `fallbackAgent`| `AgentLike` | Agent used on retry attempt ≥ 2 (e.g. a cheaper model when primary is rate-limited) |
-| `retries`      | `number`    | Retry budget on failure                                             |
-| `timeoutMs`    | `number`    | Per-attempt timeout in milliseconds                                 |
-| `skipIf`       | `boolean`   | Skip execution when true                                            |
-| `continueOnFail`| `boolean`  | Don't block siblings when this task fails                           |
+| Prop            | Type                        | Purpose                                                             |
+|----------------|------------------------------|---------------------------------------------------------------------|
+| `id`           | `string`                    | Unique node ID (phase-prefix for multi-phase loops)                 |
+| `output`       | `ZodObject`                 | **Required.** Pass `outputs.xxx` from `createSmithers`. Enables schema validation, auto-retry, and JSON instructions. Never pass a string — that API was removed in v0.7.1. |
+| `agent`        | `AgentLike \| AgentLike[]`  | Agent or array of agents `[primary, fallback1, fallback2, ...]`. Tries in order: attempt 1 uses `agents[0]`, attempt 2 uses `agents[1]`, etc. (capped at last). Replaces the old `fallbackAgent` prop. |
+| `retries`      | `number`                    | Retry budget on failure                                             |
+| `timeoutMs`    | `number`                    | Per-attempt timeout in milliseconds                                 |
+| `skipIf`       | `boolean`                   | Skip execution when true                                            |
+| `continueOnFail`| `boolean`                  | Don't block siblings when this task fails                           |
 
 ## Available Agents
 
@@ -103,7 +102,8 @@ Render-schedule-execute loop:
 | `ClaudeCodeAgent` | `smithers-orchestrator`       | `claude`      | Default reviewer/researcher                |
 | `CodexAgent`      | `smithers-orchestrator`       | `codex`       | Default implementer                        |
 | `GeminiAgent`     | `smithers-orchestrator`       | `gemini`      | Google Gemini CLI                          |
-| `KimiAgent`       | `smithers-orchestrator`       | `kimi`        | Kimi CLI; supports `thinking`, `agent: "okabe"`, MCP configs |
+| `KimiAgent`       | `smithers-orchestrator`       | `kimi`        | Kimi CLI; **thinking=true and stream-json by default** (v0.8.0); supports `agent: "okabe"`, MCP configs |
+| `AmpAgent`        | `smithers-orchestrator`       | `amp`         | Amp CLI; supports `thread` (continue existing thread), `visibility`, `mcpConfig`, `dangerouslyAllowAll` |
 | `PiAgent`         | `smithers-orchestrator`       | `pi`          | Pi CLI                                     |
 
 ## Key Rules
@@ -114,7 +114,7 @@ Render-schedule-execute loop:
 4. **Use `.nullable()` never `.optional()` in Zod schemas** — OpenAI structured outputs rejects `.optional()` fields
 5. **Phase-prefix nodeIds** when multiple phases share a loop — `${phaseId}:step-name`
 6. **Set `continueOnFail` on review Tasks** — one reviewer failing shouldn't block the other
-7. **Use `fallbackAgent` for rate-limit resilience** — set `fallbackAgent` on heavy tasks so retry attempts switch to a different model automatically
+7. **Use agent arrays for rate-limit resilience** — set `agent={[primary, fallback]}` on heavy tasks so retry attempts switch to a different model automatically. The old `fallbackAgent` prop was **removed in v0.8.0**.
 
 ## Workflow Philosophy
 

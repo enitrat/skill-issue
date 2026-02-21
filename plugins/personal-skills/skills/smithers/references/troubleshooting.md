@@ -249,7 +249,7 @@ bunx smithers cancel workflow.tsx --run-id <run-id>
 
 **Cause**: All retry attempts hit the same rate-limited model. Retrying Codex when Codex is rate-limited always fails immediately, burning the entire retry budget.
 
-**Fix (v0.7.1+)**: Set `fallbackAgent` on the task. Smithers uses `fallbackAgent` starting from attempt 2, automatically switching to a different provider:
+**Fix (v0.8.0+)**: Pass an agent array to `agent`. Smithers uses `agents[0]` on attempt 1, `agents[1]` on attempt 2, etc., automatically switching providers on each retry:
 
 ```tsx
 import { CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
@@ -260,15 +260,16 @@ const fallback = new ClaudeCodeAgent({ model: "claude-opus-4-6", permissionMode:
 <Task
   id={`${id}:implement`}
   output={outputs.implement}
-  agent={primary}
-  fallbackAgent={fallback}
+  agent={[primary, fallback]}
   retries={3}
 >
   ...
 </Task>
 ```
 
-**Without v0.7.1**: Cancel the run, wait for the rate limit to expire, then resume. Alternatively set `timeoutMs` high enough that the model's backoff period is covered, but this wastes wall-clock time.
+> **Migration note**: The `fallbackAgent` prop was removed in v0.8.0. Replace `agent={primary} fallbackAgent={fallback}` with `agent={[primary, fallback]}`.
+
+**Without agent arrays**: Cancel the run, wait for the rate limit to expire, then resume. Alternatively set `timeoutMs` high enough that the model's backoff period is covered, but this wastes wall-clock time.
 
 ---
 

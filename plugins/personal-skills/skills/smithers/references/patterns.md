@@ -217,21 +217,21 @@ export function Review({ nodeIdClaude, nodeIdCodex, ...props }) {
 
 **Why**: Different models catch different issue classes. Claude Opus excels at architectural judgment; Codex at implementation rigor. `continueOnFail` prevents one timeout from blocking the entire pipeline.
 
-## 6b. `fallbackAgent` for Rate-Limit Resilience (v0.7.1+)
+## 6b. Agent Arrays for Rate-Limit Resilience (v0.8.0+)
 
-When a primary agent (e.g. Codex) gets rate-limited, retries on the same model hit the same limit. Use `fallbackAgent` to switch models automatically on attempt ≥ 2:
+When a primary agent (e.g. Codex) gets rate-limited, retries on the same model hit the same limit. Pass an array of agents to `agent` to switch models automatically on each successive attempt:
 
 ```tsx
-import { CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
+import { CodexAgent, ClaudeCodeAgent, KimiAgent } from "smithers-orchestrator";
 
 const primaryImplementer = new CodexAgent({ model: "gpt-5.3-codex", yolo: true, cwd: project.cwd });
 const fallbackImplementer = new ClaudeCodeAgent({ model: "claude-opus-4-6", permissionMode: "bypassPermissions", cwd: project.cwd });
 
+// Two-agent fallback: Codex on attempt 1, Claude on attempt 2+
 <Task
   id={`${id}:implement`}
   output={outputs.implement}
-  agent={primaryImplementer}
-  fallbackAgent={fallbackImplementer}
+  agent={[primaryImplementer, fallbackImplementer]}
   retries={3}
   timeoutMs={3_600_000}
 >
@@ -239,17 +239,29 @@ const fallbackImplementer = new ClaudeCodeAgent({ model: "claude-opus-4-6", perm
 </Task>
 ```
 
-**Why**: Retries on a rate-limited model always fail immediately. Switching to a different provider on retry keeps the pipeline progressing. The primary agent is used on attempt 1; `fallbackAgent` is used on all subsequent attempts.
+**Selection algorithm**: attempt N uses `agents[N-1]`, capped at the last element. With `[claude, kimi, amp]`: attempt 1 → claude, attempt 2 → kimi, attempt 3+ → amp.
 
-**Also useful for KimiAgent**: Use `KimiAgent` as a fallback when Claude or Codex are unavailable:
-
+**Three-agent cascade** (maximum resilience):
 ```tsx
-import { KimiAgent } from "smithers-orchestrator";
-const kimiBackup = new KimiAgent({ model: "kimi-latest", thinking: true, cwd: project.cwd });
+import { CodexAgent, ClaudeCodeAgent, KimiAgent } from "smithers-orchestrator";
 
-<Task id={`${id}:research`} output={outputs.research} agent={researcher} fallbackAgent={kimiBackup} retries={2}>
+const kimi = new KimiAgent({ model: "kimi-latest", cwd: project.cwd });  // thinking=true by default in v0.8.0
+
+<Task
+  id={`${id}:research`}
+  output={outputs.research}
+  agent={[researcher, fallbackImplementer, kimi]}
+  retries={3}
+>
   ...
 </Task>
+```
+
+> **Breaking change from v0.7.x**: The `fallbackAgent` prop was **removed in v0.8.0**. Replace `agent={primary} fallbackAgent={backup}` with `agent={[primary, backup]}`.
+
+**KimiAgent defaults changed in v0.8.0**: `thinking` is now `true` by default (was opt-in), and output format is `stream-json` by default (was `text`). If you relied on thinking being off, add `thinking: false`:
+```tsx
+const kimi = new KimiAgent({ model: "kimi-latest", thinking: false, cwd: project.cwd });
 ```
 
 ---
@@ -300,13 +312,13 @@ export type PhaseId = (typeof PHASES)[number]["id"];
 
 export const MODELS = {
   implementer: "gpt-5.3-codex",
-  implementerFallback: "claude-opus-4-6",   // fallbackAgent for rate-limit resilience
+  implementerFallback: "claude-opus-4-6",   // agent array [primary, fallback] for rate-limit resilience
   reviewerClaude: "claude-opus-4-6",
   reviewerCodex: "gpt-5.3-codex",
   contextGatherer: "claude-opus-4-6",
   finalReviewer: "claude-opus-4-6",
   refactorer: "gpt-5.3-codex",
-  kimi: "kimi-latest",                      // KimiAgent — CLI-only, good fallback option
+  kimi: "kimi-latest",                      // KimiAgent — thinking=true + stream-json by default in v0.8.0
 } as const;
 ```
 
