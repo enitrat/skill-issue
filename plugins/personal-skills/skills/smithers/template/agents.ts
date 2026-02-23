@@ -12,8 +12,9 @@ import { ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 // Attempt 1 uses agents[0], attempt 2 uses agents[1], etc. (capped at last).
 // The old `fallbackAgent` prop was removed in v0.8.0.
 //
-// KimiAgent defaults (v0.8.0+): thinking=true and stream-json output by default.
-// Set thinking: false explicitly if you need the old non-thinking behavior.
+// KimiAgent defaults (v0.8.2+): thinking=true and text output by default (stream-json was v0.8.0 only).
+// --final-message-only is auto-enabled with text format. Set thinking: false to disable thinking.
+// Parallel runs are safe — each invocation gets an isolated share dir (v0.8.2).
 import { project } from "./project.js";
 
 // ─────────────────────────────────────────────────────────────

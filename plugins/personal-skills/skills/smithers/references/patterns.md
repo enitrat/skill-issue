@@ -245,7 +245,7 @@ const fallbackImplementer = new ClaudeCodeAgent({ model: "claude-opus-4-6", perm
 ```tsx
 import { CodexAgent, ClaudeCodeAgent, KimiAgent } from "smithers-orchestrator";
 
-const kimi = new KimiAgent({ model: "kimi-latest", cwd: project.cwd });  // thinking=true by default in v0.8.0
+const kimi = new KimiAgent({ model: "kimi-latest", cwd: project.cwd });  // thinking=true, text output (v0.8.2)
 
 <Task
   id={`${id}:research`}
@@ -259,10 +259,12 @@ const kimi = new KimiAgent({ model: "kimi-latest", cwd: project.cwd });  // thin
 
 > **Breaking change from v0.7.x**: The `fallbackAgent` prop was **removed in v0.8.0**. Replace `agent={primary} fallbackAgent={backup}` with `agent={[primary, backup]}`.
 
-**KimiAgent defaults changed in v0.8.0**: `thinking` is now `true` by default (was opt-in), and output format is `stream-json` by default (was `text`). If you relied on thinking being off, add `thinking: false`:
+**KimiAgent defaults (v0.8.2)**: `thinking` is now `true` by default (was opt-in in v0.7.x). Output format is `text` by default (was `stream-json` in v0.8.0 — reverted in v0.8.2). `--final-message-only` is auto-enabled when using text format, ensuring only the model's final response is returned. If you relied on thinking being off, add `thinking: false`:
 ```tsx
 const kimi = new KimiAgent({ model: "kimi-latest", thinking: false, cwd: project.cwd });
 ```
+
+**GeminiAgent defaults (v0.8.2)**: Output format is now `json` by default (was `text`). This separates model responses from tool output, making JSON extraction more reliable. Override with `outputFormat: "text"` if needed.
 
 ---
 
@@ -318,7 +320,7 @@ export const MODELS = {
   contextGatherer: "claude-opus-4-6",
   finalReviewer: "claude-opus-4-6",
   refactorer: "gpt-5.3-codex",
-  kimi: "kimi-latest",                      // KimiAgent — thinking=true + stream-json by default in v0.8.0
+  kimi: "kimi-latest",                      // KimiAgent — thinking=true + text output by default in v0.8.2
 } as const;
 ```
 
@@ -371,6 +373,32 @@ wrapped in a code fence. The JSON format is specified in your task prompt.
 ```
 
 Without this, CLI agents (claude, codex) produce natural language and forget the JSON output.
+
+**v0.8.2 engine improvement**: The engine now injects the JSON output requirement at **both the start and end** of the task prompt (double-anchor). When no JSON is found in the response, the follow-up re-prompt includes a truncated summary of the model's original response, helping it recall what it already produced. This reduces JSON-less responses significantly, but the system prompt reinforcement is still recommended for maximum reliability.
+
+---
+
+## 11. Branch-Aware Worktrees (v0.8.2+)
+
+The `<Worktree>` component accepts an optional `branch` prop. When provided, Smithers creates or resets a named git branch in the worktree using `git worktree add -B <branch>`, making the setup idempotent across restarts.
+
+```tsx
+// Without branch: uses default ref (tries main → origin/main → HEAD)
+<Worktree path="./worktrees/phase-1">
+  <Task ... />
+</Worktree>
+
+// With branch: creates/resets a named branch — safe to restart
+<Worktree path="./worktrees/phase-1" branch="feature/phase-1-work">
+  <Task ... />
+</Worktree>
+```
+
+**When to use**: Pass `branch` when you want a clean, named branch for each phase's worktree so agents can make commits on a named branch that can be reviewed or rebased later.
+
+**jj support**: With jj, `branch` causes `jj bookmark set <branch> -r @` inside the new workspace.
+
+**Git ref fallback** (v0.8.2): Without a `branch`, Smithers now tries `main` first, then `origin/main`, then `HEAD` as the base ref (v0.8.0 skipped `main` and went straight to `origin/main`).
 
 ---
 

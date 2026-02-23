@@ -179,6 +179,8 @@ bunx smithers cancel workflow.tsx --run-id <run-id>
 1. System prompt must include the `CRITICAL OUTPUT REQUIREMENT` block
 2. `output={outputs.xxx}` must be passed to every `<Task>` (enables auto-retry on validation failure — up to 2 retries with error details)
 
+**v0.8.2 engine behavior**: The engine now double-anchors the JSON requirement — it injects the JSON output instruction at both the top and bottom of the task prompt. On the first retry, the follow-up prompt includes a truncated summary of the model's previous response so it has context. This handles models that forget mid-way through long outputs. If you still see failures, ensure the system prompt also contains the JSON requirement.
+
 ---
 
 ## 10. Claude Agent Delegates to Sub-Agents, JSON Lost
@@ -187,14 +189,14 @@ bunx smithers cancel workflow.tsx --run-id <run-id>
 
 **Cause**: Claude Code's `Task` tool spawns background sub-agents. The JSON output ends up in a sub-agent's response, not in the main stdout that Smithers captures. Smithers only reads `stdout.trim()` from the final CLI execution — it does not accumulate text across multi-turn conversations or sub-agent results.
 
-**How Smithers extracts JSON** (6 strategies in order):
+**How Smithers extracts JSON** (7 strategies in order):
 1. Check `result._output` / `result.output` (structured output)
 2. Parse full `result.text` if it starts with `{`
 3. Search for ` ```json\n{...}\n``` ` code fences in main text
 4. Search code fences in `result.steps[]` backwards
 5. `extractBalancedJson()` from steps (balanced brace matching)
 6. `extractBalancedJson()` from full text
-7. If all fail → follow-up prompt: "output ONLY a valid JSON"
+7. If all fail → follow-up prompt that includes a truncated summary of the model's original response, asking it to emit only the JSON (v0.8.2: improved from a bare "output ONLY a valid JSON" re-prompt)
 
 **Fix**: Add these rules to the system prompt:
 ```
@@ -273,7 +275,32 @@ const fallback = new ClaudeCodeAgent({ model: "claude-opus-4-6", permissionMode:
 
 ---
 
-## 13. Worktree Auto-Creation Failure
+## 13. KimiAgent Parallel Runs Corrupt State
+
+**Symptom**: Kimi tasks running in parallel produce wrong outputs, merge results from other tasks, or fail with JSON parse errors when multiple Kimi tasks run concurrently.
+
+**Cause (pre-v0.8.2)**: All KimiAgent instances shared `~/.kimi/kimi.json`, causing race conditions when multiple agents ran simultaneously.
+
+**Status (v0.8.2+)**: Fixed automatically. Each KimiAgent invocation now creates an isolated temporary directory seeded with `config.toml`, `credentials`, `device_id`, and `latest_version.txt` from the real share dir, and cleans up after itself. No action required.
+
+**If you see this on v0.8.1 or earlier**: Upgrade to v0.8.2, or serialize Kimi tasks (no `<Parallel>` with multiple KimiAgents).
+
+---
+
+## 14. GeminiAgent Output Parse Failures After Upgrade
+
+**Symptom**: GeminiAgent tasks that worked before v0.8.2 now produce no JSON, or the extracted JSON is mixed with tool call outputs.
+
+**Cause**: GeminiAgent's default `outputFormat` changed from `"text"` to `"json"` in v0.8.2. With `text` format, Gemini concatenates tool call results into the response. With `json` format, model responses are separated from tool output, which is more reliable for extraction — but some prompts may behave differently.
+
+**Fix**: If you explicitly need text format, pass `outputFormat: "text"` in the agent constructor:
+```ts
+const gemini = new GeminiAgent({ model: "gemini-2.5-pro", outputFormat: "text", cwd: project.cwd });
+```
+
+---
+
+## 15. Worktree Auto-Creation Failure
 
 **Symptom**: Workflow fails at startup with an error like `fatal: '<path>' already exists` or `fatal: not a git repository` when using `<Worktree>`.
 
@@ -309,7 +336,7 @@ const fallback = new ClaudeCodeAgent({ model: "claude-opus-4-6", permissionMode:
 
 ---
 
-## 14. Completed Phases Re-Run on Next Ralph Iteration
+## 16. Completed Phases Re-Run on Next Ralph Iteration
 
 **Symptom**: A phase completed with `readyToMoveOn: true` in iteration N, but re-runs from scratch in iteration N+1. Tokens and time are wasted re-doing work.
 

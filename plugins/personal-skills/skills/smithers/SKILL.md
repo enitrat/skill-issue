@@ -1,7 +1,7 @@
 ---
 name: smithers
 description: >
-  Build multi-phase AI development pipelines with the Smithers workflow engine (v0.8.0). Use when:
+  Build multi-phase AI development pipelines with the Smithers workflow engine (v0.8.2). Use when:
   (1) Initializing a new Smithers project in a target directory (use the init CLI)
   (2) Adding phases or steps to existing workflows
   (3) Implementing review loops, pass tracking, or phase gating
@@ -13,7 +13,7 @@ description: >
 # Smithers Workflow Engine
 
 TypeScript framework for deterministic, resumable AI workflows using JSX.
-Runtime: Bun >= 1.3. State: SQLite via Drizzle ORM. Validation: Zod schemas. Version: 0.8.0.
+Runtime: Bun >= 1.3. State: SQLite via Drizzle ORM. Validation: Zod schemas. Version: 0.8.2.
 
 ## Init CLI
 
@@ -81,7 +81,7 @@ Render-schedule-execute loop:
 | `<Parallel>` | Concurrent execution with `maxConcurrency`     |
 | `<Ralph>`    | Loop with `until` condition + `maxIterations`  |
 | `<Branch>`   | Conditional routing                            |
-| `<Worktree>` | Run tasks in an isolated git/jj worktree (auto-created if missing) |
+| `<Worktree>` | Run tasks in an isolated git/jj worktree (auto-created if missing). Optional `branch` prop creates/resets a named branch in the worktree, making restarts idempotent. |
 
 ## Task Props
 
@@ -101,8 +101,8 @@ Render-schedule-execute loop:
 |------------------|-------------------------------|---------------|--------------------------------------------|
 | `ClaudeCodeAgent` | `smithers-orchestrator`       | `claude`      | Default reviewer/researcher                |
 | `CodexAgent`      | `smithers-orchestrator`       | `codex`       | Default implementer                        |
-| `GeminiAgent`     | `smithers-orchestrator`       | `gemini`      | Google Gemini CLI                          |
-| `KimiAgent`       | `smithers-orchestrator`       | `kimi`        | Kimi CLI; **thinking=true and stream-json by default** (v0.8.0); supports `agent: "okabe"`, MCP configs |
+| `GeminiAgent`     | `smithers-orchestrator`       | `gemini`      | Google Gemini CLI; **json output format by default** (v0.8.2, changed from text) |
+| `KimiAgent`       | `smithers-orchestrator`       | `kimi`        | Kimi CLI; **thinking=true and text output by default** (v0.8.2, reverted from stream-json); `--final-message-only` auto-enabled; parallel runs use isolated share dirs; supports `agent: "okabe"`, MCP configs |
 | `AmpAgent`        | `smithers-orchestrator`       | `amp`         | Amp CLI; supports `thread` (continue existing thread), `visibility`, `mcpConfig`, `dangerouslyAllowAll` |
 | `PiAgent`         | `smithers-orchestrator`       | `pi`          | Pi CLI                                     |
 
