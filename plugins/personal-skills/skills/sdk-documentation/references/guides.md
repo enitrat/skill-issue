@@ -117,7 +117,7 @@ Layer information from simple to advanced:
 
 ### Techniques
 
-- **`::: details` blocks** for advanced TypeScript configuration
+- **Expandable/details blocks** for advanced TypeScript configuration (see your framework's collapsible syntax)
 - **Separate concept guide pages** for deep integration patterns (e.g., TanStack Query internals)
 - **FAQ** as a safety net for edge cases
 - **"Read from Contract" pattern**: each section is self-contained — reader can stop after section 1 with a working example
@@ -159,31 +159,20 @@ and uses the [useSubmit](/react/api/hooks/useSubmit) hook.
 
 ### Warnings for critical requirements
 
-Use `::: warning` admonitions for configuration that will break things if missing:
+Use a **warning admonition** for configuration that will break things if missing (see [VitePress](references/vitepress.md) or [GitBook](references/gitbook.md) for exact syntax):
 
-```markdown
-::: warning
-Replace the `projectId` with your own Project ID!
-[Get your Project ID](https://dashboard.example.com/)
-:::
-```
+> **Warning**
+> Replace the `projectId` with your own Project ID!
+> [Get your Project ID](https://dashboard.example.com/)
 
 ## Code Example Progression
 
 ### Multi-file code groups at every step
 
-Show all relevant files together — the main file plus config, ABI, types:
+Show all relevant files together in a **multi-tab code group** (see your framework's tab/code-group syntax):
 
-```markdown
-::: code-group
-```tsx [send-transaction.tsx]
-// main component
-```
-```ts [config.ts]
-// config
-```
-:::
-```
+- `send-transaction.tsx` — main component
+- `config.ts` — SDK config
 
 ### Final step shows ALL files
 
@@ -211,9 +200,8 @@ export function SendTransaction() {
 
 [Install command]
 
-::: info Not ready to migrate yet?
-The vX docs are still available at [X.x.sdk.sh](url).
-:::
+> **Info:** Not ready to migrate yet?
+> The vX docs are still available at [X.x.sdk.sh](url).
 
 ## Breaking Changes
 ### [Change name]

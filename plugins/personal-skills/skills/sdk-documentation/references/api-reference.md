@@ -77,25 +77,25 @@ Each parameter gets its own `###` heading. Never use tables for parameters.
 
 User ID to fetch data for. [`enabled`](#enabled) set to `false` if `userId` is `undefined`.
 
-::: code-group
-```tsx [index.tsx]
+Wrap in a **multi-tab code group** showing the component + config file side by side
+(see your framework's tab/code-group syntax):
+
+\`\`\`tsx
 import { useUserData } from 'my-sdk'
 
 function App() {
   const result = useUserData({
-    userId: 'usr_abc123', // [!code focus]
+    userId: 'usr_abc123',  ← highlight/focus this line
   })
 }
-```
-<<< @/snippets/config.ts[config.ts]
-:::
+\`\`\`
 ```
 
 ### Rules
 
 1. **Type on its own line** in backticks. No "Type:" prefix, no table column.
 2. **Description is a terse fragment**, not a full sentence: "The resource's schema." not "This parameter accepts the schema of the resource."
-3. **Every parameter gets a complete code example** with `// [!code focus]` highlighting the relevant line.
+3. **Every parameter gets a complete code example** with the relevant line visually highlighted (use your framework's focus annotation).
 4. **Optional vs required** is communicated through the type itself: `| undefined` means optional. No badges.
 5. **Horizontal rules (`---`) separate parameter groups**: core params above, optional/advanced below.
 6. **Parameters section starts with type import**: `import { type UseBalanceParameters } from 'sdk'`

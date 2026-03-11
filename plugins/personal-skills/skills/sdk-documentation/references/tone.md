@@ -109,12 +109,14 @@ Never write multiple paragraphs of explanation before showing code. If concept e
 
 ## Admonitions
 
+Use admonitions for callouts that deserve visual emphasis. Refer to your framework's admonition syntax ([VitePress](references/vitepress.md) or [GitBook](references/gitbook.md)).
+
 | Type | Use for | Example |
 |------|---------|---------|
-| `::: warning` | "You must do this or things break" | "Make sure to replace the `projectId` with your own Project ID" |
-| `::: info` | Reassurance or context | "Not ready to migrate yet? The v1 docs are still available at..." |
-| `::: tip` | Helpful side-information | "TypeScript doesn't support importing JSON as const yet. Check out the CLI!" |
-| `::: details` | Optional deeper dives | TypeScript configuration, advanced patterns |
+| **warning** | "You must do this or things break" | "Make sure to replace the `projectId` with your own Project ID" |
+| **info** | Reassurance or context | "Not ready to migrate yet? The v1 docs are still available at..." |
+| **tip** | Helpful side-information | "TypeScript doesn't support importing JSON as const yet. Check out the CLI!" |
+| **details / expandable** | Optional deeper dives | TypeScript configuration, advanced patterns |
 
 ## "Why" vs "How"
 

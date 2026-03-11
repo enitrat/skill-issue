@@ -53,7 +53,7 @@ Before writing, identify which type of page you're creating. Each type has diffe
 | Jargon | SDK-specific terms explained; ecosystem terms assumed | Over-explaining industry basics |
 | Sections | Rigid ordering: Import → Usage → Parameters → Return Type | Freeform section ordering |
 | Cross-refs | Link to related APIs inline and in dedicated sections | "See also" dump at bottom |
-| Warnings | Use admonitions (`::: warning`) for critical info | Inline bold warnings in prose |
+| Warnings | Use a warning admonition for critical info (see your framework's syntax) | Inline bold warnings in prose |
 
 ## Detailed Guidance by Topic
 
