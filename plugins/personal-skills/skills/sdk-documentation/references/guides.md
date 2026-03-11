@@ -1,18 +1,45 @@
-# User Guides & Tutorials
+# Tutorials & How-to Guides
 
-Rules for writing task-oriented guides and getting-started tutorials.
+Tutorials and how-to guides are both practical, but they serve fundamentally different readers. Tutorials teach someone who is *learning*. How-to guides help someone who is *working*. Never conflate them.
 
-## Guide Types
+## Two Distinct Types of Practical Documentation
+
+| | **Tutorial** (Learning) | **How-to Guide** (Working) |
+|---|---|---|
+| **Reader** | Beginner building mental model | Competent user solving a problem |
+| **Goal** | Reader acquires skills & confidence | Reader accomplishes a specific task |
+| **Voice** | "we" — building alongside the reader | "you" — directing an able practitioner |
+| **Scope** | Complete journey, no shortcuts | Focused on one task, start-to-finish |
+| **Explanation** | Minimal — link out, don't teach inline | Zero — action only |
+| **Options** | Eliminate — one path, no detours | Acknowledge — real-world complexity |
+| **Examples** | Getting Started, First App | Authentication, Data Fetching, Error Handling |
+
+## Other Guide Types
 
 | Type | Purpose | Example |
 |------|---------|---------|
-| Getting Started | First working code in < 5 minutes | Installation → Config → Provider → Use |
-| Task Guide | Accomplish one specific thing | Connect Wallet, Send Transaction |
-| Concept Guide | Explain an integration pattern | TanStack Query, Error Handling, SSR |
+| Concept Guide | Explain an integration pattern (→ see [Explanation Pages](tone.md#explanation-concept-pages)) | TanStack Query, Error Handling, SSR |
 | Migration Guide | Upgrade between major versions | v1 → v2 breaking changes |
 | FAQ | Address common questions | Q&A format with short answers |
 
-## Getting Started Structure
+---
+
+## Tutorials (Learning-Oriented)
+
+Tutorials include Getting Started pages and any "First X" walkthrough. The reader is learning — they don't yet know what questions to ask.
+
+### Tutorial-Specific Rules
+
+1. **Show the destination early.** Tell the reader what they'll have built by the end. Screenshot or interactive demo before step 1.
+2. **Deliver visible results at every step.** Each step produces output the reader can verify: "You should see..." / "The output looks like..."
+3. **Eliminate options.** One path. Don't mention alternatives — they fracture the learner's focus. Save "you could also..." for how-to guides.
+4. **Minimize explanation.** If a concept needs > 2 sentences of explanation, link to a concept page instead. The tutorial is for *doing*, not *understanding*.
+5. **Guide observation.** Point out what the reader should notice: "Notice that the hook returns `undefined` until the query resolves."
+6. **Ensure repeatability.** Pin versions, provide exact config, test the tutorial end-to-end. A tutorial that doesn't work destroys trust.
+
+### Getting Started Structure
+
+Show the destination first — screenshot, demo, or description of what the reader will have built by the end.
 
 Offer two paths:
 
@@ -30,10 +57,24 @@ CLI scaffolding command — one line to a working project.
 Curate 3-4 links with bolded titles and one-line descriptions:
 ```markdown
 - [**TypeScript**](/react/typescript) Learn how to get the most out of type inference.
-- [**Connect Wallet**](/react/guides/connect-wallet) Enable wallet connections.
+- [**Authentication**](/react/guides/authentication) Set up user authentication.
 ```
 
-## Task Guide Template
+---
+
+## How-to Guides (Task-Oriented)
+
+How-to guides serve competent users who know what they want to accomplish. The reader is *working*, not *learning*.
+
+### How-to Guide Rules
+
+1. **Assume competence.** The reader already knows the SDK basics. Don't re-explain setup or foundational concepts — link to the tutorial.
+2. **Action only.** Every sentence either tells the reader to do something or shows them code. No teaching, no theory, no background.
+3. **Name the task in the title.** "Authenticate Users", "Fetch Data", "Handle Errors" — not "Auth Guide" or "Data Overview".
+4. **Address real-world complexity.** Unlike tutorials (which eliminate options), how-to guides should acknowledge variations: "If you're using a custom transport, pass it via..."
+5. **Start and end at meaningful points.** Don't repeat setup from Getting Started. Begin where the reader's real problem begins.
+
+### Task Guide Template
 
 ```
 # [Task Title]
@@ -102,7 +143,7 @@ The one exception: install commands always show pnpm/npm/yarn/bun in a code grou
 Explain dependencies at point-of-use with one-line descriptions:
 
 ```markdown
-- [Viem](https://viem.sh) is a TypeScript interface for Ethereum.
+- [Axios](https://axios-http.com) is an HTTP client for the browser and Node.js.
 - [TanStack Query](https://tanstack.com/query/v5) is an async state manager.
 - [TypeScript](/react/typescript) is optional, but highly recommended.
 ```
@@ -112,8 +153,8 @@ Explain dependencies at point-of-use with one-line descriptions:
 Reference prerequisite guides inline rather than listing prerequisites at the top:
 
 ```markdown
-The following guide builds on the [Connect Wallet guide](/react/guides/connect-wallet)
-and uses the [useSendTransaction](/react/api/hooks/useSendTransaction) hook.
+The following guide builds on the [Authentication guide](/react/guides/authentication)
+and uses the [useSubmit](/react/api/hooks/useSubmit) hook.
 ```
 
 ### Warnings for critical requirements
@@ -122,8 +163,8 @@ Use `::: warning` admonitions for configuration that will break things if missin
 
 ```markdown
 ::: warning
-Replace the `projectId` with your own WalletConnect Project ID!
-[Get your Project ID](https://cloud.reown.com/)
+Replace the `projectId` with your own Project ID!
+[Get your Project ID](https://dashboard.example.com/)
 :::
 ```
 

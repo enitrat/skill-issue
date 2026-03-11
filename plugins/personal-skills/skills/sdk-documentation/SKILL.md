@@ -8,13 +8,26 @@ description: >-
   (3) Writing getting-started guides or tutorials,
   (4) Structuring a documentation site from scratch,
   (5) Reviewing documentation quality and consistency,
-  (6) Setting up a VitePress documentation site for an SDK.
+  (6) Setting up a VitePress or GitBook documentation site for an SDK.
 ---
 
 # SDK Documentation Best Practices
 
 Rules for writing clear, scannable, code-forward documentation for public SDKs.
-Derived from analysis of best-in-class SDK documentation (wagmi, viem, TanStack).
+Derived from analysis of best-in-class SDK documentation (wagmi, viem, TanStack). Rules are domain-agnostic; examples use generic SDK patterns with occasional web3 illustrations.
+
+## Documentation Type Router
+
+Before writing, identify which type of page you're creating. Each type has different rules.
+
+| Question you're answering | Doc type | Template | Key rule |
+|---------------------------|----------|----------|----------|
+| "Help me learn this SDK" | **Tutorial** (Getting Started) | [guides.md → Tutorials](references/guides.md) | Learning-oriented: guide the reader, eliminate choices, show destination early |
+| "Help me accomplish X" | **How-to Guide** (Task Guide) | [guides.md → How-to Guides](references/guides.md) | Task-oriented: assume competence, action-only, address real-world complexity |
+| "What does X do / accept / return?" | **API Reference** | [api-reference.md](references/api-reference.md) | Information-oriented: describe only, zero explanation, mirror product structure |
+| "Why does X work this way?" | **Explanation** (Concept/Why page) | [tone.md → Explanation Pages](references/tone.md) | Understanding-oriented: provide context, make connections, admit tradeoffs |
+
+**The cardinal sin is mixing types.** A tutorial that stops to explain architecture loses the learner. A reference page that teaches loses the practitioner looking up a parameter. An explanation page that includes step-by-step instructions belongs in a how-to guide.
 
 ## Core Philosophy
 
@@ -45,7 +58,8 @@ Derived from analysis of best-in-class SDK documentation (wagmi, viem, TanStack)
 ## Detailed Guidance by Topic
 
 - **Documentation structure**: See [references/structure.md](references/structure.md) for site architecture, page templates, navigation, shared content systems
-- **Narrative tone**: See [references/tone.md](references/tone.md) for voice, style, sentence patterns, jargon handling
-- **User guides**: See [references/guides.md](references/guides.md) for tutorial structure, progressive disclosure, framework variants
+- **Narrative tone & explanation pages**: See [references/tone.md](references/tone.md) for voice, style, sentence patterns, jargon handling, and explanation/concept page guidance
+- **Tutorials & how-to guides**: See [references/guides.md](references/guides.md) for tutorial rules (learning-oriented), how-to guide rules (task-oriented), progressive disclosure, framework variants
 - **API references**: See [references/api-reference.md](references/api-reference.md) for parameter docs, return types, TypeScript presentation, cross-referencing
 - **VitePress setup**: See [references/vitepress.md](references/vitepress.md) for project init, config, markdown extensions, twoslash, code groups, shared includes
+- **GitBook setup**: See [references/gitbook.md](references/gitbook.md) for Git Sync, content blocks, steppers, OpenAPI integration, reusable content

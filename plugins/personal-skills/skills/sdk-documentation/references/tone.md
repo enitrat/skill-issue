@@ -27,7 +27,7 @@ BAD:  "You should create a config.ts file."
 | API reference | Second person | "Address to get balance for." |
 | Getting started | Imperative + "you" | "Install the package. You can learn more..." |
 | Step-by-step guide | "we" | "Next, we'll add the hook." |
-| Why / Overview | Declarative | "Wagmi delivers a great developer experience." |
+| Why / Overview | Declarative | "The SDK delivers a great developer experience." |
 | Migration guide | Second person + imperative | "Update your imports. You no longer need..." |
 
 ## Tone
@@ -53,16 +53,16 @@ Target **10-25 words per sentence**. Never exceed 35 words without structural ai
 
 ```
 GOOD: "Performance is critical for applications of all sizes." (8 words)
-GOOD: "Wagmi follows semver so developers can upgrade between versions with confidence." (11 words)
-BAD:  "App developers should not need to worry about connecting tens of different wallets,
-       the intricacies of multi-chain support, typos accidentally sending an order of
-       magnitude more ETH..." (45 words without a break)
+GOOD: "The SDK follows semver so developers can upgrade between versions with confidence." (11 words)
+BAD:  "App developers should not need to worry about managing dozens of different
+       authentication providers, the intricacies of token refresh flows, or accidentally
+       exposing credentials..." (45 words without a break)
 ```
 
 When longer sentences are necessary, use **colons, dashes, or parenthetical examples** as structural aids:
 
 ```
-"Queries are used for fetching data (e.g. fetching a block number, reading from a contract),
+"Queries are used for fetching data (e.g. fetching a user profile, reading from a data source),
 and are typically invoked on mount by default."
 ```
 
@@ -75,11 +75,11 @@ Follow the pattern: **brief framing → code → post-code commentary**.
 3. Optional 1-2 sentence commentary with link to deeper docs
 
 ```markdown
-Create and export a new Wagmi config using `createConfig`.
+Create and export a new config using `createConfig`.
 
 [code block]
 
-In this example, Wagmi is configured to use Mainnet and Sepolia. Check out the
+In this example, the SDK is configured with two data sources. Check out the
 `createConfig` docs for more configuration options.
 ```
 
@@ -91,46 +91,83 @@ Never write multiple paragraphs of explanation before showing code. If concept e
 
 - The host framework (React hooks, Vue composables, etc.)
 - TypeScript basics (generics, type inference, const assertions)
-- Domain fundamentals (for web3: wallets, transactions, contracts, ABIs, RPC)
+- Domain fundamentals relevant to your SDK's problem space (e.g. for web3: wallets, transactions, ABIs; for auth: tokens, sessions, OAuth flows)
 
 ### Always explain
 
 - SDK-specific APIs and concepts
-- Integration points with third-party libraries ("TanStack Query is an async state manager that handles requests, caching, and more.")
+- Integration points with third-party libraries (e.g. "TanStack Query is an async state manager that handles requests, caching, and more.")
 - Non-obvious behavior or gotchas
 
 ## Jargon Handling
 
 | Pattern | Example |
 |---------|---------|
-| SDK term, first use | Explain inline: "Viem is a TypeScript interface for Ethereum" |
-| Domain term, well-known | Use freely: ABI, RPC, hook, connector |
-| Domain term, specific | Explain when relevant: "A read-only function (constant function) is denoted by a `pure` or `view` keyword" |
+| SDK term, first use | Explain inline: "The client is a configured instance that manages connections and caching" |
+| Domain term, well-known | Use freely: terms your audience knows (e.g. hook, middleware, schema, endpoint) |
+| Domain term, specific | Explain when relevant: "A read-only operation returns data without side effects" |
 
 ## Admonitions
 
 | Type | Use for | Example |
 |------|---------|---------|
-| `::: warning` | "You must do this or things break" | "Make sure to replace the `projectId` with your own WalletConnect Project ID" |
+| `::: warning` | "You must do this or things break" | "Make sure to replace the `projectId` with your own Project ID" |
 | `::: info` | Reassurance or context | "Not ready to migrate yet? The v1 docs are still available at..." |
 | `::: tip` | Helpful side-information | "TypeScript doesn't support importing JSON as const yet. Check out the CLI!" |
 | `::: details` | Optional deeper dives | TypeScript configuration, advanced patterns |
 
 ## "Why" vs "How"
 
-Documentation is weighted toward **"how"** (procedural instructions). "Why" appears in two places:
+Most SDK docs are practical (tutorials, how-to guides, reference). But **explanation pages** are the fourth essential type — they build the mental model that makes everything else click.
 
-1. **Dedicated "Why" pages** — longer persuasive prose explaining project motivation
-2. **Inline in migration guides** — when removing features, explain the benefit: "This is more code, but removes internal complexity from hooks and gives you more control."
+API reference pages have **zero "why"**. They are pure reference. Tutorials and how-to guides have minimal "why" — link out to explanation pages instead.
 
-API reference pages have **zero "why"**. They are pure reference.
+## Explanation / Concept Pages
+
+Explanation pages answer "Why does this work this way?" and "How does this fit together?" They are the only doc type focused on *understanding* rather than *doing*.
+
+### When to write an explanation page
+
+- A design decision needs rationale (why hooks over HOCs, why this caching strategy)
+- An integration pattern requires mental model (how the SDK interacts with TanStack Query)
+- Users keep asking "why" in the same area (signal that procedural docs aren't enough)
+- Architecture context would help users make better decisions
+
+### Explanation page template
+
+```
+# [Concept Name]
+
+[1-2 paragraph overview: what this concept is and why it matters]
+
+## How it works
+[Mental model — how pieces fit together. Diagrams welcome.]
+
+## Design decisions
+[Why the SDK does it this way. Tradeoffs considered. Alternatives rejected and why.]
+
+## Relationship to [Related Concept]
+[Connect to other parts of the SDK. Cross-link generously.]
+
+## Further reading
+[Links to related API reference, how-to guides, external resources]
+```
+
+### Explanation page rules
+
+1. **Make connections.** Link concepts to each other. The reader is building a web of understanding, not learning isolated facts.
+2. **Provide context and history.** "This approach was chosen because..." / "Before v2, the SDK used X, but..."
+3. **Admit tradeoffs.** Don't be promotional. "This adds complexity but gives you control over..." is more trustworthy than "This is the best approach."
+4. **Stay bounded.** Resist including step-by-step instructions (that's a how-to guide) or parameter details (that's reference). Link instead.
+5. **No code-forward requirement.** Unlike every other page type, explanation pages can be prose-heavy. Code illustrates concepts, not procedures.
+6. **Voice: declarative and reflective.** "The caching layer sits between..." not "You should understand that the caching layer..."
 
 ## Transition Between Prose and Code
 
 | Pattern | When to use |
 |---------|-------------|
 | Declarative sentence → code block | Most common. "Create and export a config." → [code] |
-| Context-setting → code block | "Below, we render a list of connectors. When clicked, `connect` fires." → [code] |
+| Context-setting → code block | "Below, we render a list of options. When clicked, `handleSelect` fires." → [code] |
 | Code block → post-code commentary | After examples that need explanation. [code] → "In this example, we configured..." |
 | "Check out the X docs" send-off | After every major section to link deeper |
 
@@ -139,8 +176,8 @@ API reference pages have **zero "why"**. They are pure reference.
 In API reference pages, parameter descriptions are **terse fragments**, not full sentences:
 
 ```
-GOOD: "The contract's ABI."
-GOOD: "Account to use when calling the contract (`msg.sender`)."
-GOOD: "Block number to call contract at."
-BAD:  "This parameter accepts the ABI of the contract that you want to interact with."
+GOOD: "The resource's schema definition."
+GOOD: "Account to use when making the request."
+GOOD: "Timestamp to query data at."
+BAD:  "This parameter accepts the schema of the resource that you want to interact with."
 ```

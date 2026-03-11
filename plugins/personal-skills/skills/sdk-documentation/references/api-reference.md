@@ -2,6 +2,8 @@
 
 Rules for writing API reference pages for hooks, functions, classes, and configuration objects.
 
+**Reference describes and only describes.** A reference page is not a tutorial (don't teach), not a how-to guide (don't instruct), and not an explanation (don't justify). It provides truth, precision, and consistency. If you catch yourself writing "you should" or "this is useful when", that content belongs in a different page type — link to it instead.
+
 ## Page Template
 
 Every API reference page follows a rigid section order. Predictability is the goal — readers learn the template once and navigate all pages by muscle memory.
@@ -17,7 +19,7 @@ One-sentence description.
 [import statement]
 
 ## Usage
-[code group: main file + config + optional ABI]
+[code group: main file + config + optional schema/types]
 
 ## Parameters
 [type import]
@@ -46,7 +48,7 @@ One-sentence description.
 Same as query but with:
 - Mutation-specific shared options (onSuccess, onError, onSettled)
 - Mutation-specific return fields (mutate, mutateAsync, isIdle)
-- Optional `## Type Inference` section for ABI/schema inference
+- Optional `## Type Inference` section for schema/type inference
 
 ### Configuration Object
 
@@ -69,19 +71,19 @@ Each parameter gets its own `###` heading. Never use tables for parameters.
 ### Format per parameter
 
 ```markdown
-### address
+### userId
 
-`Address | undefined`
+`string | undefined`
 
-Address to get balance for. [`enabled`](#enabled) set to `false` if `address` is `undefined`.
+User ID to fetch data for. [`enabled`](#enabled) set to `false` if `userId` is `undefined`.
 
 ::: code-group
 ```tsx [index.tsx]
-import { useBalance } from 'sdk'
+import { useUserData } from 'my-sdk'
 
 function App() {
-  const result = useBalance({
-    address: '0x4557B18E779944BFE9d78A672452331C186a9f48', // [!code focus]
+  const result = useUserData({
+    userId: 'usr_abc123', // [!code focus]
   })
 }
 ```
@@ -92,12 +94,12 @@ function App() {
 ### Rules
 
 1. **Type on its own line** in backticks. No "Type:" prefix, no table column.
-2. **Description is a terse fragment**, not a full sentence: "The contract's ABI." not "This parameter accepts the ABI of the contract."
+2. **Description is a terse fragment**, not a full sentence: "The resource's schema." not "This parameter accepts the schema of the resource."
 3. **Every parameter gets a complete code example** with `// [!code focus]` highlighting the relevant line.
 4. **Optional vs required** is communicated through the type itself: `| undefined` means optional. No badges.
 5. **Horizontal rules (`---`) separate parameter groups**: core params above, optional/advanced below.
 6. **Parameters section starts with type import**: `import { type UseBalanceParameters } from 'sdk'`
-7. **Cross-link inferred params**: "Inferred from [`abi`](#abi) and [`functionName`](#functionname)."
+7. **Cross-link inferred params**: "Inferred from [`schema`](#schema) and [`methodName`](#methodname)."
 
 ## Return Type Documentation
 
@@ -113,8 +115,8 @@ import { type UseBalanceReturnType } from 'sdk'
 ```
 
 ### data
-`{ decimals: number; symbol: string; value: bigint; }`
-The balance data.
+`{ id: string; name: string; metadata: Record<string, unknown>; }`
+The fetched resource data.
 
 [shared result fields via include]
 ```
@@ -124,13 +126,13 @@ The balance data.
 Document return fields individually:
 
 ```markdown
-### accounts
-`readonly [Address, ...Address[]]`
-Connected accounts from connector.
+### items
+`readonly [T, ...T[]]`
+Fetched items from the data source.
 
-### chainId
+### totalCount
 `number`
-Connected chain ID from connector.
+Total number of matching items.
 ```
 
 ### For mutation hooks
@@ -156,28 +158,28 @@ import { type UseBalanceParameters } from 'sdk'
 ### Type inference demonstrations
 Use `twoslash` annotated code blocks for interactive hover information:
 ```ts twoslash
-const result = useReadContract({
-  abi: [...],
-  functionName: 'balanceOf',
-  //             ^? shows autocomplete options
+const result = useQuery({
+  schema: mySchema,
+  method: 'getUser',
+  //       ^? shows autocomplete options
 })
 result.data
 //     ^? shows inferred return type
 ```
 
 ### Dedicated Type Inference section
-For APIs with ABI/schema inference, add:
+For APIs with schema/type inference, add:
 ```markdown
 ## Type Inference
-With [`abi`](#abi) configured, TypeScript infers correct types for
-[`functionName`](#functionname), [`args`](#args), and the return type.
+With [`schema`](#schema) configured, TypeScript infers correct types for
+[`method`](#method), [`params`](#params), and the return type.
 See the [TypeScript docs](/react/typescript) for more information.
 ```
 
 ### Complex nested types
 Show inline as type literals. Do not create separate type pages for one-off shapes:
 ```
-`{ decimals: number; symbol: string; value: bigint; }`
+`{ id: string; name: string; createdAt: Date; }`
 ```
 
 ## Cross-Referencing
@@ -186,9 +188,9 @@ Every API reference page should cross-reference related APIs:
 
 | Section | Links to | Example |
 |---------|----------|---------|
-| `## Action` | Underlying core function | `[getBalance](/core/api/actions/getBalance)` |
-| `## Viem` / `## Underlying API` | External library function | `[readContract](https://viem.sh/docs/contract/readContract)` |
-| Parameter descriptions | Other params on same page | `Inferred from [abi](#abi)` |
+| `## Underlying API` | Underlying core function | `[getData](/core/api/actions/getData)` |
+| `## Underlying API` | External library function | `[fetch](https://lib.dev/docs/fetch)` |
+| Parameter descriptions | Other params on same page | `Inferred from [schema](#schema)` |
 | Parameter descriptions | Config/Provider pages | `[Config](/react/api/createConfig#config)` |
 | Type Inference section | TypeScript guide | `[TypeScript docs](/react/typescript)` |
 | Deprecation badges | Migration guide | `<Badge type="warning">[deprecated](/react/guides/migrate-v2#change)</Badge>` |
@@ -200,7 +202,7 @@ Core function pages include an `## Error` section with the error type import:
 ```markdown
 ## Error
 ```ts
-import { type ConnectErrorType } from '@sdk/core'
+import { type GetDataErrorType } from 'my-sdk'
 ```
 ```
 
@@ -218,11 +220,11 @@ Each page defines variables that shared includes consume:
 
 ```html
 <script setup>
-const packageName = 'sdk'
-const actionName = 'getBalance'
-const typeName = 'GetBalance'
-const TData = '{ decimals: number; symbol: string; value: bigint; }'
-const TError = 'GetBalanceErrorType'
+const packageName = 'my-sdk'
+const actionName = 'getData'
+const typeName = 'GetData'
+const TData = '{ id: string; name: string; metadata: Record<string, unknown>; }'
+const TError = 'GetDataErrorType'
 </script>
 ```
 
@@ -247,12 +249,12 @@ Use conditional directives to show/hide options based on the including page:
 </div>
 ```
 
-## Connector / Plugin References
+## Plugin / Adapter References
 
-Factory functions (connectors, plugins, middleware) use a simpler template:
+Factory functions (plugins, adapters, middleware, connectors) use a simpler template:
 
 ```
-# connectorName
+# pluginName
 [description]
 
 ## Import
@@ -260,6 +262,6 @@ Factory functions (connectors, plugins, middleware) use a simpler template:
 ## Parameters
 ```
 
-No Return Type or Action sections — these are configuration factories, not runtime APIs.
+No Return Type or Underlying API sections — these are configuration factories, not runtime APIs.
 
-Use the shared include + wrapper pattern: write connector docs once in `shared/connectors/`, include via thin wrapper pages that set framework-specific variables.
+Use the shared include + wrapper pattern: write plugin docs once in `shared/plugins/`, include via thin wrapper pages that set framework-specific variables.

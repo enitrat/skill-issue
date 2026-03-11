@@ -10,11 +10,11 @@ Organize docs into parallel tracks per framework/variant, each mirroring the sam
 docs/
   framework-a/          # e.g. react/
     getting-started.md
-    guides/             # Task-oriented tutorials
+    guides/             # Task-oriented how-to guides
     api/                # API reference pages
-      hooks/            # (or functions/, composables/, etc.)
+      hooks/            # (or functions/, composables/, classes/, etc.)
       config/
-      connectors/
+      plugins/          # (or adapters/, connectors/, providers/, etc.)
   framework-b/          # e.g. vue/ — mirrors framework-a structure
   core/                 # Framework-agnostic version
   shared/               # Reusable content fragments (never rendered directly)
@@ -25,14 +25,14 @@ docs/
 
 1. **Mirror structure across variants.** Every framework track uses identical directory layout and sidebar ordering. Readers switching frameworks find docs in the same place.
 2. **Shared content lives in `shared/`.** Write once, include everywhere. Shared files are excluded from search and navigation — they only appear via includes.
-3. **Snippets are real code files.** Store reusable config, ABI, and boilerplate files in `snippets/` — embed them in docs via file inclusion rather than duplicating.
+3. **Snippets are real code files.** Store reusable config, schema, and boilerplate files in `snippets/` — embed them in docs via file inclusion rather than duplicating.
 
 ## Sidebar / Navigation
 
 Order sidebar sections by the reader's journey:
 
 1. **Introduction** — Why, Installation, Getting Started, TypeScript
-2. **Guides** — Task-oriented (Connect Wallet, Send Transaction, etc.)
+2. **Guides** — Task-oriented (e.g. Authentication, Data Fetching, Error Handling)
 3. **Configuration** — Config creation, storage, providers
 4. **API Reference** — Hooks/functions alphabetically, grouped by domain if > 30 items
 5. **Miscellaneous** — Errors, Utilities, FAQ
@@ -70,7 +70,7 @@ One-sentence description.
   ---  (horizontal rule separates core from optional params)
   ### optionalParamC
 ## Return Type
-## Action / Viem  (link to underlying layer)
+## Underlying API  (link to lower-level library or core function)
 ```
 
 ### API Reference Page (Mutation/Write)
@@ -121,9 +121,9 @@ Use markdown includes with template variables to eliminate duplication across fr
 **Wrapper page** (per framework):
 ```md
 <script setup>
-const packageName = 'wagmi'
-const actionName = 'getBalance'
-const typeName = 'GetBalance'
+const packageName = 'my-sdk'
+const actionName = 'getData'
+const typeName = 'GetData'
 </script>
 
 <!--@include: @shared/getBalance.md-->
@@ -154,9 +154,9 @@ Extract common parameter groups (e.g., TanStack Query options, mutation results)
 
 | Convention | Usage |
 |-----------|-------|
-| Code groups | Always show companion files (config, ABI) alongside main example |
+| Code groups | Always show companion files (config, schema/types) alongside main example |
 | `// [!code focus]` | Highlight the relevant line in per-parameter examples |
 | `// [!code ++]` / `// [!code --]` | Show additions/removals in migration and step-by-step guides |
-| File inclusion `<<< @/snippets/...` | Embed reusable config/ABI files rather than duplicating |
+| File inclusion `<<< @/snippets/...` | Embed reusable config/schema files rather than duplicating |
 | `twoslash` blocks | Demonstrate TypeScript type inference with hover annotations |
 | Package manager tabs | Always show pnpm, npm, yarn, bun for install commands |
