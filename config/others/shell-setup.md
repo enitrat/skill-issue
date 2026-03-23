@@ -47,7 +47,7 @@ atuin register  # or atuin login
 
 ### 5. Modern CLI Tools
 ```bash
-brew install bat eza fd ripgrep delta httpie
+brew install bat eza fd ripgrep delta httpie mergiraf
 ```
 
 | Tool | Replaces | Description |
@@ -58,6 +58,7 @@ brew install bat eza fd ripgrep delta httpie
 | `ripgrep` | `grep` | Blazingly fast recursive search |
 | `delta` | `diff` | Better git diffs (configure in ~/.gitconfig) |
 | `httpie` | `curl` | Human-friendly HTTP client |
+| `mergiraf` | — | Syntax-aware git merge driver that reduces merge conflicts |
 
 To use delta for git diffs, add to `~/.gitconfig`:
 ```ini
