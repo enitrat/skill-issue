@@ -30,12 +30,22 @@ chezmoi diff
 chezmoi apply --dry-run --verbose
 ```
 
+## Install Skills
+
+```bash
+npx skills add enitrat/skill-issue
+```
+
+`npx skills` discovers every `SKILL.md` under `skills/` and installs into
+the target agent (Claude Code, Codex, Cursor, etc). See `npx skills --help`
+for `-a/--agent`, `-s/--skill`, and `-g/--global` flags.
+
 ## How It Fits Together
 
 | Area | Source of truth | Applied by | Target |
 |------|-----------------|------------|--------|
 | Dotfiles and machine provisioning | `dotfiles/` | `chezmoi init --apply` / `chezmoi update` | `~/.zshrc`, `~/.config/starship.toml`, installed tools |
-| Agent skills | `skills/` | Local agent/skill configuration | Claude/Codex skill directories |
+| Agent skills | `skills/` | `npx skills add enitrat/skill-issue` | Claude/Codex/Cursor skill directories |
 | Claude rules | `rules/` | Local Claude configuration | `~/.claude/rules/` |
 | Subagents/prompts | `subagents/` | Local Claude/Codex configuration | `~/.claude/agents/`, `~/.codex/prompts/` |
 | Custom CLIs | `tools/` | Shell `PATH` from `dotfiles/dot_zshrc.tmpl` | Local commands |

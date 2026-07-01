@@ -55,6 +55,10 @@ idempotent and OS-aware through chezmoi templates.
 4. Do not commit generated caches or local agent outputs inside skill
    directories.
 
+Skills are installed via `npx skills add enitrat/skill-issue` (or
+`npx skills add <owner>/<repo> -a <agent> -s <skill>` for a subset). No
+manifest file is needed — the CLI walks the repo for `SKILL.md` files.
+
 #### Skill Scripts Pattern
 
 Scripts should use `uv` with inline script dependencies for zero-setup
