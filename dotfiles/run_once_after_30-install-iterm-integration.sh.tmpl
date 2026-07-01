@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+# Enables iTerm2 hostname/cwd tracking, click-to-open, and jump-to-prompt
+# when SSH'd into this box from iTerm2. Must be installed on every remote
+# box individually - it's shell-hook based, not something the client
+# provides for free. Harmless no-op in any other terminal.
+if [ -f "$HOME/.iterm2_shell_integration.zsh" ]; then
+    echo "[iterm2-integration] already installed, skipping"
+else
+    curl -fsSL https://iterm2.com/shell_integration/zsh -o "$HOME/.iterm2_shell_integration.zsh"
+fi

@@ -189,6 +189,8 @@ def sync_codex_skills(dry_run: bool = False) -> int:
             if not skill_dir.is_dir():
                 continue
             skill_name = skill_dir.name
+            if skill_name.startswith(".") or not (skill_dir / "SKILL.md").is_file():
+                continue
             if skill_name in skill_map:
                 console.print(
                     f"  [yellow]Note:[/yellow] '{skill_name}' overridden by plugin [bold]{plugin_name}[/bold]"
@@ -242,7 +244,11 @@ def sync_codex_skills(dry_run: bool = False) -> int:
             # Remove old and copy fresh
             if target_skill.exists():
                 shutil.rmtree(target_skill)
-            shutil.copytree(skill_dir, target_skill)
+            shutil.copytree(
+                skill_dir,
+                target_skill,
+                ignore=shutil.ignore_patterns(".codex", ".tldr", "__pycache__"),
+            )
             console.print(f"  [{style}]✓[/{style}] {action_tag:<12} {skill_name}")
 
         synced_count += 1

@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+# Tailscale + mosh: connection resilience for remote dev sessions
+# (mesh networking + roaming-friendly shell), per 2025-2026 practitioner
+# consensus for SSH-based remote dev.
+
+{{ if eq .chezmoi.os "darwin" -}}
+if ! command -v tailscale >/dev/null 2>&1 && [ ! -d "/Applications/Tailscale.app" ]; then
+    brew install --cask tailscale
+else
+    echo "[tailscale] already installed, skipping"
+fi
+
+if command -v mosh >/dev/null 2>&1; then
+    echo "[mosh] already installed, skipping"
+else
+    brew install mosh
+fi
+{{ else -}}
+if command -v tailscale >/dev/null 2>&1; then
+    echo "[tailscale] already installed, skipping"
+else
+    curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+if command -v mosh-server >/dev/null 2>&1; then
+    echo "[mosh] already installed, skipping"
+elif command -v apt-get >/dev/null 2>&1; then
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mosh
+elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y mosh
+elif command -v pacman >/dev/null 2>&1; then
+    sudo pacman -Sy --noconfirm mosh
+fi
+{{ end -}}
+
+echo
+echo "Next: run 'tailscale up' to join your tailnet (requires interactive login)."

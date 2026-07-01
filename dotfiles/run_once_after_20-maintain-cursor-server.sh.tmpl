@@ -1,0 +1,30 @@
+{{ if eq .chezmoi.os "linux" -}}
+#!/bin/bash
+set -uo pipefail
+
+# Cursor's Remote-SSH server caches every version it has ever connected with
+# under ~/.cursor-server/bin/<commit>. On a shared/reused box this grows
+# unbounded and each new connection re-scans every cached version, adding
+# 1-2 minutes to connect time. Keep only the 3 most recent.
+dir="$HOME/.cursor-server/bin"
+if [ -d "$dir" ]; then
+    count=$(find "$dir" -maxdepth 1 -mindepth 1 -type d | wc -l | tr -d ' ')
+    if [ "$count" -gt 3 ]; then
+        find "$dir" -maxdepth 1 -mindepth 1 -type d -printf '%T@ %p\n' 2>/dev/null \
+            | sort -rn | tail -n +4 | cut -d' ' -f2- \
+            | xargs -r rm -rf
+        echo "[cursor-server] pruned old cached server versions (kept 3 newest)"
+    fi
+else
+    echo "[cursor-server] no ~/.cursor-server yet, nothing to prune (normal on first setup)"
+fi
+
+echo
+echo "Note: Cursor's Settings Sync does NOT work (Cursor team confirmed - VS Code only)."
+echo "Extensions also don't auto-sync to remote servers. If you need a specific"
+echo "extension set here, install it manually once via Cursor's Extensions panel"
+echo "over this Remote-SSH connection - it'll persist in ~/.cursor-server/extensions."
+{{ else -}}
+#!/bin/bash
+exit 0
+{{ end -}}

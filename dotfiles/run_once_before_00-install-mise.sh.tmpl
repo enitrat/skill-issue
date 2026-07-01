@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+
+if command -v mise >/dev/null 2>&1; then
+    echo "[mise] already installed, skipping"
+    exit 0
+fi
+
+{{ if eq .chezmoi.os "darwin" -}}
+brew install mise
+{{ else -}}
+curl -fsSL https://mise.run | sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' # ensure current shell can find it below
+export PATH="$HOME/.local/bin:$PATH"
+{{ end -}}
+
+echo "[mise] installed: $(mise --version 2>/dev/null || echo unknown)"

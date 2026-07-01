@@ -1,0 +1,139 @@
+"$schema" = 'https://starship.rs/config-schema.json'
+add_newline = false
+
+# No background fills anywhere below - matches the transparent-background
+# p10k style this replaced (POWERLEVEL9K_BACKGROUND=), just colored
+# icons/text directly on the terminal background instead of powerline blocks.
+format = """
+$os\
+$username\
+$directory\
+$git_branch\
+$git_status\
+$nodejs\
+$rust\
+$golang\
+$python\
+$docker_context\
+$time\
+${custom.git_profile}\
+$line_break$character"""
+
+palette = 'gruvbox_dark'
+
+[palettes.gruvbox_dark]
+color_fg0 = '#fbf1c7'
+color_gray = '#928374'
+color_blue = '#458588'
+color_aqua = '#689d6a'
+color_green = '#98971a'
+color_orange = '#d65d0e'
+color_purple = '#b16286'
+color_red = '#cc241d'
+color_yellow = '#d79921'
+
+[os]
+disabled = false
+style = "fg:color_orange"
+format = "[$symbol ]($style)"
+
+[os.symbols]
+Windows = "󰍲"
+Ubuntu = "󰕈"
+SUSE = ""
+Raspbian = "󰐿"
+Mint = "󰣭"
+Macos = ""
+Manjaro = ""
+Linux = "󰌽"
+Gentoo = "󰣨"
+Fedora = "󰣛"
+Alpine = ""
+Amazon = ""
+Android = ""
+AOSC = ""
+Arch = "󰣇"
+Artix = "󰣇"
+EndeavourOS = ""
+CentOS = ""
+Debian = "󰣚"
+Redhat = "󱄛"
+RedHatEnterprise = "󱄛"
+Pop = ""
+
+[username]
+show_always = true
+style_user = "fg:color_orange"
+style_root = "fg:color_red"
+format = "[$user]($style) "
+
+[directory]
+style = "fg:color_yellow"
+format = "[$path]($style) "
+truncation_length = 3
+truncation_symbol = "…/"
+
+[directory.substitutions]
+"Documents" = "󰈙 "
+"Downloads" = " "
+"Music" = "󰝚 "
+"Pictures" = " "
+"Developer" = "󰲋 "
+
+[git_branch]
+symbol = ""
+style = "fg:color_aqua"
+format = "[$symbol $branch]($style) "
+
+[git_status]
+style = "fg:color_red"
+format = "[($all_status$ahead_behind)]($style) "
+
+[nodejs]
+symbol = ""
+style = "fg:color_blue"
+format = "[$symbol $version]($style) "
+
+[rust]
+symbol = ""
+style = "fg:color_blue"
+format = "[$symbol $version]($style) "
+
+[golang]
+symbol = ""
+style = "fg:color_blue"
+format = "[$symbol $version]($style) "
+
+[python]
+symbol = ""
+style = "fg:color_blue"
+format = "[$symbol $version]($style) "
+
+[docker_context]
+symbol = ""
+style = "fg:color_gray"
+format = "[$symbol $context]($style) "
+
+[time]
+disabled = false
+time_format = "%R"
+style = "fg:color_gray"
+format = "[$time]($style) "
+
+[custom.git_profile]
+command = "git config --global user.name"
+when = true
+style = "fg:color_orange"
+format = "[\\[$output\\]]($style)"
+
+[line_break]
+disabled = false
+
+[character]
+disabled = false
+success_symbol = "[❯](bold fg:color_green)"
+error_symbol = "[❯](bold fg:color_red)"
+vimcmd_symbol = "[❮](bold fg:color_green)"
+vimcmd_replace_one_symbol = "[❮](bold fg:color_purple)"
+vimcmd_replace_symbol = "[❮](bold fg:color_purple)"
+vimcmd_visual_symbol = "[❮](bold fg:color_yellow)"

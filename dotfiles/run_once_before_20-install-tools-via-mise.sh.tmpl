@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+
+if ! command -v mise >/dev/null 2>&1; then
+    echo "[mise] not found on PATH, cannot install tools. Open a new shell and re-run 'chezmoi apply'." >&2
+    exit 1
+fi
+
+# Everything here goes through mise (aqua/github/cargo backends) so the same
+# command works identically on macOS and Linux - no per-OS package manager
+# quirks (missing apt packages, stale repo versions, etc).
+mise use -g \
+    atuin bat delta eza fd fzf gh ripgrep starship tmux zoxide difftastic uv \
+    node@lts python@latest go@latest rust@latest bun@latest \
+    github:abhinav/git-spice \
+    github:joshmedeski/sesh
+
+# httpie: install via uv (isolated tool venv), not mise's pipx backend, which
+# requires a pre-existing pipx install we don't otherwise need.
+uv tool install httpie || echo "[httpie] uv tool install failed, skipping (non-critical)" >&2
+
+# mergiraf has no GitHub-release binaries (hosted on GitLab), build via cargo.
+mise use -g cargo:mergiraf || echo "[mergiraf] cargo build failed, skipping (non-critical)" >&2

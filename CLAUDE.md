@@ -40,6 +40,14 @@ subagents/           # Source-of-truth subagent configs
 config/
   claude/            # Claude Code configuration files
   others/            # Third-party software configs (zsh, plugins, apps)
+
+.chezmoiroot         # Points chezmoi at dotfiles/ as its source root
+dotfiles/            # chezmoi source state - dotfiles + provisioning scripts
+  dot_zshrc.tmpl     # -> ~/.zshrc (templated per-OS)
+  dot_config/        # -> ~/.config/
+  run_once_*.sh.tmpl # Idempotent provisioning (packages, mise tools, etc.)
+                     # Applied via `tools/ssh-sync` on remote boxes, or
+                     # `chezmoi init --apply <repo-url>` directly.
 ```
 
 ## Adding Content

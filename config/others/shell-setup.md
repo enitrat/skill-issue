@@ -28,11 +28,28 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:
 git clone https://github.com/zsh-users/zsh-history-substring-search ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-history-substring-search
 ```
 
-### 3. Powerlevel10k Theme
+### 3. Starship Prompt
 ```bash
-brew install powerlevel10k
+brew install starship font-meslo-lg-nerd-font --cask
 ```
-After installing, run `p10k configure` to set up your prompt.
+Copy `dotfiles/dot_config/starship.toml` from this repo to `~/.config/starship.toml`,
+and add `eval "$(starship init zsh)"` to `~/.zshrc`. Starship is actively
+maintained and much faster than Powerlevel10k, which is effectively in
+maintenance-only mode (no new features from upstream, per the maintainer).
+
+The config uses plain colored text/icons on a transparent background (no
+powerline blocks) to match a typical minimal p10k setup
+(`POWERLEVEL9K_BACKGROUND=` transparent) — if you used p10k's default
+"powerline blocks" look instead, `starship preset gruvbox-rainbow -o ~/.config/starship.toml`
+gives you that denser style. Includes a custom `[custom.git_profile]` module
+that shows your active `git-id` identity in the prompt — the Starship
+equivalent of the old p10k `prompt_git_profile` segment.
+
+**Nerd Font required for icons**: the `font-meslo-lg-nerd-font` cask installs
+"MesloLGS NF" — you then have to manually select it in your terminal's font
+setting (iTerm2: Preferences → Profiles → Text → Font). Without a Nerd Font
+selected, icons render as `[?]` tofu boxes — this is a terminal-side setting,
+not something Starship/p10k configure for you automatically.
 
 ### 4. Shell Enhancements
 ```bash
@@ -53,12 +70,13 @@ brew install bat eza fd ripgrep delta httpie mergiraf
 | Tool | Replaces | Description |
 |------|----------|-------------|
 | `bat` | `cat` | Syntax highlighting, line numbers, git integration |
-| `eza` | `ls` | Better output, icons, git status |
+| `eza` | `ls` | Better output, icons, git status (note: `exa` is the abandoned predecessor — don't install it) |
 | `fd` | `find` | Faster, simpler syntax |
 | `ripgrep` | `grep` | Blazingly fast recursive search |
 | `delta` | `diff` | Better git diffs (configure in ~/.gitconfig) |
 | `httpie` | `curl` | Human-friendly HTTP client |
 | `mergiraf` | — | Syntax-aware git merge driver that reduces merge conflicts |
+| `difftastic` | — | Structural (AST-based) diff, complements delta for reviewing gnarly refactors: `GIT_EXTERNAL_DIFF=difft git show` |
 
 To use delta for git diffs, add to `~/.gitconfig`:
 ```ini
@@ -68,19 +86,27 @@ To use delta for git diffs, add to `~/.gitconfig`:
     diffFilter = delta --color-only
 ```
 
-## Version Managers
+## Version Manager
 
-### NVM (Node.js)
+### mise (replaces nvm/asdf/pyenv)
 ```bash
-brew install nvm
-mkdir ~/.nvm
+brew install mise
 ```
-Note: NVM is lazy-loaded in the zshrc for faster shell startup.
+Add `eval "$(mise activate zsh)"` to `~/.zshrc`. Mise is a single Rust binary
+that reads existing `.nvmrc`/`.tool-versions`/`.python-version` files, activates
+~10x faster than asdf, and removes the need for nvm's lazy-load shell function
+workaround. It resolves `.tool-versions` at `$HOME` and per-project.
 
-### ASDF (Universal)
+For custom asdf plugins that aren't in mise's core registry (e.g. Cairo/Starknet
+tooling — `cairo-coverage`, `cairo-profiler`, `starknet-devnet`), register the
+plugin's asdf-compatible git repo directly:
 ```bash
-git clone https://github.com/asdf-vm/asdf.git ~/.asdf --branch v0.14.0
+mise plugin install cairo-coverage https://github.com/software-mansion/asdf-cairo-coverage.git
+mise plugin install cairo-profiler https://github.com/software-mansion/asdf-cairo-profiler.git
+mise plugin install starknet-devnet https://github.com/ptisserand/asdf-starknet-devnet
+mise install   # installs everything pinned in ~/.tool-versions
 ```
+`scarb` and `starknet-foundry` are in mise's core registry already, no plugin needed.
 
 ## Language Runtimes
 
@@ -154,6 +180,17 @@ dev-check        # Check all tools are installed
 git-id --help    # Show git identity manager help
 ```
 
+## Stacked PRs & tmux Sessions
+
+```bash
+brew install git-spice sesh
+```
+
+| Tool | Description |
+|------|-------------|
+| `git-spice` (`git-spice` command, alias `gs` if preferred) | Free, local-first stacked-branch workflow — an alternative to paid Graphite for solo work |
+| `sesh` | Smart tmux session manager built on zoxide; pairs with the zoxide setup above |
+
 ## Git Identity Management
 
 Use `git-id` to manage multiple git identities. Identities are stored in `~/.git-identities/`.
@@ -180,37 +217,58 @@ git-id add newkey "Name" email@example.com id_newkey
 
 ## Remote Machine Bootstrap
 
-Use `ssh-sync` to bootstrap a fresh Linux machine with your complete dev environment.
+`ssh-sync` bootstraps a fresh remote machine (Linux or macOS) with your full
+dev environment. It's a thin SSH wrapper around [chezmoi](https://chezmoi.io) —
+all the actual provisioning logic lives in `dotfiles/` at the repo root as
+chezmoi templates and `run_once_*` scripts, not in the shell script itself.
+This replaced an earlier ~1200-line bash tarball-streaming approach; chezmoi
+now owns cloning, templating, and idempotent script execution.
 
 ### Full bootstrap:
 ```bash
 ssh-sync user@server.example.com
 ```
 
-### Preview what would happen:
+### Preview the chezmoi diff without applying:
 ```bash
 ssh-sync user@server.example.com --dry-run
 ```
 
-### Only sync configs (tools already installed):
-```bash
-ssh-sync user@server.example.com --configs-only
-```
+Re-running `ssh-sync` against an already-provisioned box is safe — every
+`run_once_*` script checks for existing installs before doing anything.
 
-### Skip runtime installation:
-```bash
-ssh-sync user@server.example.com --skip-runtimes
-```
-
-### What gets installed:
-- **Shell**: zsh, oh-my-zsh, plugins, powerlevel10k
-- **CLI tools**: bat, eza, fd, ripgrep, delta, fzf, zoxide, atuin
-- **Runtimes**: uv, bun, node, go
+### What gets installed (see `dotfiles/run_once_*.sh.tmpl` for exact commands):
+- **Shell**: zsh, oh-my-zsh + plugins, Starship
+- **Version manager**: mise — also installs node, python, go, rust, bun, uv
+- **CLI tools** (via mise, same command on macOS and Linux): atuin, bat,
+  delta, eza, fd, fzf, gh, ripgrep, tmux, zoxide, difftastic, mergiraf,
+  git-spice, sesh, httpie
+- **Network**: Tailscale, mosh (connection resilience for remote sessions)
+- **Extras**: iTerm2 shell integration, Cursor remote-server cache pruning
 
 ### What gets synced:
-- `~/.zshrc`, `~/.p10k.zsh` (from your home)
-- `~/.gitconfig` (sanitized - user identity removed)
-- Claude skills (from this repo)
+- `~/.zshrc`, `~/.config/starship.toml` — templated per-OS from `dotfiles/`
+- This repo itself, cloned to `~/.local/share/chezmoi` and symlinked to
+  `~/workspace/skill-issue` — so `tools/` and Claude skills come along too
+  (skills get copied to `~/.claude/skills/`)
+
+### What's intentionally NOT synced (manual post-setup steps):
+- `gh auth login` — no long-lived GitHub token is written to the remote box.
+  `ssh-sync` does forward your local `gh auth token` transiently (in-memory,
+  for the duration of the mise install only) to avoid GitHub API rate limits
+  during tool installation — it's never persisted to disk on the remote side.
+- `atuin login -u <username>` — shared shell history sync
+- `tailscale up` — join your tailnet (interactive login required)
+- `git-id add ...` — git identity (see `tools/git-id --help`)
+
+This is a deliberate security improvement over the old script, which wrote
+your full `~/.gitconfig` (including signing key config) and `gh` OAuth token
+to disk on every remote box.
+
+### Tested with
+Validated end-to-end against a real Ubuntu 24.04 container (fresh box, full
+`chezmoi init --apply` from a git clone) — package installs, mise tool
+installs, Tailscale/mosh, and shell functionality all confirmed working.
 
 ## Raycast Integration
 
@@ -305,30 +363,31 @@ The zshrc configures FZF to use `fd` for faster file finding and `bat` for previ
 
 ## Post-Installation
 
-1. Copy the optimized `~/.zshrc` from this repo
-2. Copy `~/.p10k.zsh` if you have a saved P10k config
+1. Apply the repo dotfiles with `chezmoi` or run `tools/ssh-sync` for a remote box
+2. Select `MesloLGS NF` in your terminal font settings
 3. Restart your terminal or run `source ~/.zshrc`
-4. Run `p10k configure` if needed
 
 ## File Locations
 
 | File | Purpose |
 |------|---------|
 | `~/.zshrc` | Main shell config |
-| `~/.p10k.zsh` | Powerlevel10k theme config |
+| `~/.config/starship.toml` | Starship prompt config |
 | `~/.git-identities/` | Git identity configs (used by git-id) |
 | `~/.fzf.zsh` | FZF config (auto-generated) |
 | `~/workspace/skill-issue/tools/` | Custom CLI tools |
 
 ## Performance Notes
 
-The zshrc uses several optimizations for faster startup:
+The zshrc keeps startup simple by avoiding multiple runtime managers in the
+interactive path:
 
-1. **Lazy-loaded NVM** - Node/npm/npx commands load NVM on first use (~500ms saved)
-2. **Lazy completions** - Scarb/snforge/sncast completions load on demand
-3. **Single compinit** - Only one completion initialization call
-4. **typeset -U path** - Prevents duplicate PATH entries
-5. **P10k instant prompt** - Shows prompt immediately while loading
+1. **mise activation only** - replaces separate nvm/asdf/pyenv init blocks.
+2. **Starship prompt** - replaces Powerlevel10k and avoids p10k instant-prompt
+   cache/state files.
+3. **Lazy completions** - Scarb/snforge/sncast completions load on demand.
+4. **Single compinit** - only one completion initialization call.
+5. **typeset -U path** - prevents duplicate PATH entries.
 
 To measure shell startup time:
 ```bash
