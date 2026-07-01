@@ -158,7 +158,6 @@ This repo includes custom CLI tools in the `tools/` directory. The zshrc adds th
 |------|-------------|
 | `git-id` | Switch git identity + SSH key with one command |
 | `dev-check` | Verify dev environment is properly set up |
-| `ssh-sync` | Bootstrap remote Linux machines with your dev environment |
 | `slack-sanitize` | Anonymize names & clean up Slack thread pastes from clipboard |
 
 ### Manual Setup
@@ -217,25 +216,36 @@ git-id add newkey "Name" email@example.com id_newkey
 
 ## Remote Machine Bootstrap
 
-`ssh-sync` bootstraps a fresh remote machine (Linux or macOS) with your full
-dev environment. It's a thin SSH wrapper around [chezmoi](https://chezmoi.io) —
-all the actual provisioning logic lives in `dotfiles/` at the repo root as
-chezmoi templates and `run_once_*` scripts, not in the shell script itself.
-This replaced an earlier ~1200-line bash tarball-streaming approach; chezmoi
-now owns cloning, templating, and idempotent script execution.
+Use [chezmoi](https://chezmoi.io) directly to bootstrap a fresh machine. The
+official install flow supports installing chezmoi and applying a dotfiles repo
+in one command:
 
 ### Full bootstrap:
 ```bash
-ssh-sync user@server.example.com
+sh -c "$(curl -fsLS https://get.chezmoi.io)" -- init --apply enitrat/skill-issue
 ```
 
-### Preview the chezmoi diff without applying:
+This repo's `.chezmoiroot` points chezmoi at `dotfiles/`, where the zsh config,
+Starship config, and `run_once_*` provisioning scripts live.
+
+### Bootstrap over SSH:
 ```bash
-ssh-sync user@server.example.com --dry-run
+ssh user@server.example.com 'sh -c "$(curl -fsLS https://get.chezmoi.io)" -- init --apply enitrat/skill-issue'
 ```
 
-Re-running `ssh-sync` against an already-provisioned box is safe — every
-`run_once_*` script checks for existing installs before doing anything.
+### Preview changes on an initialized machine:
+```bash
+chezmoi diff
+chezmoi apply --dry-run --verbose
+```
+
+### Update an initialized machine:
+```bash
+chezmoi update
+```
+
+Re-running chezmoi is safe — every `run_once_*` script checks for existing
+installs before doing anything.
 
 ### What gets installed (see `dotfiles/run_once_*.sh.tmpl` for exact commands):
 - **Shell**: zsh, oh-my-zsh + plugins, Starship
@@ -254,21 +264,18 @@ Re-running `ssh-sync` against an already-provisioned box is safe — every
 
 ### What's intentionally NOT synced (manual post-setup steps):
 - `gh auth login` — no long-lived GitHub token is written to the remote box.
-  `ssh-sync` does forward your local `gh auth token` transiently (in-memory,
-  for the duration of the mise install only) to avoid GitHub API rate limits
-  during tool installation — it's never persisted to disk on the remote side.
 - `atuin login -u <username>` — shared shell history sync
 - `tailscale up` — join your tailnet (interactive login required)
 - `git-id add ...` — git identity (see `tools/git-id --help`)
 
-This is a deliberate security improvement over the old script, which wrote
-your full `~/.gitconfig` (including signing key config) and `gh` OAuth token
-to disk on every remote box.
+This is a deliberate security improvement over the old custom SSH script, which
+wrote your full `~/.gitconfig` (including signing key config) and `gh` OAuth
+token to disk on every remote box.
 
 ### Tested with
-Validated end-to-end against a real Ubuntu 24.04 container (fresh box, full
-`chezmoi init --apply` from a git clone) — package installs, mise tool
-installs, Tailscale/mosh, and shell functionality all confirmed working.
+Validated end-to-end against a real Ubuntu 24.04 container — package installs,
+mise tool installs, Tailscale/mosh, and shell functionality all confirmed
+working.
 
 ## Raycast Integration
 
@@ -363,7 +370,7 @@ The zshrc configures FZF to use `fd` for faster file finding and `bat` for previ
 
 ## Post-Installation
 
-1. Apply the repo dotfiles with `chezmoi` or run `tools/ssh-sync` for a remote box
+1. Apply the repo dotfiles with `chezmoi`
 2. Select `MesloLGS NF` in your terminal font settings
 3. Restart your terminal or run `source ~/.zshrc`
 
