@@ -1,5 +1,0 @@
-{
-  "event": "PreToolUse",
-  "matcher": "Read",
-  "timeout": 10
-}
