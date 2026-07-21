@@ -44,7 +44,7 @@ for `-a/--agent`, `-s/--skill`, and `-g/--global` flags.
 
 | Area | Source of truth | Applied by | Target |
 |------|-----------------|------------|--------|
-| Dotfiles and machine provisioning | `dotfiles/` | `chezmoi init --apply` / `chezmoi update` | `~/.zshrc`, `~/.config/starship.toml`, installed tools |
+| Dotfiles and machine provisioning | `dotfiles/` | `chezmoi init --apply` / `chezmoi update` | `~/.zshrc`, `~/.config/starship.toml`, `~/.tmux.conf`, `~/.ssh/config`, `~/.config/homebrew/Brewfile`, installed tools |
 | Agent skills | `skills/` | `npx skills add enitrat/skill-issue` | Claude/Codex/Cursor skill directories |
 | Claude rules | `rules/` | Local Claude configuration | `~/.claude/rules/` |
 | Subagents/prompts | `subagents/` | Local Claude/Codex configuration | `~/.claude/agents/`, `~/.codex/prompts/` |
@@ -66,10 +66,20 @@ Installed baseline:
 - Shell: zsh, oh-my-zsh plugins, Starship, MesloLGS Nerd Font config.
 - Runtime/tool manager: `mise` instead of separate `nvm`, `asdf`, or `pyenv`
   shell setup.
-- CLI tools: `atuin`, `bat`, `delta`, `difftastic`, `eza`, `fd`, `fzf`, `gh`,
-  `git-spice`, `httpie`, `mergiraf`, `ripgrep`, `sesh`, `tmux`, `uv`, `zoxide`.
+- CLI tools: `atuin`, `bat`, `carapace`, `delta`, `difftastic`, `eza`, `fd`,
+  `fzf`, `gh`, `git-spice`, `httpie`, `mergiraf`, `ripgrep`, `sesh`, `tmux`,
+  `uv`, `zoxide`.
+- Configs: `~/.tmux.conf` (remote-friendly, sesh popup) and `~/.ssh/config`
+  (connection multiplexing + keepalives; personal hosts go in the unmanaged
+  `~/.ssh/config.local`).
 - Remote helpers: Tailscale, mosh, Cursor remote-server cache cleanup, iTerm2
   shell integration.
+- macOS: GUI apps are declared in a `Brewfile` (`~/.config/homebrew/Brewfile`):
+  Raycast, Cursor, OrbStack, Tailscale, Amphetamine, Hidden Bar, plus the Nerd
+  Font. OrbStack is the container runtime and Docker Desktop is uninstalled if
+  present. Raycast's Spotlight Cmd+Space binding is freed up automatically. See
+  [config/others/macos-settings.md](config/others/macos-settings.md) for the
+  one manual step this needs (Raycast's own hotkey preference).
 
 Manual post-setup stays manual by design:
 

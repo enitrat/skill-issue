@@ -6,17 +6,9 @@ set -euo pipefail
 # consensus for SSH-based remote dev.
 
 {{ if eq .chezmoi.os "darwin" -}}
-if ! command -v tailscale >/dev/null 2>&1 && [ ! -d "/Applications/Tailscale.app" ]; then
-    brew install --cask tailscale
-else
-    echo "[tailscale] already installed, skipping"
-fi
-
-if command -v mosh >/dev/null 2>&1; then
-    echo "[mosh] already installed, skipping"
-else
-    brew install mosh
-fi
+# On macOS, Tailscale (cask) and mosh (formula) are installed via the Brewfile
+# (~/.config/homebrew/Brewfile), applied by run_once_after_05-brew-bundle.
+echo "[network] macOS Tailscale + mosh come from the Brewfile, skipping here"
 {{ else -}}
 if command -v tailscale >/dev/null 2>&1; then
     echo "[tailscale] already installed, skipping"

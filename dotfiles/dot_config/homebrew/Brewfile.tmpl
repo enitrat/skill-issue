@@ -1,0 +1,35 @@
+{{ if eq .chezmoi.os "darwin" -}}
+# Brewfile — managed by chezmoi (skill-issue).
+#
+# Declarative source of truth for macOS GUI apps and the few Homebrew-only
+# formulae that are NOT managed by mise. CLI dev tools (bat, eza, ripgrep,
+# node, python, etc.) live in mise, see run_once_before_20-install-tools.
+#
+# Apply manually with:  brew bundle --file ~/.config/homebrew/Brewfile
+# (also run automatically by run_once_after_05-brew-bundle on chezmoi apply)
+
+tap "homebrew/bundle"
+
+# --- GUI apps --------------------------------------------------------------
+cask "raycast"        # Spotlight replacement (hotkey configured separately)
+cask "cursor"         # AI-first code editor
+cask "tailscale"      # mesh VPN for remote dev boxes
+cask "amphetamine"    # keep-awake with reliable closed-lid mode
+cask "hiddenbar"      # hide/reveal menu-bar icons around the notch
+
+# Container runtime. OrbStack replaces Docker Desktop (faster, lighter, native).
+# NOTE: OrbStack is free for personal use but requires a paid license for
+# commercial use. Docker Desktop is uninstalled by run_once_after_05-brew-bundle
+# to avoid a conflicting/duplicate runtime.
+cask "orbstack"
+
+# --- Fonts -----------------------------------------------------------------
+cask "font-meslo-lg-nerd-font"   # "MesloLGS NF" — Nerd Font glyphs for starship
+
+# --- Homebrew-only formulae (not available / not sensible via mise) --------
+brew "mosh"           # roaming-friendly SSH for flaky connections
+brew "gcc@15"         # GCC toolchain (aliased to gcc/g++ in .zshrc)
+brew "llvm@19"        # LLVM for Cairo-Native (paths wired in .zshrc)
+{{ else -}}
+# Brewfile is macOS-only; nothing to install on this OS.
+{{ end -}}

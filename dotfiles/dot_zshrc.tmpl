@@ -1,7 +1,5 @@
 {{- $isDarwin := eq .chezmoi.os "darwin" -}}
-# Amazon Q pre block. Keep at the top of this file.
-[[ -f "${HOME}/Library/Application Support/amazon-q/shell/zshrc.pre.zsh" ]] && builtin source "${HOME}/Library/Application Support/amazon-q/shell/zshrc.pre.zsh"
-
+{{- $llvm := "llvm@19" -}}
 # =============================================================================
 # OH-MY-ZSH CONFIGURATION
 # =============================================================================
@@ -49,12 +47,9 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 export JAVA_HOME=$(/usr/libexec/java_home 2>/dev/null)
 
 # LLVM for Cairo-Native
-export LDFLAGS="-L/opt/homebrew/opt/llvm@18/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/llvm@18/include"
+export LDFLAGS="-L/opt/homebrew/opt/{{ $llvm }}/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/{{ $llvm }}/include"
 {{ end -}}
-# Nargo (Noir)
-export NARGO_HOME="$HOME/.nargo"
-
 # =============================================================================
 # PATH CONFIGURATION (consolidated)
 # =============================================================================
@@ -67,21 +62,17 @@ path=(
     "$HOME/.local/bin"
 {{- if $isDarwin }}
     "/opt/homebrew/bin"
-    "/opt/homebrew/opt/llvm@18/bin"
+    "/opt/homebrew/opt/{{ $llvm }}/bin"
     "/opt/homebrew/opt/openjdk/bin"
     "/opt/homebrew/opt/openssl@1.1/bin"
     "/opt/homebrew/opt/libpq/bin"
     "$ANDROID_HOME/emulator"
     "$ANDROID_HOME/platform-tools"
-    "/usr/local/texlive/2023/bin/universal-darwin"
+    /usr/local/texlive/*/bin/universal-darwin(N)
 {{- end }}
     "$BUN_INSTALL/bin"
     "$HOME/go/bin"
     "$PNPM_HOME"
-    "$HOME/.huff/bin"
-    "$HOME/.starklings/dist/starklings"
-    "$HOME/.risc0/bin"
-    "$NARGO_HOME/bin"
     $path
 )
 
@@ -117,9 +108,6 @@ eval "$(starship init zsh)"
 # Starkli
 [ -f "$HOME/.starkli/env" ] && . "$HOME/.starkli/env"
 
-# Fig export (if exists)
-[[ -f "$HOME/fig-export/dotfiles/dotfile.zsh" ]] && builtin source "$HOME/fig-export/dotfiles/dotfile.zsh"
-
 {{ end -}}
 # Atuin (shell history)
 [ -f "$HOME/.atuin/bin/env" ] && . "$HOME/.atuin/bin/env"
@@ -128,11 +116,6 @@ eval "$(atuin init zsh)"
 # iTerm2 shell integration (safe no-op if not present / not iTerm2)
 [ -f "$HOME/.iterm2_shell_integration.zsh" ] && source "$HOME/.iterm2_shell_integration.zsh"
 
-{{ if $isDarwin -}}
-# Kiro integration
-[[ "$TERM_PROGRAM" == "kiro" ]] && . "$(kiro --locate-shell-integration-path zsh)"
-
-{{ end -}}
 # =============================================================================
 # COMPLETIONS (single compinit call at the end)
 # =============================================================================
@@ -172,12 +155,20 @@ compdef _scarb scarb
 compdef _snforge snforge
 compdef _sncast sncast
 
+# Carapace: unified completions for 1000+ commands. Bridges to the zsh/compdef
+# completions defined above (scarb/snforge/sncast). Must load after compinit.
+if command -v carapace >/dev/null 2>&1; then
+    export CARAPACE_BRIDGES='zsh'
+    zstyle ':completion:*' format $'\e[2;37mCompleting %d\e[m'
+    source <(carapace _carapace)
+fi
+
 # =============================================================================
 # ALIASES
 # =============================================================================
 
 # Force English git output
-alias git='LANG=en_GB git'
+alias git='LANG=en_US git'
 
 {{ if $isDarwin -}}
 # GCC 15 (Homebrew)
@@ -274,12 +265,6 @@ gac() { git add -A && git commit -m "$*" }
 
 # Interactive rebase last N commits
 gri() { git rebase -i HEAD~"$1" }
-
-# =============================================================================
-# AMAZON Q (must stay at bottom)
-# =============================================================================
-
-[[ -f "${HOME}/Library/Application Support/amazon-q/shell/zshrc.post.zsh" ]] && builtin source "${HOME}/Library/Application Support/amazon-q/shell/zshrc.post.zsh"
 
 {{ if $isDarwin -}}
 # opencode

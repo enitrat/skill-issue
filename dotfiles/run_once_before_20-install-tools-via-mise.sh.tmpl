@@ -17,6 +17,9 @@ mise use -g \
     github:abhinav/git-spice \
     github:joshmedeski/sesh
 
+# carapace: unified shell completions for 1000+ commands (wired up in .zshrc).
+mise use -g carapace || echo "[carapace] install failed, skipping (non-critical)" >&2
+
 # httpie: install via uv (isolated tool venv), not mise's pipx backend, which
 # requires a pre-existing pipx install we don't otherwise need.
 uv tool install httpie || echo "[httpie] uv tool install failed, skipping (non-critical)" >&2

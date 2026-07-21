@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+# Prereqs for the managed ~/.ssh/config:
+#   - sockets/ dir for ControlMaster multiplexing
+#   - an (empty) config.local so the `Include ~/.ssh/config.local` never errors
+
+mkdir -p "$HOME/.ssh/sockets"
+chmod 700 "$HOME/.ssh" "$HOME/.ssh/sockets" 2>/dev/null || true
+
+if [ ! -f "$HOME/.ssh/config.local" ]; then
+    touch "$HOME/.ssh/config.local"
+    chmod 600 "$HOME/.ssh/config.local"
+    echo "[ssh] created empty ~/.ssh/config.local (put personal Host blocks here)"
+else
+    echo "[ssh] ~/.ssh/config.local already present, leaving it alone"
+fi
+
+echo "[ssh] sockets dir ready (ControlMaster multiplexing enabled)"

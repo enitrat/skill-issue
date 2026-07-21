@@ -77,6 +77,7 @@ brew install bat eza fd ripgrep delta httpie mergiraf
 | `httpie` | `curl` | Human-friendly HTTP client |
 | `mergiraf` | — | Syntax-aware git merge driver that reduces merge conflicts |
 | `difftastic` | — | Structural (AST-based) diff, complements delta for reviewing gnarly refactors: `GIT_EXTERNAL_DIFF=difft git show` |
+| `carapace` | — | Unified shell completions for 1000+ commands; bridges to the existing zsh/compdef completions |
 
 To use delta for git diffs, add to `~/.gitconfig`:
 ```ini
@@ -190,6 +191,53 @@ brew install git-spice sesh
 | `git-spice` (`git-spice` command, alias `gs` if preferred) | Free, local-first stacked-branch workflow — an alternative to paid Graphite for solo work |
 | `sesh` | Smart tmux session manager built on zoxide; pairs with the zoxide setup above |
 
+### tmux config
+
+`dotfiles/dot_tmux.conf` → `~/.tmux.conf` is a dependency-free config (no TPM,
+so it works as-is on any freshly provisioned remote box). Highlights: mouse on,
+vi copy mode (`v`/`y`), 50k scrollback, true-color passthrough, 1-based window
+numbering, `|`/`-` splits that keep the current directory, vim-style pane
+navigation (`prefix h/j/k/l`), reload with `prefix r`, and a sesh session
+switcher popup on `prefix T`.
+
+## SSH Config
+
+`dotfiles/private_dot_ssh/private_config` → `~/.ssh/config` (mode 0600). Sets
+sane global defaults under `Host *`:
+
+- **Connection multiplexing** (`ControlMaster`/`ControlPath`/`ControlPersist`):
+  the second and later ssh/scp/git-over-ssh connections to a host reuse the
+  first connection and are near-instant with no re-auth round-trip.
+- **Keepalives** (`ServerAliveInterval`/`TCPKeepAlive`): hold sessions open
+  across Wi-Fi/NAT drops; complements mosh.
+- **Hygiene**: `HashKnownHosts`, `AddKeysToAgent`, and `UseKeychain` on macOS.
+
+Personal / host-specific `Host ...` blocks go in **`~/.ssh/config.local`**,
+which is *not* managed by chezmoi. The managed config `Include`s it first, and
+SSH uses the first value it finds, so anything in `config.local` overrides the
+defaults. `run_once_after_60-ssh-setup` creates the `~/.ssh/sockets/`
+directory (needed for multiplexing) and an empty `config.local`.
+
+> Note: applying this replaces any existing `~/.ssh/config`. Move your current
+> `Host` blocks into `~/.ssh/config.local` first to keep them.
+
+## macOS GUI Apps (Brewfile)
+
+GUI apps and Homebrew-only formulae are declared in
+`dotfiles/dot_config/homebrew/Brewfile` → `~/.config/homebrew/Brewfile` and
+installed by `run_once_after_05-brew-bundle` (or manually with
+`brew bundle --file ~/.config/homebrew/Brewfile`). CLI dev tools stay in mise;
+the Brewfile is only for casks (Raycast, Cursor, OrbStack, Tailscale,
+Amphetamine, Hidden Bar, the Nerd Font) and formulae that don't belong in mise
+(mosh, gcc@15, llvm@19).
+
+**Container runtime:** OrbStack is installed as the Docker-compatible runtime,
+and `run_once_after_05-brew-bundle` uninstalls Docker Desktop (`docker-desktop`
+/ `docker` cask) if present so the two don't conflict. A manually-installed
+`/Applications/Docker.app` is only flagged (not auto-deleted) — remove it
+yourself. Note: OrbStack is free for personal use but requires a paid license
+for commercial use.
+
 ## Git Identity Management
 
 Use `git-id` to manage multiple git identities. Identities are stored in `~/.git-identities/`.
@@ -251,13 +299,18 @@ installs before doing anything.
 - **Shell**: zsh, oh-my-zsh + plugins, Starship
 - **Version manager**: mise — also installs node, python, go, rust, bun, uv
 - **CLI tools** (via mise, same command on macOS and Linux): atuin, bat,
-  delta, eza, fd, fzf, gh, ripgrep, tmux, zoxide, difftastic, mergiraf,
-  git-spice, sesh, httpie
+  carapace, delta, eza, fd, fzf, gh, ripgrep, tmux, zoxide, difftastic,
+  mergiraf, git-spice, sesh, httpie
 - **Network**: Tailscale, mosh (connection resilience for remote sessions)
+- **macOS GUI apps** (via `brew bundle` from `~/.config/homebrew/Brewfile`):
+  Raycast, Cursor, OrbStack, Tailscale, Amphetamine, Hidden Bar, MesloLGS Nerd
+  Font, plus the Homebrew-only formulae mosh, gcc@15, llvm@19. OrbStack is the
+  container runtime; Docker Desktop is uninstalled if present.
 - **Extras**: iTerm2 shell integration, Cursor remote-server cache pruning
 
 ### What gets synced:
-- `~/.zshrc`, `~/.config/starship.toml` — templated per-OS from `dotfiles/`
+- `~/.zshrc`, `~/.config/starship.toml`, `~/.tmux.conf`, `~/.ssh/config`,
+  `~/.config/homebrew/Brewfile` — templated per-OS from `dotfiles/`
 - This repo itself, cloned to `~/.local/share/chezmoi` and symlinked to
   `~/workspace/skill-issue` — so `tools/` and Claude skills come along too
   (skills get copied to `~/.claude/skills/`)
@@ -299,6 +352,7 @@ This repo includes Raycast script commands in `raycast-scripts/`.
 ### Hidden Bar
 
 Hidden Bar helps manage menu bar icons that are hidden by the MacBook notch.
+It's included in the Brewfile; to install standalone:
 
 **Installation:**
 ```bash
@@ -392,7 +446,8 @@ interactive path:
 1. **mise activation only** - replaces separate nvm/asdf/pyenv init blocks.
 2. **Starship prompt** - replaces Powerlevel10k and avoids p10k instant-prompt
    cache/state files.
-3. **Lazy completions** - Scarb/snforge/sncast completions load on demand.
+3. **Lazy completions** - Scarb/snforge/sncast completions load on demand;
+   `carapace` provides completions for everything else (loaded after compinit).
 4. **Single compinit** - only one completion initialization call.
 5. **typeset -U path** - prevents duplicate PATH entries.
 
