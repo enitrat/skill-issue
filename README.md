@@ -63,6 +63,11 @@ idempotent, and testable without a repo-specific transport script.
 
 Installed baseline:
 
+- Xcode Command Line Tools (macOS): required for compiling native extensions
+  (e.g. `uv`/pip packages with C/C++ sources). Verified for health, not just
+  presence — a CLT install can be silently corrupted by a racing background
+  macOS Software Update, leaving `clang++` unable to find `<string>` and
+  other C++ standard headers even though `xcode-select -p` reports success.
 - Shell: zsh, oh-my-zsh plugins, Starship, MesloLGS Nerd Font config.
 - Runtime/tool manager: `mise` instead of separate `nvm`, `asdf`, or `pyenv`
   shell setup.

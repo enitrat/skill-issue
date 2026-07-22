@@ -4,7 +4,27 @@ This guide helps you set up a fully configured zsh environment from a fresh macO
 
 ## Prerequisites
 
-Install Homebrew first:
+Install Xcode Command Line Tools first (needed to compile native extensions,
+e.g. `uv`/pip packages with C/C++ sources like `leveldb`):
+```bash
+xcode-select --install
+```
+
+**Known failure mode:** if this races with a concurrent background macOS
+Software Update, the install can land "successfully" (`xcode-select -p`
+reports a valid path) while its bundled libc++ headers are corrupted —
+`usr/include/c++/v1` ends up with only `__cxx_version` instead of the ~190
+real headers. Symptom: `clang++` fails with `fatal error: 'string' file not
+found` on any C++ build. Fix by wiping and reinstalling:
+```bash
+sudo rm -rf /Library/Developer/CommandLineTools
+xcode-select --install
+```
+`run_once_before_05-install-xcode-clt` checks header count (not just
+`xcode-select -p`) so a fresh `chezmoi apply` catches this instead of just
+reporting "already installed".
+
+Install Homebrew next:
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
@@ -123,8 +143,10 @@ brew install go
 
 ### pnpm
 ```bash
-curl -fsSL https://get.pnpm.io/install.sh | sh -
+mise use -g pnpm@latest
 ```
+`PNPM_HOME` (pnpm's own global-bin dir, used by `pnpm add -g`) is exported in
+`.zshrc` regardless of how pnpm itself was installed.
 
 ## Blockchain / Web3 Tooling
 
@@ -296,11 +318,13 @@ Re-running chezmoi is safe — every `run_once_*` script checks for existing
 installs before doing anything.
 
 ### What gets installed (see `dotfiles/run_once_*.sh.tmpl` for exact commands):
+- **Xcode Command Line Tools** (macOS): health-checked, not just presence-checked
 - **Shell**: zsh, oh-my-zsh + plugins, Starship
 - **Version manager**: mise — also installs node, python, go, rust, bun, uv
 - **CLI tools** (via mise, same command on macOS and Linux): atuin, bat,
   carapace, delta, eza, fd, fzf, gh, ripgrep, tmux, zoxide, difftastic,
   mergiraf, git-spice, sesh, httpie
+- **Runtimes** (via mise): node, python, go, rust, bun, pnpm
 - **Network**: Tailscale, mosh (connection resilience for remote sessions)
 - **macOS GUI apps** (via `brew bundle` from `~/.config/homebrew/Brewfile`):
   Raycast, Cursor, OrbStack, Tailscale, Amphetamine, Hidden Bar, MesloLGS Nerd

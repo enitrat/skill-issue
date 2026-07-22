@@ -35,7 +35,8 @@ export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 # Bun
 export BUN_INSTALL="$HOME/.bun"
 
-# pnpm
+# pnpm (binary itself comes from mise; this just sets pnpm's own global
+# bin dir, used by `pnpm add -g`)
 {{- if $isDarwin }}
 export PNPM_HOME="$HOME/Library/pnpm"
 {{- else }}
@@ -272,13 +273,6 @@ gri() { git rebase -i HEAD~"$1" }
 
 # Vite+ bin (https://viteplus.dev)
 [ -f "$HOME/.vite-plus/env" ] && . "$HOME/.vite-plus/env"
-
-# pnpm
-case ":$PATH:" in
-  *":$PNPM_HOME:"*) ;;
-  *) export PATH="$PNPM_HOME:$PATH" ;;
-esac
-# pnpm end
 
 # Safe-chain
 [ -f "$HOME/.safe-chain/scripts/init-posix.sh" ] && source "$HOME/.safe-chain/scripts/init-posix.sh"
