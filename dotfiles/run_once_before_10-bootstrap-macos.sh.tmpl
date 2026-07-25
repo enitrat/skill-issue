@@ -1,0 +1,46 @@
+#!/bin/bash
+set -uo pipefail
+{{ template "lib.sh" . }}
+
+# Homebrew and the Command Line Tools are the two things nothing else here can
+# install for itself: mise comes from brew, and anything building from source
+# needs clang. Both must land before the rest of the run_once_before_* chain.
+
+if ! have brew; then
+    log brew "not installed, running the official installer"
+    NONINTERACTIVE=1 /bin/bash -c \
+        "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+        || { warn brew "install failed"; exit 1; }
+fi
+
+# The installer does not touch the PATH of this shell.
+for prefix in /opt/homebrew /usr/local; do
+    [ -x "$prefix/bin/brew" ] && eval "$("$prefix/bin/brew" shellenv)" && break
+done
+log brew "$(brew --version | head -1)"
+
+# A CLT install that races a background macOS Software Update lands with a
+# corrupted libc++ -- usr/include/c++/v1 keeps only `__cxx_version` -- while
+# `xcode-select -p` still reports success. Check the headers, not the receipt.
+CLT_CXX_HEADERS="/Library/Developer/CommandLineTools/usr/include/c++/v1"
+
+clt_healthy() {
+    xcode-select -p >/dev/null 2>&1 || return 1
+    [ -d "$CLT_CXX_HEADERS" ] || return 1
+    # A healthy install has ~190 headers; 5 is a floor that catches the
+    # corruption without tracking the exact count across macOS versions.
+    local count
+    count=$(find "$CLT_CXX_HEADERS" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+    [ "${count:-0}" -gt 5 ]
+}
+
+if clt_healthy; then
+    log xcode-clt "installed and healthy"
+elif xcode-select -p >/dev/null 2>&1; then
+    warn xcode-clt "C++ headers are incomplete, likely an interrupted install."
+    warn xcode-clt "  sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install"
+else
+    log xcode-clt "requesting install (GUI dialog - click through manually)"
+    xcode-select --install 2>&1 || true
+    log xcode-clt "re-run 'chezmoi apply' once it finishes to verify"
+fi

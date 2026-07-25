@@ -1,0 +1,31 @@
+#!/bin/bash
+set -uo pipefail
+{{ template "lib.sh" . }}
+
+# Re-runs whenever the package inventory changes. Hashing the data rather than
+# ~/.config/mise/config.toml matters: `include` would hash that file's template
+# source, which does not change when packages.toml does.
+# mise tools:  {{ .mise | toJson | sha256sum }}
+# uv tools:    {{ .uvtool | toJson | sha256sum }}
+
+mise_path
+
+if ! have mise; then
+    warn mise "not on PATH, cannot install tools. Open a new shell and re-run 'chezmoi apply'."
+    exit 1
+fi
+
+# Installs exactly what ~/.config/mise/config.toml pins, which chezmoi has
+# already written from packages.toml by the time this after_ script runs.
+if ! mise install --yes; then
+    warn mise "one or more tools failed to install."
+    warn mise "Fix the entry in dotfiles/.chezmoidata/packages.toml, or comment"
+    warn mise "it out, then re-run 'chezmoi apply'. Failing loudly on purpose:"
+    warn mise "a swallowed error here is how a tool silently goes missing."
+    exit 1
+fi
+log mise "all tools installed"
+
+{{ range .uvtool -}}
+uv tool install --quiet {{ .name }} || warn uv "{{ .name }} install failed"
+{{ end -}}

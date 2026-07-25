@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="1.0.0"
+KEEP_DEFAULT=3
+
+usage() {
+    cat <<EOF
+prune-cursor-server - drop stale Cursor Remote-SSH server caches
+
+Cursor keeps every server version it has ever connected with under
+~/.cursor-server/bin/<commit>, and re-scans all of them on connect. An
+unpruned cache costs minutes per login on a long-lived remote box.
+
+This is periodic maintenance, not one-time provisioning -- run it from cron
+or by hand. Safe to run when the directory does not exist.
+
+Usage:
+  prune-cursor-server [--keep N] [--dry-run]
+  prune-cursor-server --help | --version
+
+Options:
+  --keep N     number of newest versions to retain (default: $KEEP_DEFAULT)
+  --dry-run    list what would be removed, remove nothing
+EOF
+}
+
+keep=$KEEP_DEFAULT
+dry_run=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage; exit 0 ;;
+        --version) echo "prune-cursor-server $VERSION"; exit 0 ;;
+        --keep) keep="${2:?--keep needs a number}"; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+case "$keep" in
+    ''|*[!0-9]*) echo "--keep must be a non-negative integer" >&2; exit 2 ;;
+esac
+
+dir="$HOME/.cursor-server/bin"
+if [ ! -d "$dir" ]; then
+    echo "no $dir, nothing to prune"
+    exit 0
+fi
+
+# stat -f is BSD/macOS, stat -c is GNU; a remote box could be either.
+mtime() {
+    stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1"
+}
+
+stale=$(
+    for d in "$dir"/*/; do
+        [ -d "$d" ] || continue
+        printf '%s\t%s\n' "$(mtime "$d")" "$d"
+    done | sort -rn | tail -n +$((keep + 1)) | cut -f2-
+)
+
+if [ -z "$stale" ]; then
+    echo "nothing to prune (keeping $keep newest)"
+    exit 0
+fi
+
+count=$(printf '%s\n' "$stale" | wc -l | tr -d ' ')
+while IFS= read -r d; do
+    if [ "$dry_run" -eq 1 ]; then
+        echo "would remove $d"
+    else
+        rm -rf "$d"
+    fi
+done <<<"$stale"
+
+[ "$dry_run" -eq 1 ] || echo "pruned $count cached version(s), kept $keep newest"

@@ -4,49 +4,31 @@ Configuration tweaks for macOS system behavior and appearance.
 
 ## Menu Bar Icon Spacing
 
-Adjust the spacing and padding of icons in the macOS menu bar (top-bar).
+Applied automatically by `run_once_after_40-system-defaults-macos`, which sets
+spacing and padding to 6 so icons stop sliding behind the notch.
 
-### Apply Custom Spacing
+The keys must go under `com.apple.controlcenter`. The `NSGlobalDomain`
+equivalents you'll find in most blog posts only move third-party
+`NSStatusItem` apps and do nothing for Apple's own menu bar icons.
+
+Changes take effect on next login — `killall SystemUIServer` does not reload
+these.
+
+### Try other values
 
 ```bash
-# Set icon spacing (default: ~20, recommended: 12)
-defaults -currentHost write -globalDomain NSStatusItemSpacing -int 12
-
-# Set selection padding (default: ~12, recommended: 8)
-defaults -currentHost write -globalDomain NSStatusItemSelectionPadding -int 8
-
-# Restart SystemUIServer to apply changes
-killall SystemUIServer
+defaults write com.apple.controlcenter NSStatusItemSpacing -int 8
+defaults write com.apple.controlcenter NSStatusItem2ExtensionMinPadding -int 8
 ```
 
-### Recommended Values
+Smaller is tighter. Log out and back in to see the result. To make a new value
+stick across machines, change it in the provisioning script rather than here.
 
-- **Spacing**: `12` - Good balance between visibility and space efficiency
-- **Padding**: `8` - Comfortable selection target without wasting space
-
-Adjust these numbers based on your preferences:
-- **Smaller values** = tighter spacing (more icons visible)
-- **Larger values** = more breathing room (easier to click)
-
-### Revert to Defaults
+### Revert to defaults
 
 ```bash
-defaults -currentHost delete -globalDomain NSStatusItemSpacing
-defaults -currentHost delete -globalDomain NSStatusItemSelectionPadding
-killall SystemUIServer
-```
-
-### Quick Test Different Values
-
-```bash
-# Try different spacing values
-for spacing in 6 8 10 12 15 20; do
-  defaults -currentHost write -globalDomain NSStatusItemSpacing -int $spacing
-  defaults -currentHost write -globalDomain NSStatusItemSelectionPadding -int $(($spacing - 4))
-  killall SystemUIServer
-  echo "Applied spacing: $spacing, padding: $(($spacing - 4))"
-  read -p "Press Enter to try next value..."
-done
+defaults delete com.apple.controlcenter NSStatusItemSpacing
+defaults delete com.apple.controlcenter NSStatusItem2ExtensionMinPadding
 ```
 
 ## Keep Mac Awake with Lid Closed
@@ -59,9 +41,8 @@ The built-in `caffeinate` command doesn't reliably prevent sleep when the MacBoo
 
 ### Installation
 
-Amphetamine is declared in the Brewfile (`~/.config/homebrew/Brewfile`) and
-installed automatically by `run_once_after_05-brew-bundle`. To install it
-standalone:
+Amphetamine is declared in `dotfiles/.chezmoidata/packages.toml` and installed
+with the rest of the Brewfile. To install it standalone:
 
 ```bash
 # Install via Homebrew
@@ -96,9 +77,9 @@ Flags:
 
 ## Raycast Replacing Spotlight (Cmd+Space)
 
-Raycast is installed via the Brewfile (`~/.config/homebrew/Brewfile`).
-`dotfiles/run_once_after_50-configure-raycast.sh.tmpl` then disables Spotlight's
-Cmd+Space binding (`AppleSymbolicHotKeys` key `64`) so Raycast can claim it.
+Raycast is declared in `dotfiles/.chezmoidata/packages.toml`.
+`run_once_after_40-system-defaults-macos` then disables Spotlight's Cmd+Space
+binding (`AppleSymbolicHotKeys` key `64`) so Raycast can claim it.
 
 ### Manual step required
 

@@ -1,0 +1,26 @@
+#!/bin/bash
+set -euo pipefail
+{{ template "lib.sh" . }}
+
+mise_path
+
+if ! have gh; then
+    warn gh-auth "gh not on PATH, skipping. Re-run 'chezmoi apply' after mise installs it."
+    exit 0
+fi
+
+if gh auth status >/dev/null 2>&1; then
+    log gh-auth "already authenticated"
+    exit 0
+fi
+
+# Without a TTY the web flow would hang and stall the whole apply.
+if [ ! -t 0 ]; then
+    warn gh-auth "not authenticated and no TTY available."
+    warn gh-auth "run 'gh auth login --web -h github.com' manually to finish setup."
+    exit 0
+fi
+
+log gh-auth "starting web login flow"
+gh auth login --web -h github.com -p https -s repo,read:org \
+    || warn gh-auth "login did not complete, run 'gh auth login --web' manually"

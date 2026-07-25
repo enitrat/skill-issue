@@ -1,0 +1,31 @@
+#!/bin/bash
+set -uo pipefail
+{{ template "lib.sh" . }}
+
+if have apt-get; then
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        zsh git curl build-essential unzip locales mosh
+elif have dnf; then
+    sudo dnf install -y zsh git curl @development-tools unzip glibc-langpack-en mosh
+elif have pacman; then
+    sudo pacman -Sy --noconfirm zsh git curl base-devel unzip mosh
+else
+    warn shell "no apt/dnf/pacman found, skipping base packages"
+fi
+
+# Minimal images ship no generated locale, which makes zsh warn on every start
+# and mangles the prompt's Nerd Font glyphs.
+if have locale-gen && ! locale -a 2>/dev/null | grep -qi "en_US.utf8"; then
+    sudo locale-gen en_US.UTF-8 || true
+    sudo update-locale LANG=en_US.UTF-8 || true
+fi
+
+if have tailscale; then
+    log tailscale "already installed"
+else
+    curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+echo
+echo "Next: run 'tailscale up' to join your tailnet (requires interactive login)."

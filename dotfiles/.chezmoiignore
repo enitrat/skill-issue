@@ -1,0 +1,10 @@
+# Per-OS file selection. Scripts and files carrying a -macos / -linux suffix
+# are skipped wholesale on the other OS, so nothing renders down to a no-op
+# `exit 0` that still shows up as pending work in `chezmoi diff`.
+{{ if ne .chezmoi.os "darwin" }}
+*-macos.sh
+.config/homebrew/Brewfile
+{{ end }}
+{{ if ne .chezmoi.os "linux" }}
+*-linux.sh
+{{ end }}

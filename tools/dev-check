@@ -48,12 +48,19 @@ CATEGORIES
     cpp
         C/C++ toolchain: gcc, clang, llvm, cmake
 
+    drift
+        Tools mise manages that another copy on PATH is shadowing --
+        usually a stale Homebrew install left over from before mise.
+
 EXAMPLES
     Check everything:
         $ dev-check
 
     Check only StarkNet tools:
         $ dev-check starknet
+
+    Find tools shadowed by a stale non-mise copy:
+        $ dev-check drift
 
 EOF
 }
@@ -149,6 +156,42 @@ check_cpp() {
     echo ""
 }
 
+# A tool installed by mise but resolving somewhere else means an older copy is
+# earlier on PATH. That copy wins in every shell, so the mise version is dead
+# weight and the shadowing one never gets upgraded.
+check_drift() {
+    echo "Shadowed mise tools:"
+
+    if ! command -v mise &> /dev/null; then
+        printf "  ${YELLOW}!${NC} mise not found, cannot compare\n\n"
+        return
+    fi
+
+    local mise_root="${MISE_DATA_DIR:-$HOME/.local/share/mise}/installs"
+    local found=0
+
+    while read -r tool; do
+        # Backend-qualified names (github:owner/repo) rarely match their binary.
+        case "$tool" in *:*) continue ;; esac
+        local resolved
+        resolved="$(command -v "$tool" 2>/dev/null)" || continue
+        case "$resolved" in
+            "$mise_root"/*) ;;
+            *)
+                printf "  ${YELLOW}!${NC} %-12s %s\n" "$tool" "$resolved"
+                found=$((found + 1))
+                ;;
+        esac
+    done < <(mise ls -g --no-header 2>/dev/null | awk '{print $1}')
+
+    if [ "$found" -eq 0 ]; then
+        printf "  ${GREEN}✓${NC} none - every mise tool resolves to its mise install\n"
+    else
+        printf "\n  %s tool(s) shadowed. Remove the other copy, e.g. 'brew uninstall <name>'.\n" "$found"
+    fi
+    echo ""
+}
+
 check_all() {
     echo ""
     check_system
@@ -158,6 +201,7 @@ check_all() {
     check_rust
     check_cpp
     check_starknet
+    check_drift
 }
 
 case "$1" in
@@ -197,6 +241,10 @@ case "$1" in
     cpp|c++)
         echo ""
         check_cpp
+        ;;
+    drift)
+        echo ""
+        check_drift
         ;;
     *)
         echo "Unknown category: $1"

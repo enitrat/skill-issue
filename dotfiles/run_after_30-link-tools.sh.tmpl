@@ -1,0 +1,33 @@
+#!/bin/bash
+set -uo pipefail
+{{ template "lib.sh" . }}
+
+# Runs on every apply rather than run_once, so a newly added tool is linked
+# without needing a state reset. Relinking is a handful of syscalls.
+#
+# ~/.local/bin is already on PATH, so linking here keeps the repo checkout off
+# PATH entirely -- the clone can move or be renamed without breaking anything.
+
+SRC="{{ .chezmoi.sourceDir | dir }}/tools"
+DEST="$HOME/.local/bin"
+
+if [ ! -d "$SRC" ]; then
+    warn link-tools "$SRC not found, skipping"
+    exit 0
+fi
+
+mkdir -p "$DEST"
+linked=0
+for tool in "$SRC"/*; do
+    [ -f "$tool" ] || continue
+    [ -x "$tool" ] || chmod +x "$tool"
+    target="$DEST/$(basename "$tool")"
+    # Only ever replace a symlink; a real file there is someone else's.
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+        warn link-tools "$target exists and is not a symlink, leaving it"
+        continue
+    fi
+    ln -sfn "$tool" "$target"
+    linked=$((linked + 1))
+done
+log link-tools "linked $linked tool(s) into $DEST"

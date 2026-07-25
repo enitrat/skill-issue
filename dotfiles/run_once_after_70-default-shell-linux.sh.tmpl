@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+{{ template "lib.sh" . }}
+
+zsh_path="$(command -v zsh)"
+
+if [ "$SHELL" = "$zsh_path" ]; then
+    log shell "default shell already zsh"
+    exit 0
+fi
+
+if ! grep -qx "$zsh_path" /etc/shells 2>/dev/null; then
+    echo "$zsh_path" | sudo tee -a /etc/shells >/dev/null
+fi
+
+sudo chsh -s "$zsh_path" "${USER:-$(whoami)}" \
+    || warn shell "chsh failed, run 'chsh -s $zsh_path' manually"

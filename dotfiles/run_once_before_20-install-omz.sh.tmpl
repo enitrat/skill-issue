@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+{{ template "lib.sh" . }}
+
+ZSH_CUSTOM="$HOME/.oh-my-zsh/custom"
+
+if [ -d "$HOME/.oh-my-zsh" ]; then
+    log oh-my-zsh "already installed"
+else
+    sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+fi
+
+clone_plugin() {
+    local dest="$ZSH_CUSTOM/plugins/$1"
+    if [ -d "$dest" ]; then
+        log "$1" "already installed"
+    else
+        git clone --depth=1 "$2" "$dest"
+    fi
+}
+
+clone_plugin zsh-autosuggestions https://github.com/zsh-users/zsh-autosuggestions
+clone_plugin zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git
+clone_plugin zsh-history-substring-search https://github.com/zsh-users/zsh-history-substring-search

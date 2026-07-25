@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+{{ template "lib.sh" . }}
 
 # The managed ~/.ssh/config needs both of these to already exist: ssh will not
 # create the ControlMaster socket dir, and it errors on a missing Include.
@@ -10,9 +11,7 @@ chmod 700 "$HOME/.ssh" "$HOME/.ssh/sockets" 2>/dev/null || true
 if [ ! -f "$HOME/.ssh/config.local" ]; then
     touch "$HOME/.ssh/config.local"
     chmod 600 "$HOME/.ssh/config.local"
-    echo "[ssh] created empty ~/.ssh/config.local (put personal Host blocks here)"
+    log ssh "created empty ~/.ssh/config.local (put personal Host blocks here)"
 else
-    echo "[ssh] ~/.ssh/config.local already present, leaving it alone"
+    log ssh "~/.ssh/config.local already present"
 fi
-
-echo "[ssh] sockets dir ready (ControlMaster multiplexing enabled)"

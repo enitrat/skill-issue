@@ -1,0 +1,98 @@
+# Single inventory for every package this repo installs.
+#
+# ~/.config/mise/config.toml and ~/.config/homebrew/Brewfile are both generated
+# from this file, and the provisioning scripts re-run whenever it changes. Add a
+# package here and nowhere else.
+#
+# Placement rule: anything mise can install cross-platform goes in [[mise]].
+# [[cask]] and [[formula]] are macOS-only and exist for GUI apps and the few
+# things mise cannot provide.
+
+# --- CLI tools -------------------------------------------------------------
+[[mise]]
+name = "atuin"
+[[mise]]
+name = "bat"
+[[mise]]
+name = "carapace"
+[[mise]]
+name = "delta"
+[[mise]]
+name = "difftastic"
+[[mise]]
+name = "eza"
+[[mise]]
+name = "fd"
+[[mise]]
+name = "fzf"
+[[mise]]
+name = "gh"
+[[mise]]
+name = "ripgrep"
+[[mise]]
+name = "starship"
+[[mise]]
+name = "tmux"
+[[mise]]
+name = "uv"
+[[mise]]
+name = "zoxide"
+[[mise]]
+name = "terraform"
+
+# --- Runtimes --------------------------------------------------------------
+[[mise]]
+name = "node"
+version = "lts"
+[[mise]]
+name = "python"
+[[mise]]
+name = "go"
+[[mise]]
+name = "rust"
+[[mise]]
+name = "bun"
+[[mise]]
+name = "pnpm"
+
+# --- Tools from non-default mise backends ----------------------------------
+[[mise]]
+name = "github:abhinav/git-spice"
+[[mise]]
+name = "github:joshmedeski/sesh"
+# Hosted on GitLab with no release binaries, so it has to be built.
+[[mise]]
+name = "cargo:mergiraf"
+
+# --- macOS GUI apps --------------------------------------------------------
+[[cask]]
+name = "raycast"
+[[cask]]
+name = "cursor"
+[[cask]]
+name = "tailscale"
+[[cask]]
+name = "amphetamine"
+note = "unlike caffeinate, its closed-lid mode actually holds"
+[[cask]]
+name = "hiddenbar"
+note = "hide/reveal menu-bar icons around the notch"
+[[cask]]
+name = "orbstack"
+note = "free for personal use; commercial use needs a paid license"
+[[cask]]
+name = "font-meslo-lg-nerd-font"
+note = "installs under the name \"MesloLGS NF\""
+
+# --- macOS formulae mise cannot provide ------------------------------------
+# gcc and llvm are pinned in vars.toml instead; their install paths are
+# referenced by compiler flags and PATH entries that must match the version.
+[[formula]]
+name = "mosh"
+note = "roaming-friendly SSH for flaky connections"
+
+# --- Python tools ----------------------------------------------------------
+# Installed with `uv tool install` -- mise's pipx backend needs a pre-existing
+# pipx that nothing else here wants.
+[[uvtool]]
+name = "httpie"

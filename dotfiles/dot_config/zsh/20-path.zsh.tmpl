@@ -1,0 +1,23 @@
+typeset -U path
+
+# Repo tools reach PATH as symlinks in ~/.local/bin, placed by the link-tools
+# provisioning script -- the repo checkout itself is never on PATH, so moving
+# or renaming the clone cannot break them.
+path=(
+    "$HOME/.local/bin"
+{{- if eq .chezmoi.os "darwin" }}
+    "/opt/homebrew/bin"
+    "/opt/homebrew/opt/{{ .llvm }}/bin"(N)
+    "/opt/homebrew/opt/openjdk/bin"(N)
+    "/opt/homebrew/opt/libpq/bin"(N)
+    ${ANDROID_HOME:+$ANDROID_HOME/emulator}
+    ${ANDROID_HOME:+$ANDROID_HOME/platform-tools}
+    /usr/local/texlive/*/bin/universal-darwin(N)
+{{- end }}
+    "$BUN_INSTALL/bin"
+    "$HOME/go/bin"
+    "$PNPM_HOME"
+    $path
+)
+
+export PATH

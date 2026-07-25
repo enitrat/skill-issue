@@ -1,0 +1,10 @@
+# ~/.zshrc — managed by chezmoi (skill-issue). Edits here are overwritten.
+#
+# Everything lives in ~/.config/zsh/*.zsh, sourced in filename order. The
+# numeric prefixes are load-bearing: env before PATH, PATH before the tool
+# init that needs those binaries, compinit before anything calling compdef.
+
+for _zsh_fragment in "$HOME/.config/zsh/"*.zsh(N); do
+    source "$_zsh_fragment"
+done
+unset _zsh_fragment
