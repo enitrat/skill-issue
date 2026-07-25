@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Renders every chezmoi template and syntax-checks the result.
+#
+# The failure this exists to catch: chezmoi runs templates with
+# missingkey=error, so an optional key in packages.toml that a template reads
+# unguarded renders fine in review and blows up on someone's fresh machine.
+# Nothing surfaces that until an apply, which is exactly too late.
+
+set -uo pipefail
+
+cd "$(dirname "$0")/.." || exit 1
+
+if ! command -v chezmoi >/dev/null 2>&1; then
+    echo "chezmoi not found on PATH" >&2
+    exit 1
+fi
+
+fail=0
+render() { chezmoi execute-template -S . < "$1" 2>&1; }
+
+check() {
+    local label="$1" out="$2"
+    if [ -n "$out" ]; then
+        printf '  ✗ %s\n%s\n' "$label" "$out" | sed '2,$s/^/      /'
+        fail=1
+    fi
+}
+
+# -S . makes chezmoi read this checkout rather than its configured source dir,
+# which is frequently a different clone.
+while IFS= read -r tmpl; do
+    case "$tmpl" in */.chezmoitemplates/*) continue ;; esac
+
+    if ! out=$(render "$tmpl"); then
+        check "$tmpl (render)" "$out"
+        continue
+    fi
+
+    rendered="$out"
+    base="$(basename "$tmpl" .tmpl)"
+    case "$base" in
+        *.sh)   check "$base (bash -n)" "$(bash -n <(printf '%s' "$rendered") 2>&1)" ;;
+        *.zsh)  check "$base (zsh -n)"  "$(zsh -n <(printf '%s' "$rendered") 2>&1)" ;;
+    esac
+done < <(find dotfiles -name '*.tmpl' | sort)
+
+# Untemplated shell fragments still need checking.
+for f in dotfiles/dot_config/zsh/*.zsh dotfiles/dot_zshrc; do
+    [ -f "$f" ] || continue
+    check "$(basename "$f") (zsh -n)" "$(zsh -n "$f" 2>&1)"
+done
+
+# A generated file that renders but is malformed still breaks the apply.
+if command -v python3 >/dev/null 2>&1; then
+    check "mise config (toml parse)" "$(
+        chezmoi cat -S . ~/.config/mise/config.toml 2>&1 |
+        python3 -c 'import sys,tomllib; tomllib.loads(sys.stdin.read())' 2>&1
+    )"
+fi
+
+if [ "$fail" -eq 0 ]; then
+    echo "chezmoi: all templates render and parse"
+fi
+exit "$fail"

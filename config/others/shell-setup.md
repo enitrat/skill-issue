@@ -41,6 +41,11 @@ Day to day: `chezmoi diff` to preview, `chezmoi update` to pull and apply.
 | `run_once_after_*` | One-time host setup (system defaults, ssh dirs, logins). |
 | `run_after_30-link-tools` | Every apply: symlinks `tools/` into `~/.local/bin`. |
 
+Repo checks live in `.pre-commit-config.yaml`, run by
+[`prek`](https://github.com/j178/prek): `prek install` once, then
+`prek run --all-files`. They render every template, syntax-check the result,
+and shellcheck `tools/` and `scripts/`.
+
 ### Adding a package
 
 Edit `dotfiles/.chezmoidata/packages.toml` and run `chezmoi apply`. The mise
@@ -82,6 +87,27 @@ Deliberately not synced, so no long-lived credential lands on a remote box:
 - `tailscale up` — join your tailnet
 - `git-id add ...` — git identity, see `git-id --help`
 
+## Git config
+
+`~/.gitconfig` is managed and wires up the diff/merge tools that mise installs:
+`delta` as the pager, `mergiraf` as a syntax-aware merge driver (via
+`~/.gitattributes`), and `difftastic` behind `git dft` rather than
+`diff.external`, which would be slow and unpipeable as a default.
+
+**Identity is not in the managed file.** `git-id` writes `user.name`,
+`user.email`, and `core.sshCommand` to `~/.gitconfig.local`, which the managed
+config includes *last* — git resolves later values over earlier ones, so
+anything local wins. Put hand-rolled settings there too; the managed file is
+overwritten on every apply.
+
+`run_once_before_40-migrate-gitconfig` copies an existing identity into
+`~/.gitconfig.local` before the managed file lands, so a first apply on a
+machine that already had a `~/.gitconfig` doesn't lose it.
+
+One caveat worth knowing: `git config --global --get` does **not** expand
+includes, so it will not see the identity. Use `git config --get`. This is why
+the starship prompt module and `git-id` both dropped `--global`.
+
 ## SSH config
 
 `~/.ssh/config` is managed and **replaces** whatever is there. Move your
@@ -108,7 +134,7 @@ never has to be on PATH and can be moved or renamed freely.
 | Tool | Description |
 |------|-------------|
 | `git-id` | Switch git identity + SSH key with one command |
-| `dev-check` | Verify the dev environment; `dev-check drift` finds mise tools shadowed by stale copies |
+| `dev-check` | Verify the dev environment. `dev-check inventory` checks everything `packages.toml` declares is really installed; `dev-check drift` finds mise tools shadowed by a stale copy earlier on PATH |
 | `slack-sanitize` | Anonymize names & clean up Slack thread pastes from clipboard |
 | `prune-cursor-server` | Drop stale Cursor Remote-SSH server caches |
 

@@ -11,4 +11,3 @@ brew "{{ .name }}"{{ if hasKey . "note" }}  # {{ .note }}{{ end }}
 {{ end }}
 brew "{{ .gcc }}"
 brew "{{ .llvm }}"   # for Cairo-Native
-

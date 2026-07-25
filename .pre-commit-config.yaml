@@ -1,0 +1,46 @@
+# Run with `prek` (https://github.com/j178/prek), a drop-in pre-commit runner.
+#   prek install     # once, to wire up .git/hooks/pre-commit
+#   prek run --all-files
+#
+# prek and shellcheck are provisioned by this repo, see .chezmoidata/packages.toml.
+
+repos:
+  - repo: local
+    hooks:
+      - id: chezmoi-templates
+        name: chezmoi templates render and parse
+        entry: scripts/check-chezmoi
+        language: system
+        pass_filenames: false
+        files: ^dotfiles/
+
+      - id: shellcheck-tools
+        name: shellcheck (tools, scripts)
+        entry: shellcheck
+        language: system
+        types: [shell]
+        files: ^(tools|scripts)/
+
+      - id: tools-executable
+        name: tools are executable
+        entry: >-
+          bash -c 'bad=$(find tools scripts -type f ! -perm -u+x);
+          [ -z "$bad" ] || { echo "not executable:"; echo "$bad"; exit 1; }'
+        language: system
+        pass_filenames: false
+        files: ^(tools|scripts)/
+
+  # Scoped to the machine-setup surface on purpose. Run repo-wide these rewrite
+  # a few hundred lines of skills/ prose, which buries the changes that matter.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        files: ^(dotfiles|tools|scripts)/
+        # chezmoi trim markers ({{- -}}) make templates whitespace-sensitive.
+        exclude: \.tmpl$
+      - id: end-of-file-fixer
+        files: ^(dotfiles|tools|scripts)/
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs

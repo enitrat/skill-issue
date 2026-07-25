@@ -1,0 +1,32 @@
+#!/bin/bash
+set -uo pipefail
+{{ template "lib.sh" . }}
+
+# Runs BEFORE chezmoi writes the managed ~/.gitconfig, which is the only window
+# in which the pre-existing identity is still readable. Applying without this
+# silently drops user.name/user.email into whatever chezmoi ships.
+
+LOCAL="$HOME/.gitconfig.local"
+
+if [ -f "$LOCAL" ]; then
+    log gitconfig "~/.gitconfig.local already present, leaving it alone"
+    exit 0
+fi
+
+touch "$LOCAL"
+chmod 600 "$LOCAL"
+
+carried=0
+for key in user.name user.email user.signingkey core.sshCommand commit.gpgsign; do
+    value=$(git config --global --get "$key" 2>/dev/null) || continue
+    [ -n "$value" ] || continue
+    git config --file "$LOCAL" "$key" "$value"
+    log gitconfig "carried over $key"
+    carried=$((carried + 1))
+done
+
+if [ "$carried" -eq 0 ]; then
+    log gitconfig "created empty ~/.gitconfig.local (set an identity with 'git-id')"
+else
+    log gitconfig "moved $carried setting(s) into ~/.gitconfig.local; they override the managed config"
+fi

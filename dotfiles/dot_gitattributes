@@ -1,0 +1,6 @@
+# ~/.gitattributes — managed by chezmoi (skill-issue). Referenced by
+# core.attributesFile in the managed ~/.gitconfig.
+#
+# Route every merge through mergiraf. It parses what it recognises and hands
+# anything else back to git's default merge, so a blanket rule is safe.
+* merge=mergiraf

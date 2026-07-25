@@ -40,6 +40,13 @@ name = "zoxide"
 [[mise]]
 name = "terraform"
 
+# Repo tooling: the pre-commit hooks in .pre-commit-config.yaml need these on
+# PATH, so they are provisioned like anything else rather than assumed.
+[[mise]]
+name = "prek"
+[[mise]]
+name = "shellcheck"
+
 # --- Runtimes --------------------------------------------------------------
 [[mise]]
 name = "node"
@@ -65,6 +72,8 @@ name = "github:joshmedeski/sesh"
 name = "cargo:mergiraf"
 
 # --- macOS GUI apps --------------------------------------------------------
+[[cask]]
+name = "1password-cli"
 [[cask]]
 name = "raycast"
 [[cask]]

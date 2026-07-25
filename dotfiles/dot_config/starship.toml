@@ -118,7 +118,9 @@ style = "fg:color_gray"
 format = "[$time]($style) "
 
 [custom.git_profile]
-command = "git config --global user.name"
+# Not --global: `git-id` writes the identity to ~/.gitconfig.local, and a
+# --global read does not expand the include that pulls it in.
+command = "git config user.name"
 when = true
 style = "fg:color_orange"
 format = "[\\[$output\\]]($style)"

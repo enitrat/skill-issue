@@ -1,0 +1,16 @@
+# ~/.gitignore.global — managed by chezmoi (skill-issue).
+# Machine and editor noise that should never reach a repo's own .gitignore.
+
+.DS_Store
+.AppleDouble
+Thumbs.db
+
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+!.vscode/extensions.json
+
+.direnv/
+.env.local

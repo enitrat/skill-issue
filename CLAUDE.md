@@ -38,7 +38,8 @@ subagents/           # Source-of-truth subagent configs/prompts
   claude/            # Claude agent definitions
   codex/             # Codex prompts + docs
 
-tools/               # Local executable CLIs
+tools/               # Local executable CLIs (symlinked into ~/.local/bin)
+scripts/             # Repo-internal dev scripts (not installed to PATH)
 raycast-scripts/     # Raycast script commands
 config/others/       # Human docs for third-party setup
 ```
@@ -68,6 +69,16 @@ Pick the prefix by re-run semantics, not by habit:
 Scripts start with `{{ template "lib.sh" . }}` and use `log`/`warn`/`have`.
 Never swallow an install failure with `|| echo skipping` — that is how a tool
 silently goes missing for months.
+
+## Checks
+
+`prek` runs the hooks in `.pre-commit-config.yaml`. Install once with
+`prek install`; run everything with `prek run --all-files`.
+
+`scripts/check-chezmoi` renders every template with `-S .` and syntax-checks
+the result. Run it after touching anything under `dotfiles/` — chezmoi uses
+`missingkey=error`, so a template reading an optional key from `packages.toml`
+unguarded looks fine in review and fails on someone's fresh machine.
 
 ## Adding Content
 

@@ -3,6 +3,7 @@
 
 VERSION="1.0.0"
 CONFIG_DIR="$HOME/.git-identities"
+LOCAL_CONFIG="$HOME/.gitconfig.local"
 
 show_help() {
     cat << 'EOF'
@@ -22,9 +23,14 @@ DESCRIPTION
     configuration and SSH keys with a single command.
 
     When switching identities, git-id sets:
-      - git config --global user.name
-      - git config --global user.email
-      - git config --global core.sshCommand (to use the correct SSH key)
+      - user.name
+      - user.email
+      - core.sshCommand (to use the correct SSH key)
+
+    These are written to ~/.gitconfig.local rather than ~/.gitconfig,
+    because ~/.gitconfig is managed by chezmoi and would revert them on
+    the next apply. The managed config includes the local one last, so
+    values here win.
 
 COMMANDS
     <identity>
@@ -87,9 +93,12 @@ show_version() {
 }
 
 show_current() {
-    local name=$(git config --global user.name)
-    local email=$(git config --global user.email)
-    local key=$(git config --global core.sshCommand | grep -oE 'id_[a-zA-Z0-9]+')
+    # Not --global: identity lives in ~/.gitconfig.local, which the managed
+    # ~/.gitconfig includes. A --global read does not expand includes.
+    local name email key
+    name=$(git config user.name)
+    email=$(git config user.email)
+    key=$(git config core.sshCommand | grep -oE 'id_[a-zA-Z0-9]+')
     echo "Current: $name <$email> [key: $key]"
 }
 
@@ -97,7 +106,9 @@ list_identities() {
     echo "Available identities:"
     for f in "$CONFIG_DIR"/*.conf; do
         [ -f "$f" ] || continue
-        local id=$(basename "$f" .conf)
+        local id
+        id=$(basename "$f" .conf)
+        # shellcheck source=/dev/null
         source "$f"
         echo "  $id: $GIT_NAME <$GIT_EMAIL>"
     done
@@ -111,15 +122,22 @@ switch_identity() {
 
     if [ ! -f "$conf" ]; then
         echo "Error: Identity '$id' not found"
-        echo "Available: $(ls -1 "$CONFIG_DIR"/*.conf 2>/dev/null | xargs -n1 basename | sed 's/.conf$//' | tr '\n' ' ')"
+        local available=()
+        for f in "$CONFIG_DIR"/*.conf; do
+            [ -f "$f" ] && available+=("$(basename "$f" .conf)")
+        done
+        echo "Available: ${available[*]}"
         return 1
     fi
 
+    # shellcheck source=/dev/null
     source "$conf"
 
-    git config --global user.name "$GIT_NAME"
-    git config --global user.email "$GIT_EMAIL"
-    git config --global core.sshCommand "ssh -i ~/.ssh/$SSH_KEY"
+    # Written to ~/.gitconfig.local, not ~/.gitconfig: the latter is managed by
+    # chezmoi and would revert these on the next apply.
+    git config --file "$LOCAL_CONFIG" user.name "$GIT_NAME"
+    git config --file "$LOCAL_CONFIG" user.email "$GIT_EMAIL"
+    git config --file "$LOCAL_CONFIG" core.sshCommand "ssh -i ~/.ssh/$SSH_KEY"
 
     echo "Switched to: $GIT_NAME <$GIT_EMAIL> [key: $SSH_KEY]"
 }

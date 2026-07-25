@@ -1,4 +1,4 @@
-fpath=(~/.zfunc $fpath)
+fpath=(~/.zfunc(N) $fpath)
 
 # Stubs that generate the real completions on first Tab, then re-dispatch to
 # themselves. Cheaper than running three generators on every shell start.

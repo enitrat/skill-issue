@@ -1,0 +1,80 @@
+# ~/.gitconfig — managed by chezmoi (skill-issue). Edits here are overwritten.
+#
+# Identity is NOT here: `git-id` writes it to ~/.gitconfig.local, included at
+# the bottom. Git resolves later values over earlier ones, so anything in the
+# local file wins. Put hand-rolled settings there too.
+
+[core]
+	pager = delta
+	excludesfile = ~/.gitignore.global
+	# Git defaults to ~/.config/git/attributes, so this has to be explicit.
+	attributesFile = ~/.gitattributes
+
+[interactive]
+	diffFilter = delta --color-only
+
+[delta]
+	navigate = true
+	line-numbers = true
+	# Matches the starship prompt palette.
+	syntax-theme = gruvbox-dark
+
+[diff]
+	# Detect moved lines instead of showing them as a delete plus an add.
+	colorMoved = default
+	algorithm = histogram
+
+[merge]
+	# zdiff3 shows the common ancestor in conflicts, which turns a lot of
+	# "which side is right" guessing into reading.
+	conflictstyle = zdiff3
+
+# Syntax-aware merge driver. Resolves conflicts that are textually overlapping
+# but semantically independent, e.g. two imports added to the same line range.
+# Falls back to git's own merge for languages it does not parse.
+[merge "mergiraf"]
+	name = mergiraf
+	driver = mergiraf merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L
+
+[alias]
+	# Structural diff, opt-in per invocation -- difftastic is far slower than
+	# delta and does not pipe, so it is wrong as the default.
+	dft = -c diff.external=difft diff
+	dfts = -c diff.external=difft show
+	rebase-last-five = "!b=\"$(git rev-parse --abbrev-ref HEAD)\" ; h=\"$(git rev-parse $b)\" ; echo \"Current branch: $b $h\" ; c=\"$(git rev-parse $b~4)\" ; echo \"Recreating $b branch with initial commit $c ...\" ; git checkout --orphan new-start $c ; git commit -C $c ; git rebase --onto new-start $c $b ; git branch -d new-start ; git gc"
+
+[fetch]
+	prune = true
+
+[rebase]
+	autosquash = true
+	autostash = true
+
+[push]
+	autoSetupRemote = true
+
+[init]
+	defaultBranch = main
+
+[filter "lfs"]
+	required = true
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+{{ if eq .chezmoi.os "darwin" }}
+[credential]
+	helper = osxkeychain
+{{ end }}
+# Resolved through PATH rather than an absolute install path: the previous
+# config pinned .../gh_2.96.0_macOS_arm64/bin/gh, which mise invalidates on the
+# next gh release.
+[credential "https://github.com"]
+	helper =
+	helper = !gh auth git-credential
+[credential "https://gist.github.com"]
+	helper =
+	helper = !gh auth git-credential
+
+# Last, so ~/.gitconfig.local overrides everything above.
+[include]
+	path = ~/.gitconfig.local
