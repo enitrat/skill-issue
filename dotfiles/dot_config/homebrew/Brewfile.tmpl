@@ -1,35 +1,26 @@
 {{ if eq .chezmoi.os "darwin" -}}
-# Brewfile — managed by chezmoi (skill-issue).
+# Brewfile — managed by chezmoi (skill-issue). Edits here are overwritten.
 #
-# Declarative source of truth for macOS GUI apps and the few Homebrew-only
-# formulae that are NOT managed by mise. CLI dev tools (bat, eza, ripgrep,
-# node, python, etc.) live in mise, see run_once_before_20-install-tools.
-#
-# Apply manually with:  brew bundle --file ~/.config/homebrew/Brewfile
-# (also run automatically by run_once_after_05-brew-bundle on chezmoi apply)
-
-tap "homebrew/bundle"
+# Scope rule: macOS GUI casks, plus formulae mise cannot provide. Every
+# cross-platform CLI tool belongs in the mise tool list instead.
 
 # --- GUI apps --------------------------------------------------------------
-cask "raycast"        # Spotlight replacement (hotkey configured separately)
-cask "cursor"         # AI-first code editor
-cask "tailscale"      # mesh VPN for remote dev boxes
-cask "amphetamine"    # keep-awake with reliable closed-lid mode
+cask "raycast"
+cask "cursor"
+cask "tailscale"
+cask "amphetamine"    # unlike caffeinate, its closed-lid mode actually holds
 cask "hiddenbar"      # hide/reveal menu-bar icons around the notch
 
-# Container runtime. OrbStack replaces Docker Desktop (faster, lighter, native).
-# NOTE: OrbStack is free for personal use but requires a paid license for
-# commercial use. Docker Desktop is uninstalled by run_once_after_05-brew-bundle
-# to avoid a conflicting/duplicate runtime.
+# Free for personal use; commercial use needs a paid license.
 cask "orbstack"
 
 # --- Fonts -----------------------------------------------------------------
-cask "font-meslo-lg-nerd-font"   # "MesloLGS NF" — Nerd Font glyphs for starship
+cask "font-meslo-lg-nerd-font"   # installs under the name "MesloLGS NF"
 
-# --- Homebrew-only formulae (not available / not sensible via mise) --------
+# --- Homebrew-only formulae ------------------------------------------------
 brew "mosh"           # roaming-friendly SSH for flaky connections
-brew "gcc@15"         # GCC toolchain (aliased to gcc/g++ in .zshrc)
-brew "llvm@19"        # LLVM for Cairo-Native (paths wired in .zshrc)
+brew "gcc@15"
+brew "llvm@19"        # for Cairo-Native
 {{ else -}}
 # Brewfile is macOS-only; nothing to install on this OS.
 {{ end -}}

@@ -2,9 +2,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# Prefer tabs over new windows: native apps (Finder, TextEdit, ...) via the
-# macOS window-tabbing default, plus Cursor/VS Code via their own setting
-# (they're Electron apps and ignore AppleWindowTabbingMode).
+# Prefer tabs over new windows. Electron editors ignore AppleWindowTabbingMode,
+# so they need the equivalent flipped in their own settings.json.
 
 defaults write -g AppleWindowTabbingMode -string always
 echo "[window-tabbing] AppleWindowTabbingMode=always"

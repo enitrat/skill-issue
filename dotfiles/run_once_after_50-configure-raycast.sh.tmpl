@@ -2,13 +2,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# Raycast replaces Spotlight and both default to Cmd+Space, so free up the
-# binding on the macOS side. Raycast's own hotkey has no scriptable
-# preference (not stored in `defaults` under com.raycast.macos) - it's a
-# one-time manual step in Raycast > Settings > General.
-
-# Raycast itself is installed via the Brewfile (run_once_after_05-brew-bundle,
-# which runs before this script). Here we only free up the Cmd+Space binding.
+# Raycast and Spotlight both want Cmd+Space, so release the macOS side of it.
+# Claiming it for Raycast stays manual: Raycast stores its own hotkey outside
+# `defaults`, so there is nothing scriptable to set.
 PLIST="$HOME/Library/Preferences/com.apple.symbolichotkeys.plist"
 
 if /usr/libexec/PlistBuddy -c "Print :AppleSymbolicHotKeys:64" "$PLIST" >/dev/null 2>&1; then

@@ -13,8 +13,8 @@ else
     echo "[shell] no supported package manager (apt/dnf/pacman) found, skipping zsh install" >&2
 fi
 
-# Ensure a UTF-8 locale is generated (avoids 'setting locale failed' warnings
-# and broken prompt glyphs when viewed through a Nerd-Font-capable terminal).
+# Minimal images ship no generated locale, which makes zsh warn on every
+# start and mangles the prompt's Nerd Font glyphs.
 if command -v locale-gen >/dev/null 2>&1 && ! locale -a 2>/dev/null | grep -qi "en_US.utf8"; then
     sudo locale-gen en_US.UTF-8 || true
     sudo update-locale LANG=en_US.UTF-8 || true

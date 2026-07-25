@@ -1,9 +1,6 @@
 "$schema" = 'https://starship.rs/config-schema.json'
 add_newline = false
 
-# No background fills anywhere below - matches the transparent-background
-# p10k style this replaced (POWERLEVEL9K_BACKGROUND=), just colored
-# icons/text directly on the terminal background instead of powerline blocks.
 format = """
 $os\
 $username\

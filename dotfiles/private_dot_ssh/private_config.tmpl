@@ -1,26 +1,22 @@
-# ~/.ssh/config — managed by chezmoi (skill-issue).
+# ~/.ssh/config — managed by chezmoi (skill-issue). Edits here are overwritten.
 #
-# Personal / host-specific entries go in ~/.ssh/config.local (NOT managed by
-# chezmoi). SSH uses the FIRST value it finds for each option, and this file
-# Includes config.local first — so anything there overrides the defaults
-# below. Move any pre-existing "Host ..." blocks into config.local.
+# Put personal Host blocks in ~/.ssh/config.local instead. ssh keeps the FIRST
+# value it sees for an option, so including it above the defaults lets anything
+# there win.
 Include ~/.ssh/config.local
 
 Host *
-    # Connection multiplexing: reuse one TCP/auth session for repeat
-    # connections to the same host. The 2nd+ ssh/scp/git-over-ssh is
-    # near-instant. %C is a short hash (avoids the macOS 104-char socket
-    # path limit). Sockets dir is created by run_once_after_60-ssh-setup.
+    # Reuse one authenticated connection per host, so repeat ssh/scp/git calls
+    # skip the handshake. %C hashes the path under the macOS 104-char limit.
     ControlMaster auto
     ControlPath ~/.ssh/sockets/%C
     ControlPersist 10m
 
-    # Keep long-lived sessions alive across Wi-Fi/NAT drops (pairs with mosh).
+    # Survive Wi-Fi and NAT drops on long-lived sessions.
     ServerAliveInterval 30
     ServerAliveCountMax 3
     TCPKeepAlive yes
 
-    # Hygiene: hash known_hosts entries, load keys into the agent on first use.
     HashKnownHosts yes
     AddKeysToAgent yes
 {{- if eq .chezmoi.os "darwin" }}

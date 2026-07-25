@@ -1,13 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Tailscale + mosh: connection resilience for remote dev sessions
-# (mesh networking + roaming-friendly shell), per 2025-2026 practitioner
-# consensus for SSH-based remote dev.
-
 {{ if eq .chezmoi.os "darwin" -}}
-# On macOS, Tailscale (cask) and mosh (formula) are installed via the Brewfile
-# (~/.config/homebrew/Brewfile), applied by run_once_after_05-brew-bundle.
 echo "[network] macOS Tailscale + mosh come from the Brewfile, skipping here"
 {{ else -}}
 if command -v tailscale >/dev/null 2>&1; then

@@ -10,7 +10,6 @@ fi
 brew install mise
 {{ else -}}
 curl -fsSL https://mise.run | sh
-echo 'export PATH="$HOME/.local/bin:$PATH"' # ensure current shell can find it below
 export PATH="$HOME/.local/bin:$PATH"
 {{ end -}}
 

@@ -2,9 +2,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Install GUI apps + Homebrew-only formulae from the managed Brewfile.
-# Runs early among the run_once_after_* scripts (05 < 10..60) so casks like
-# Raycast exist before the later hotkey-configuration script runs.
+# Numbered first so later scripts can configure the casks installed here.
 
 if ! command -v brew >/dev/null 2>&1; then
     echo "[brew-bundle] Homebrew not found on PATH, skipping" >&2
@@ -20,10 +18,8 @@ else
     echo "[brew-bundle] $BREWFILE not found, skipping" >&2
 fi
 
-# Ensure Docker Desktop is absent — OrbStack (installed above) is the runtime.
-# The desktop app has shipped under both the `docker` and `docker-desktop`
-# cask names over time; remove whichever is present. (The `docker` CLI
-# *formula* is left alone — OrbStack provides its own compatible CLI.)
+# OrbStack is the container runtime, so Docker Desktop must go. It has shipped
+# under both cask names over time. The `docker` CLI *formula* is left alone.
 for c in docker-desktop docker; do
     if brew list --cask "$c" >/dev/null 2>&1; then
         echo "[docker] removing Docker Desktop cask '$c'"
@@ -31,8 +27,7 @@ for c in docker-desktop docker; do
     fi
 done
 
-# If Docker Desktop was installed manually (not via Homebrew) we don't delete
-# it automatically — flag it so the user can remove it themselves.
+# A hand-installed copy is only flagged, never deleted.
 if [ -d "/Applications/Docker.app" ]; then
     echo "[docker] WARNING: /Applications/Docker.app is present but not Homebrew-managed." >&2
     echo "[docker] Quit Docker Desktop and drag it to the Trash to avoid conflicting with OrbStack." >&2

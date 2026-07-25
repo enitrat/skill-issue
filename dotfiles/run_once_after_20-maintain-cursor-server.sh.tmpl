@@ -2,10 +2,8 @@
 #!/bin/bash
 set -uo pipefail
 
-# Cursor's Remote-SSH server caches every version it has ever connected with
-# under ~/.cursor-server/bin/<commit>. On a shared/reused box this grows
-# unbounded and each new connection re-scans every cached version, adding
-# 1-2 minutes to connect time. Keep only the 3 most recent.
+# Cursor's Remote-SSH server keeps every version it ever connected with, and
+# re-scans all of them on connect -- an unpruned cache costs minutes per login.
 dir="$HOME/.cursor-server/bin"
 if [ -d "$dir" ]; then
     count=$(find "$dir" -maxdepth 1 -mindepth 1 -type d | wc -l | tr -d ' ')

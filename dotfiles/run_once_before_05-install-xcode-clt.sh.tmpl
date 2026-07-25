@@ -2,25 +2,17 @@
 #!/bin/bash
 set -uo pipefail
 
-# Xcode Command Line Tools provide clang/clang++, needed by anything that
-# compiles native extensions (e.g. `uv`/pip packages with C/C++ sources like
-# leveldb). Homebrew formula installs use precompiled bottles and don't need
-# this, so a missing/broken CLT install can go unnoticed until something
-# actually needs to build from source.
-#
-# Presence alone isn't enough: a CLT install can race with a concurrent
-# background macOS Software Update and land with a corrupted libc++ (its
-# usr/include/c++/v1 ends up with only `__cxx_version`, missing the ~190
-# real headers), while `xcode-select -p` still reports success. So check
-# that the C++ standard headers actually exist, not just the receipt.
+# A CLT install that races a background macOS Software Update lands with a
+# corrupted libc++ -- usr/include/c++/v1 keeps only `__cxx_version` -- while
+# `xcode-select -p` still reports success. Check the headers, not the receipt.
 
 CLT_CXX_HEADERS="/Library/Developer/CommandLineTools/usr/include/c++/v1"
 
 clt_healthy() {
     xcode-select -p >/dev/null 2>&1 || return 1
     [ -d "$CLT_CXX_HEADERS" ] || return 1
-    # A healthy install has ~190 headers; 5 is a safe floor to detect the
-    # "only __cxx_version survived" corruption without being too strict.
+    # A healthy install has ~190 headers; 5 is a floor that catches the
+    # corruption without tracking the exact count across macOS versions.
     local count
     count=$(find "$CLT_CXX_HEADERS" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
     [ "${count:-0}" -gt 5 ]

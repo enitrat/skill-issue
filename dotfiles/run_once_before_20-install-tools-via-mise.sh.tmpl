@@ -8,21 +8,18 @@ if ! command -v mise >/dev/null 2>&1; then
     exit 1
 fi
 
-# Everything here goes through mise (aqua/github/cargo backends) so the same
-# command works identically on macOS and Linux - no per-OS package manager
-# quirks (missing apt packages, stale repo versions, etc).
+# Keep CLI tools here rather than in per-OS package managers: mise's
+# aqua/github/cargo backends give the same versions on macOS and Linux.
 mise use -g \
     atuin bat delta eza fd fzf gh ripgrep starship tmux zoxide difftastic uv \
     node@lts python@latest go@latest rust@latest bun@latest pnpm@latest \
     github:abhinav/git-spice \
     github:joshmedeski/sesh
 
-# carapace: unified shell completions for 1000+ commands (wired up in .zshrc).
 mise use -g carapace || echo "[carapace] install failed, skipping (non-critical)" >&2
 
-# httpie: install via uv (isolated tool venv), not mise's pipx backend, which
-# requires a pre-existing pipx install we don't otherwise need.
+# uv, not mise's pipx backend -- that backend needs a pre-existing pipx.
 uv tool install httpie || echo "[httpie] uv tool install failed, skipping (non-critical)" >&2
 
-# mergiraf has no GitHub-release binaries (hosted on GitLab), build via cargo.
+# mergiraf is hosted on GitLab with no release binaries, so it must be built.
 mise use -g cargo:mergiraf || echo "[mergiraf] cargo build failed, skipping (non-critical)" >&2
