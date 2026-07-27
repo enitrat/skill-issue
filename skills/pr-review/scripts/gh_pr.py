@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "ghapi>=1.0.5",
+#   "ghapi>=1.0.5,<2",
 #   "typer>=0.9.0",
 #   "rich>=13.0.0",
 # ]
