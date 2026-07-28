@@ -37,6 +37,18 @@ See [references/agent-readable-docs.md](references/agent-readable-docs.md) for t
 
 ## Documentation Type Router
 
+The four types come from [Diátaxis](https://diataxis.fr): a craft has exactly two dimensions —
+action vs cognition, and acquisition (study) vs application (work) — so there are exactly four
+kinds of documentation, one per quadrant. When a page resists classification, use the compass: ask
+*does this inform action or cognition?* and *does it serve the user's study or their work?*
+
+| Informs… | Serves… | Type |
+|---|---|---|
+| action | study | Tutorial |
+| action | work | How-to Guide |
+| cognition | work | Reference |
+| cognition | study | Explanation |
+
 Before writing, identify which type of page you're creating. Each type has different rules.
 
 | Question you're answering | Doc type | Template | Key rule |
@@ -46,7 +58,7 @@ Before writing, identify which type of page you're creating. Each type has diffe
 | "What does X do / accept / return?" | **API Reference** | [api-reference.md](references/api-reference.md) | Information-oriented: describe only, zero explanation, mirror product structure |
 | "Why does X work this way?" | **Explanation** (Concept/Why page) | [tone.md → Explanation Pages](references/tone.md) | Understanding-oriented: provide context, make connections, admit tradeoffs |
 
-**The cardinal sin is mixing types.** A tutorial that stops to explain architecture loses the learner. A reference page that teaches loses the practitioner looking up a parameter. An explanation page that includes step-by-step instructions belongs in a how-to guide.
+**The cardinal sin is mixing types.** A tutorial that stops to explain architecture loses the learner. A reference page that teaches loses the practitioner looking up a parameter. An explanation page that includes step-by-step instructions belongs in a how-to guide. Blur happens between map neighbors — the most common conflation in software docs is tutorial ↔ how-to guide; the subtlest is reference examples growing into explanation. The axis separating tutorial from how-to is study vs work, **never** basic vs advanced. See [references/diataxis.md](references/diataxis.md) for the boundary tests, per-type ground truths, and workflow guidance (guide, not plan — never scaffold four empty sections; improve one small thing at a time and let structure emerge).
 
 ## Core Philosophy
 
@@ -81,6 +93,7 @@ Before writing, identify which type of page you're creating. Each type has diffe
 
 ## Detailed Guidance by Topic
 
+- **Diátaxis ground truths**: See [references/diataxis.md](references/diataxis.md) for the compass, type-boundary tests (tutorial vs how-to, reference vs explanation), per-type principles sourced from diataxis.fr, iterative workflow, and structure at scale
 - **Documentation structure**: See [references/structure.md](references/structure.md) for site architecture, page templates, navigation config, shared content systems
 - **Narrative tone & explanation pages**: See [references/tone.md](references/tone.md) for voice, style, sentence patterns, jargon handling, and explanation/concept page guidance
 - **Tutorials & how-to guides**: See [references/guides.md](references/guides.md) for tutorial rules (learning-oriented), how-to guide rules (task-oriented), progressive disclosure, framework variants

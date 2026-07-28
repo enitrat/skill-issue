@@ -1,6 +1,6 @@
 # Tutorials & How-to Guides
 
-Tutorials and how-to guides are both practical, but they serve fundamentally different readers. Tutorials teach someone who is *learning*. How-to guides help someone who is *working*. Never conflate them.
+Tutorials and how-to guides are both practical, but they serve fundamentally different readers. Tutorials teach someone who is *learning*. How-to guides help someone who is *working*. Never conflate them — this is the single most common conflation in software docs, and the distinction is study vs work, never basic vs advanced (a how-to can cover something mundane; a tutorial can teach experts an advanced skill). Boundary tests in [diataxis.md](diataxis.md).
 
 ## Two Distinct Types of Practical Documentation
 
@@ -31,7 +31,7 @@ Tutorials include Getting Started pages and any "First X" walkthrough. The reade
 ### Tutorial-Specific Rules
 
 1. **Show the destination early.** Tell the reader what they'll have built by the end. Screenshot or interactive demo before step 1.
-2. **Deliver visible results at every step.** Each step produces output the reader can verify: "You should see..." / "The output looks like..." A `:::terminal` block pairing the command with its real output is the cleanest way to show this.
+2. **Deliver visible results at every step.** Each step produces output the reader can verify: "You should see..." / "The output looks like..." A `:::terminal` block pairing the command with its real output is the cleanest way to show this. Flag known failure signs too: "If you don't see X, you probably forgot Y." Say "In this tutorial we will build..." — never "you will learn..."
 3. **Eliminate options.** One path. Don't mention alternatives — they fracture the learner's focus. Save "you could also..." for how-to guides.
 4. **Minimize explanation.** If a concept needs > 2 sentences of explanation, link to a concept page instead. The tutorial is for *doing*, not *understanding*.
 5. **Guide observation.** Point out what the reader should notice: "Notice that the hook returns `undefined` until the query resolves."
@@ -97,8 +97,9 @@ How-to guides serve competent users who know what they want to accomplish. The r
 1. **Assume competence.** The reader already knows the SDK basics. Don't re-explain setup or foundational concepts — link to the tutorial.
 2. **Action only.** Every sentence either tells the reader to do something or shows them code. No teaching, no theory, no background.
 3. **Name the task in the title.** "Authenticate Users", "Fetch Data", "Handle Errors" — not "Auth Guide" or "Data Overview". Task-based titles are also what search and `llms.txt` match on.
-4. **Address real-world complexity.** Unlike tutorials (which eliminate options), how-to guides should acknowledge variations: "If you're using a custom transport, pass it via..."
-5. **Start and end at meaningful points.** Don't repeat setup from Getting Started. Begin where the reader's real problem begins.
+4. **Address real-world complexity.** Unlike tutorials (which eliminate options), how-to guides should acknowledge variations with conditional imperatives: "If you're using a custom transport, pass it via..." A guide useful for exactly one narrow case and nothing adjacent is rarely worth having.
+5. **Start and end at meaningful points.** Don't repeat setup from Getting Started. Begin where the reader's real problem begins. Practical usability beats completeness.
+6. **Frame around the user's problem, not the machinery.** "Click Deploy to deploy" is a feature walkthrough addressed to no need. A real guide answers a human project — and may cut across several APIs or tools to do it; the user's goal defines its scope, not the product's feature list.
 
 ### Task Guide Template
 

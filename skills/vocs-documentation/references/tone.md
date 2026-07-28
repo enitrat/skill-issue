@@ -190,7 +190,7 @@ Explanation pages answer "Why does this work this way?" and "How does this fit t
 1. **Make connections.** Link concepts to each other. The reader is building a web of understanding, not learning isolated facts.
 2. **Provide context and history.** "This approach was chosen because..." / "Before v2, the SDK used X, but..."
 3. **Admit tradeoffs.** Don't be promotional. "This adds complexity but gives you control over..." is more trustworthy than "This is the best approach."
-4. **Stay bounded.** Resist including step-by-step instructions (that's a how-to guide) or parameter details (that's reference). Link instead.
+4. **Stay bounded.** Resist including step-by-step instructions (that's a how-to guide) or parameter details (that's reference). Link instead. Explanation tends to absorb other types; a *why* question and an implicit "About..." in front of the title keep it in bounds.
 5. **No code-forward requirement.** Unlike every other page type, explanation pages can be prose-heavy. Code illustrates concepts, not procedures.
 6. **Voice: declarative and reflective.** "The caching layer sits between..." not "You should understand that the caching layer..."
 7. **Diagram in Mermaid, not images.** A ```mermaid fence renders natively and survives to Markdown as readable text; a PNG of an architecture diagram is invisible to every agent reading your docs.
