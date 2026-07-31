@@ -122,8 +122,16 @@ format = "[$time]($style) "
 # --global read does not expand the include that pulls it in.
 command = "git config user.name"
 when = true
+# Without this the module forks git on every prompt in every directory, to print
+# an identity that only means anything inside a repo.
+require_repo = true
+# The identity is cosmetic. If the fork is slow, drop the segment for that
+# prompt rather than warning about it.
+ignore_timeout = true
 style = "fg:color_orange"
-format = "[\\[$output\\]]($style)"
+# Wrapped in a conditional group: until `git-id` has run there is no user.name
+# to read, and an unwrapped format renders the brackets around nothing.
+format = "([\\[$output\\]]($style))"
 
 [line_break]
 disabled = false
