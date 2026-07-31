@@ -1,0 +1,14 @@
+# Host-class flags. Repo data is shared by every machine, so these are the
+# defaults; a machine opts in by overriding the key in its own chezmoi config
+# (~/.config/chezmoi/chezmoi.toml), which is not tracked here:
+#
+#   [data]
+#   ephemeral_host = true
+#
+# Keeping the default false is the point -- a workaround for one throwaway box
+# never reaches a real machine, and nothing has to be cleaned up when that box
+# goes away. `grep -r ephemeral_host` lists everything currently scoped this way.
+
+# Snapshot/restore VM: filesystem replaced under a running session, hostname
+# regenerated at every boot. Selects .config/zsh/00-ephemeral-host.zsh.
+ephemeral_host = false

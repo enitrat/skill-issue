@@ -8,3 +8,9 @@
 {{ if ne .chezmoi.os "linux" }}
 *-linux.sh
 {{ end }}
+
+# Host-class file selection, same idea. Defaults live in .chezmoidata/host.toml;
+# a machine opts in from its own chezmoi config.
+{{ if not .ephemeral_host }}
+.config/zsh/00-ephemeral-host.zsh
+{{ end }}

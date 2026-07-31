@@ -15,9 +15,11 @@ dotfiles/            # chezmoi source state - dotfiles + provisioning scripts
   .chezmoidata/
     packages.toml    # THE package inventory; mise config + Brewfile derive from it
     vars.toml        # Version-pinned formulae referenced by path elsewhere
+    host.toml        # Host-class flags, all defaulting off (see Host Classes)
   .chezmoitemplates/
     lib.sh           # log/warn/have/mise_path, included by every script
-  .chezmoiignore     # Skips *-macos.sh / *-linux.sh on the other OS
+  .chezmoiignore     # Per-OS and per-host-class file selection
+  dot_zshenv         # -> ~/.zshenv; pre-.zshrc setup only, sourced by every zsh
   dot_zshrc          # -> ~/.zshrc; a loop over the fragments below
   dot_config/
     zsh/NN-*.zsh     # Shell config fragments, sourced in numeric order
@@ -69,6 +71,29 @@ Pick the prefix by re-run semantics, not by habit:
 Scripts start with `{{ template "lib.sh" . }}` and use `log`/`warn`/`have`.
 Never swallow an install failure with `|| echo skipping` — that is how a tool
 silently goes missing for months.
+
+## Host Classes
+
+A workaround that only one machine needs does not belong in the shared config.
+Scope it instead: add a flag to `.chezmoidata/host.toml` defaulting to `false`,
+put the whole workaround in one file, and select that file from
+`.chezmoiignore` — the same pattern the `-macos.sh` / `-linux.sh` suffixes use.
+The machine that needs it opts in from its own chezmoi config, which this repo
+does not track:
+
+```toml
+# ~/.config/chezmoi/chezmoi.toml
+[data]
+ephemeral_host = true
+```
+
+Two properties are the reason to bother: `grep -r <flag>` lists everything
+currently scoped that way, and retiring the machine needs no cleanup here,
+because the default was already off.
+
+Prefer this over a runtime `case $(hostname)` — hostnames on exactly these
+throwaway hosts tend not to be stable, which is usually the thing being worked
+around in the first place.
 
 ## Checks
 
