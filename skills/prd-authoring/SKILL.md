@@ -1,11 +1,6 @@
---
+---
 name: prd-authoring
-description: |
-Guide for writing clear, persuasive PRDs (Product Requirements Documents). Use when:
-(1) Creating new product or feature proposals
-(2) Reviewing PRDs for clarity and completeness
-(3) Helping others improve their PRD drafts
-Triggers: "write PRD", "create PRD", "product proposal", "feature proposal", "PRD feedback"
+description: Guide for writing and reviewing clear, persuasive Product Requirements Documents (PRDs), including product proposals, feature proposals, and PRD feedback.
 
 ---
 

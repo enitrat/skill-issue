@@ -32,20 +32,29 @@ chezmoi apply --dry-run --verbose
 
 ## Install Skills
 
+Install all skills declared by this repo:
+
 ```bash
-npx skills add enitrat/skill-issue
+make skill-install
 ```
 
-`npx skills` discovers every `SKILL.md` under `skills/` and installs into
-the target agent (Claude Code, Codex, Cursor, etc). See `npx skills --help`
-for `-a/--agent`, `-s/--skill`, and `-g/--global` flags.
+Useful commands:
+
+```bash
+make skill-update
+make skill-list
+```
+
+Personal skills live under `skills/<name>/`. Third-party skills are downloaded
+into `skills/external/<name>/` from [`skills-external.json`](skills-external.json).
+Both are then exposed by the normal `npx skills add enitrat/skill-issue` flow.
 
 ## How It Fits Together
 
 | Area | Source of truth | Applied by | Target |
 |------|-----------------|------------|--------|
 | Dotfiles and machine provisioning | `dotfiles/` | `chezmoi init --apply` / `chezmoi update` | `~/.zshrc`, `~/.config/starship.toml`, `~/.tmux.conf`, `~/.ssh/config`, `~/.config/homebrew/Brewfile`, installed tools |
-| Agent skills | `skills/` | `npx skills add enitrat/skill-issue` | Claude/Codex/Cursor skill directories |
+| Agent skills | `skills/` + `skills-external.json` | `make skill-install` | Claude/Codex/Cursor skill directories |
 | Claude rules | `rules/` | Local Claude configuration | `~/.claude/rules/` |
 | Subagents/prompts | `subagents/` | Local Claude/Codex configuration | `~/.claude/agents/`, `~/.codex/prompts/` |
 | Custom CLIs | `tools/` | Shell `PATH` from `dotfiles/dot_zshrc.tmpl` | Local commands |
@@ -106,7 +115,11 @@ dotfiles/                       # chezmoi source root
   dot_zshrc.tmpl
   dot_config/starship.toml
   run_once_*.sh.tmpl
-skills/                         # Agent skills, each with SKILL.md
+skills/                         # Agent skills, segmented by ownership
+  external/                     # Downloaded third-party skills
+skills-external.json            # Upstream references and download sources
+scripts/install-skills          # Installer used by `make skill-install`
+Makefile                        # Skill commands
 rules/                          # Claude Code behavior rules
 subagents/                      # Claude/Codex agent definitions and prompts
 tools/                          # Local executable CLIs
@@ -123,6 +136,13 @@ Add a skill:
    dependencies for Python helpers.
 3. Include only files the skill needs at runtime; keep caches and local agent
    outputs out of skill directories.
+
+Add a third-party skill:
+
+1. Add its upstream source URL, skill name, and maintainer to
+   `skills-external.json`.
+2. Keep the upstream URL specific to the skill directory when possible.
+3. Run `make skill-install` to download and install it.
 
 Add a machine setup step:
 

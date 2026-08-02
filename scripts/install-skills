@@ -1,0 +1,62 @@
+#!/usr/bin/env node
+
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const externalRoot = join(repoRoot, "skills", "external");
+const manifest = JSON.parse(
+  readFileSync(join(repoRoot, "skills-external.json"), "utf8"),
+);
+const argv = process.argv.slice(2);
+
+function run(args, cwd = repoRoot) {
+  const result = spawnSync("npx", ["skills", ...args], {
+    cwd,
+    stdio: "inherit",
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+mkdirSync(externalRoot, { recursive: true });
+
+for (const skill of manifest.skills ?? []) {
+  if (!skill.name || basename(skill.name) !== skill.name) {
+    throw new Error(`Invalid external skill name: ${skill.name}`);
+  }
+
+  const stagingRoot = mkdtempSync(join(tmpdir(), "skill-"));
+  try {
+    console.log(`\nFetching ${skill.name} from ${skill.source}`);
+    run(
+      [
+        "add",
+        skill.source,
+        "--skill",
+        skill.name,
+        "--agent",
+        "codex",
+        "--copy",
+        "--yes",
+      ],
+      stagingRoot,
+    );
+
+    const fetched = join(stagingRoot, ".agents", "skills", skill.name);
+    const destination = resolve(externalRoot, skill.name);
+    if (!destination.startsWith(`${resolve(externalRoot)}/`)) {
+      throw new Error(`External skill escapes catalog: ${skill.name}`);
+    }
+    rmSync(destination, { recursive: true, force: true });
+    cpSync(fetched, destination, { recursive: true });
+  } finally {
+    rmSync(stagingRoot, { recursive: true, force: true });
+  }
+}
+
+console.log("\nInstalling local and external skills");
+run(["add", ".", ...argv]);

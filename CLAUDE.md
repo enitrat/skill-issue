@@ -34,6 +34,10 @@ skills/              # Agent skills, one directory per skill
     SKILL.md
     scripts/         # Optional helper scripts, preferably uv inline deps
     references/      # Optional reference docs
+  external/          # Downloaded third-party skills
+skills-external.json # References to third-party skills; not authored here
+Makefile              # Skill install/update/list commands
+scripts/install-skills # Installer used by `make skill-install`
 
 rules/               # Claude Code behavior rules
 subagents/           # Source-of-truth subagent configs/prompts
@@ -116,9 +120,11 @@ unguarded looks fine in review and fails on someone's fresh machine.
 4. Do not commit generated caches or local agent outputs inside skill
    directories.
 
-Skills are installed via `npx skills add enitrat/skill-issue` (or
-`npx skills add <owner>/<repo> -a <agent> -s <skill>` for a subset). No
-manifest file is needed — the CLI walks the repo for `SKILL.md` files.
+Use `make skill-install` to download declared third-party sources into
+`skills/external/` and install all local skills. `make skill-update` repeats
+that download, so the repository remains a complete `npx skills add` source.
+Keep third-party skills under `skills/external/`; do not edit them as if they
+were locally authored.
 
 #### Skill Scripts Pattern
 
