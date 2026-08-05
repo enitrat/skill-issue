@@ -67,6 +67,10 @@ name = "pnpm"
 name = "github:abhinav/git-spice"
 [[mise]]
 name = "github:joshmedeski/sesh"
+# schpet/linear-cli. Homebrew has a tap for it, but the GitHub releases cover
+# macOS and Linux equally, so it stays cross-platform here. Binary is `linear`.
+[[mise]]
+name = "github:schpet/linear-cli"
 # Hosted on GitLab with no release binaries, so it has to be built.
 [[mise]]
 name = "cargo:mergiraf"
