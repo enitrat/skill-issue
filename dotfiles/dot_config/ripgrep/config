@@ -1,0 +1,22 @@
+# ~/.config/ripgrep/config — managed by chezmoi (skill-issue).
+#
+# Read only because RIPGREP_CONFIG_PATH points here (see .config/zsh/10-env).
+# One argument per line; no shell quoting, and no comments on an argument line.
+
+# Search dotfiles and dotdirs. .gitignore is still honoured, so this surfaces
+# .github/, .config/ and friends without dragging in .git/ or node_modules/.
+--hidden
+
+# ...with the one exception worth hardcoding: --hidden alone means every rg in
+# a non-git directory walks .git/ object files.
+--glob=!.git/
+
+# Lockfiles, minified bundles and checked-in binaries are never what a search
+# was for, and they are what makes an occasional rg take seconds.
+--max-filesize=5M
+
+# Group matches under a filename header rather than repeating the path on each
+# line. Only applies to a terminal; piped output is unchanged.
+--heading
+
+--smart-case

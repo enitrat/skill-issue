@@ -3,6 +3,11 @@ export LANG=en_US.UTF-8
 
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 
+# ripgrep reads no config file unless this points at one, and it is the only
+# way to set defaults that also apply to the rg invocations agents and editors
+# make. Exported from here rather than a shell function so those inherit it.
+export RIPGREP_CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/ripgrep/config"
+
 export BUN_INSTALL="$HOME/.bun"
 
 # Where `pnpm add -g` links binaries; unrelated to where pnpm itself lives.
