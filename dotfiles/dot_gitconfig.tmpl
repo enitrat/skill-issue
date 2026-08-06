@@ -9,6 +9,22 @@
 	excludesfile = ~/.gitignore.global
 	# Git defaults to ~/.config/git/attributes, so this has to be explicit.
 	attributesFile = ~/.gitattributes
+	# Native filesystem watcher (FSEvents on macOS, inotify-backed daemon on
+	# Linux). Turns `git status` in a large checkout from a full tree walk into
+	# a query against the daemon. untrackedCache is the other half: without it
+	# the watcher still has to re-scan for untracked files.
+	fsmonitor = true
+	untrackedCache = true
+
+[branch]
+	# Most-recently-committed first. `git branch` in a long-lived repo is
+	# otherwise an alphabetical list where everything current is in the middle.
+	sort = -committerdate
+
+[column]
+	# Lay branch/tag/status listings out in columns when the terminal is wide
+	# enough, instead of one item per line.
+	ui = auto
 
 [interactive]
 	diffFilter = delta --color-only
@@ -42,13 +58,32 @@
 	dft = -c diff.external=difft diff
 	dfts = -c diff.external=difft show
 	rebase-last-five = "!b=\"$(git rev-parse --abbrev-ref HEAD)\" ; h=\"$(git rev-parse $b)\" ; echo \"Current branch: $b $h\" ; c=\"$(git rev-parse $b~4)\" ; echo \"Recreating $b branch with initial commit $c ...\" ; git checkout --orphan new-start $c ; git commit -C $c ; git rebase --onto new-start $c $b ; git branch -d new-start ; git gc"
+	# Catch up to the default branch in one word. The branch name is read from
+	# origin/HEAD rather than assumed to be main -- that ref is written at clone
+	# time, and `git remote set-head origin -a` repairs it if it is missing.
+	fomo = "!f() { b=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); b=${b#origin/}; git fetch origin \"${b:=main}\" && git rebase \"origin/$b\" --autostash; }; f"
 
 [fetch]
 	prune = true
+	# Keep the commit-graph current on every fetch. Ancestry queries -- log
+	# --graph, merge-base, the "ahead/behind" the prompt asks for on each
+	# prompt -- read it instead of walking commits.
+	writeCommitGraph = true
 
 [rebase]
 	autosquash = true
 	autostash = true
+	# When a rebase moves commits, move every branch pointing into the rebased
+	# range with them. This is what makes a stack survive a rebase of its base
+	# -- the same bookkeeping git-spice does explicitly, applied to plain
+	# `git rebase` too.
+	updateRefs = true
+
+[rerere]
+	# Record how each conflict was resolved and replay it when the same
+	# conflict reappears. Rebasing a stack means meeting identical conflicts
+	# once per branch; this resolves all but the first automatically.
+	enabled = true
 
 [push]
 	autoSetupRemote = true
