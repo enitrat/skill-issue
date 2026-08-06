@@ -1,0 +1,69 @@
+#!/bin/bash
+# trash: move files to the trash instead of unlinking them
+
+set -uo pipefail
+
+VERSION="1.0.0"
+
+show_help() {
+    cat << 'EOF'
+NAME
+    trash - move files to the trash instead of unlinking them
+
+SYNOPSIS
+    trash <path>...
+    trash --help | -h
+    trash --version | -v
+
+DESCRIPTION
+    Moves each path to the platform trash -- ~/.Trash on macOS,
+    $XDG_DATA_HOME/Trash/files on Linux -- rather than removing it. The
+    difference from rm is that the result is recoverable, which is the whole
+    point: this exists to be the thing reached for by reflex, and by agents
+    running cleanup in a repo, when rm -rf would be unrecoverable.
+
+    Name collisions in the trash are resolved by appending a timestamp, so a
+    second `trash build` never overwrites the first one.
+
+    Not a full freedesktop.org trash implementation: there is no .trashinfo
+    metadata, so a Linux file manager will not offer to restore in place.
+    Restoring means moving the file back out by hand.
+
+EXAMPLES
+    trash target/
+    trash *.log
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) echo "trash $VERSION"; exit 0 ;;
+    "") show_help >&2; exit 1 ;;
+esac
+
+if [ "$(uname)" = "Darwin" ]; then
+    trash_dir="$HOME/.Trash"
+else
+    trash_dir="${XDG_DATA_HOME:-$HOME/.local/share}/Trash/files"
+fi
+
+mkdir -p "$trash_dir" || exit 1
+
+status=0
+for path in "$@"; do
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        printf 'trash: %s: no such file or directory\n' "$path" >&2
+        status=1
+        continue
+    fi
+
+    # basename strips trailing slashes, so `trash build/` lands as `build`
+    # rather than moving the contents into an existing directory of that name.
+    name="$(basename -- "$path")"
+    dest="$trash_dir/$name"
+    [ -e "$dest" ] && dest="$trash_dir/$name.$(date +%Y%m%dT%H%M%S)"
+
+    mv -- "$path" "$dest" || status=1
+done
+
+exit "$status"

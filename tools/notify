@@ -1,0 +1,51 @@
+#!/bin/bash
+# notify: send a desktop notification
+
+VERSION="1.0.0"
+
+show_help() {
+    cat << 'EOF'
+NAME
+    notify - send a desktop notification
+
+SYNOPSIS
+    notify <message> [title]
+    notify --help | -h
+    notify --version | -v
+
+DESCRIPTION
+    Sends a desktop notification through whatever the platform provides:
+    osascript on macOS, notify-send on Linux. Falls back to printing the
+    message, so a caller never has to guard on the platform.
+
+    A tool rather than a shell function because the callers that want it most
+    are not interactive shells -- long-running commands, provisioning scripts,
+    and agent hooks all get it from PATH.
+
+EXAMPLES
+    notify "tests passed"
+    notify "deploy finished" "CI"
+
+    # The usual shape: attach it to something slow.
+    cargo test; notify "cargo test: exit $?" "zama"
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) show_help; exit 0 ;;
+    -v|--version) echo "notify $VERSION"; exit 0 ;;
+    "") show_help >&2; exit 1 ;;
+esac
+
+message="$1"
+title="${2:-notify}"
+
+if command -v osascript >/dev/null 2>&1; then
+    # Quotes inside either string would end the AppleScript literal early.
+    escape() { printf '%s' "$1" | sed 's/[\\"]/\\&/g'; }
+    osascript -e "display notification \"$(escape "$message")\" with title \"$(escape "$title")\""
+elif command -v notify-send >/dev/null 2>&1; then
+    notify-send -- "$title" "$message"
+else
+    printf '[%s] %s\n' "$title" "$message"
+fi
