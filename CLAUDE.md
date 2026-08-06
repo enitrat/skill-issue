@@ -176,3 +176,25 @@ the repo checkout on PATH — it has been at three different paths already.
 
 Place human setup docs in `config/others/`. Keep docs concise and point to the
 executable source of truth rather than duplicating long install scripts.
+
+## Anti-Patterns
+
+Each of these looks reasonable in a diff and is wrong for a reason stated
+elsewhere in this file. Collected here because they are what actually gets
+tried.
+
+- Editing a file under `~` that chezmoi manages. The next apply overwrites it —
+  edit the source in `dotfiles/` instead.
+- Hand-editing `dot_config/mise/config.toml.tmpl` or the Brewfile to add a
+  package. Both are generated from `.chezmoidata/packages.toml`.
+- `run_once_` for anything driven by a data file. The state key is the script's
+  own hash, so editing the data will not re-trigger it — use `run_onchange_`
+  with the data hash embedded in a comment.
+- A template conditional that renders to `exit 0` on the other OS. Use the
+  `-macos.sh` / `-linux.sh` suffix and let `.chezmoiignore` filter it.
+- A runtime `case $(hostname)` for a one-machine workaround. Use a host-class
+  flag (see Host Classes).
+- Putting the repo checkout on PATH. Tools reach PATH as symlinks in
+  `~/.local/bin`.
+- Swallowing an install failure with `|| echo skipping`.
+- Editing anything under `skills/external/` as if it were authored here.
