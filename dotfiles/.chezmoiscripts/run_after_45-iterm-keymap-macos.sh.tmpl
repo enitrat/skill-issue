@@ -38,13 +38,10 @@ if ps -Ac -o comm= | grep -qx iTerm2; then
 fi
 
 python3 - "$PRESET" "$PREFS" <<'PY'
-import copy
 import plistlib
 import sys
 
 preset_path, prefs_path = sys.argv[1], sys.argv[2]
-hotkey_name = "Hotkey Window"
-hotkey_guid = "7A34A78E-9681-46AF-8897-3A992FEF3AE8"
 
 with open(preset_path, "rb") as f:
     preset = plistlib.load(f).get("Natural Text Editing")
@@ -62,51 +59,6 @@ if not profiles:
     sys.exit(0)
 
 changed = 0
-hotkey_profiles = [profile for profile in profiles if profile.get("Name") == hotkey_name]
-if hotkey_profiles:
-    hotkey = hotkey_profiles[0]
-    for duplicate in hotkey_profiles[1:]:
-        profiles.remove(duplicate)
-        changed += 1
-else:
-    default_guid = prefs.get("Default Bookmark Guid")
-    parent = next(
-        (profile for profile in profiles if profile.get("Guid") == default_guid),
-        profiles[0],
-    )
-    hotkey = copy.deepcopy(parent)
-    profiles.append(hotkey)
-    changed += 1
-
-hotkey_settings = {
-    "Name": hotkey_name,
-    "Guid": hotkey_guid,
-    "Default Bookmark": "No",
-    "Has Hotkey": True,
-    "HotKey Activated By Modifier": True,
-    # iTerm's value 2 is a double-tap of the right Option key.
-    "HotKey Modifier Activation": 2,
-    "HotKey Modifier Flags": 0,
-    "HotKey Characters": "",
-    "HotKey Characters Ignoring Modifiers": "",
-    "HotKey Key Code": 0,
-    "HotKey Alternate Shortcuts": [],
-    "HotKey Window Floats": True,
-    "HotKey Window AutoHides": True,
-    "HotKey Window Animates": False,
-    "HotKey Window Reopens On Activation": False,
-    "HotKey Window Dock Click Action": 0,
-    "Window Type": 9,
-    "Screen": -2,
-    "Space": -1,
-    "Rows": 30,
-    "Columns": 120,
-}
-for key, value in hotkey_settings.items():
-    if hotkey.get(key) != value:
-        hotkey[key] = value
-        changed += 1
-
 for profile in profiles:
     keymap = profile.get("Keyboard Map") or {}
     missing = {k: v for k, v in preset.items() if keymap.get(k) != v}
@@ -116,13 +68,13 @@ for profile in profiles:
         changed += 1
 
 if not changed:
-    print("[iterm-keymap] hotkey profile and key mappings already applied")
+    print("[iterm-keymap] key mappings already applied")
     sys.exit(0)
 
 with open(prefs_path, "wb") as f:
     plistlib.dump(prefs, f, fmt=plistlib.FMT_BINARY)
 
-print("[iterm-keymap] configured Natural Text Editing and hotkey profile")
+print(f"[iterm-keymap] Natural Text Editing applied to {changed} profile(s)")
 PY
 rc=$?
 

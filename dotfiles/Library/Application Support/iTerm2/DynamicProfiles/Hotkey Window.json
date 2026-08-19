@@ -1,0 +1,27 @@
+{
+  "Profiles": [
+    {
+      "Name": "Hotkey Window",
+      "Guid": "7A34A78E-9681-46AF-8897-3A992FEF3AE8",
+      "Dynamic Profile Parent Name": "Default",
+      "Has Hotkey": true,
+      "HotKey Activated By Modifier": true,
+      "HotKey Modifier Activation": 2,
+      "HotKey Modifier Flags": 0,
+      "HotKey Characters": "",
+      "HotKey Characters Ignoring Modifiers": "",
+      "HotKey Key Code": 0,
+      "HotKey Alternate Shortcuts": [],
+      "HotKey Window Floats": true,
+      "HotKey Window AutoHides": true,
+      "HotKey Window Animates": false,
+      "HotKey Window Reopens On Activation": false,
+      "HotKey Window Dock Click Action": 0,
+      "Window Type": 9,
+      "Screen": -2,
+      "Space": -1,
+      "Rows": 30,
+      "Columns": 120
+    }
+  ]
+}
