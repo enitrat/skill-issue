@@ -51,11 +51,18 @@ for f in dotfiles/dot_config/zsh/*.zsh dotfiles/dot_zshrc; do
 done
 
 # A generated file that renders but is malformed still breaks the apply.
-if command -v python3 >/dev/null 2>&1; then
+#
+# tomllib is 3.11+, and the python3 first on PATH during a fresh bootstrap is
+# macOS's own 3.9 -- before mise has installed anything. Probing for the module
+# instead of the interpreter keeps that case a skip with a reason, rather than
+# a traceback reported as a template failure.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import tomllib' 2>/dev/null; then
     check "mise config (toml parse)" "$(
         chezmoi cat -S . ~/.config/mise/config.toml 2>&1 |
         python3 -c 'import sys,tomllib; tomllib.loads(sys.stdin.read())' 2>&1
     )"
+else
+    echo "  - mise config (toml parse) skipped: python3 with tomllib (3.11+) not found"
 fi
 
 if [ "$fail" -eq 0 ]; then

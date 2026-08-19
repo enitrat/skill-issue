@@ -1,156 +1,246 @@
 #!/bin/bash
-# git-id: Simple git identity switcher
+# git-id: switch between git identities, including SSH commit signing
 
-VERSION="1.0.0"
+set -uo pipefail
+
+VERSION="2.0.0"
 CONFIG_DIR="$HOME/.git-identities"
 LOCAL_CONFIG="$HOME/.gitconfig.local"
+ALLOWED_SIGNERS="$HOME/.config/git/allowed_signers"
 
 show_help() {
     cat << 'EOF'
 NAME
-    git-id - switch between multiple git identities
+    git-id - switch between git identities, including commit signing
 
 SYNOPSIS
     git-id [<identity>]
-    git-id add <id> <name> <email> <ssh_key>
+    git-id setup
+    git-id add <id> <name> <email> [ssh_key] [signing_key]
     git-id rm <id>
     git-id list
+    git-id verify
     git-id --help | -h
     git-id --version | -v
 
 DESCRIPTION
-    git-id manages multiple git identities, switching both git user
-    configuration and SSH keys with a single command.
+    git-id manages multiple git identities, switching the git user
+    configuration, the SSH key used to reach a host, and the key used to
+    sign commits, with a single command.
 
-    When switching identities, git-id sets:
-      - user.name
-      - user.email
-      - core.sshCommand (to use the correct SSH key)
+    Switching an identity sets, in ~/.gitconfig.local:
+      - user.name, user.email
+      - core.sshCommand          (only when the identity names an ssh key)
+      - user.signingkey, gpg.format=ssh, commit.gpgsign, tag.gpgsign
+                                 (only when the identity names a signing key)
 
-    These are written to ~/.gitconfig.local rather than ~/.gitconfig,
-    because ~/.gitconfig is managed by chezmoi and would revert them on
-    the next apply. The managed config includes the local one last, so
-    values here win.
+    These land in ~/.gitconfig.local rather than ~/.gitconfig, because
+    ~/.gitconfig is managed by chezmoi and would revert them on the next
+    apply. The managed config includes the local one last, so values here
+    win.
+
+    Signing uses SSH keys, not GPG: git has supported gpg.format=ssh since
+    2.34, GitHub verifies it, and it reuses a key type you already have
+    rather than introducing a second keyring to manage and back up.
 
 COMMANDS
+    setup
+        Interactive first-run wizard. Reads your GitHub account through
+        `gh`, offers an email, creates or adopts an SSH signing key,
+        registers the identity, uploads the public key to GitHub as a
+        signing key, and verifies that a real commit comes out signed.
+        This is the command to run on a new machine.
+
     <identity>
-        Switch to the specified identity. The identity must exist in
+        Switch to that identity. Must exist as
         ~/.git-identities/<identity>.conf
 
     list (default)
-        List all available identities and show the current one.
-        This is the default when git-id is run without arguments.
+        List available identities and show the current one.
 
-    add <id> <name> <email> <ssh_key>
-        Create a new identity. The ssh_key should be the filename
-        of an existing key in ~/.ssh/ (e.g., id_work).
+    add <id> <name> <email> [ssh_key] [signing_key]
+        Register an identity non-interactively. ssh_key and signing_key
+        are filenames in ~/.ssh (e.g. id_work), and both are optional:
+        omit ssh_key when the host is reached over HTTPS, and omit
+        signing_key when commits from this identity are unsigned. Pass
+        "" to skip ssh_key while still setting signing_key.
 
     rm <id>, remove <id>
         Remove an identity configuration.
 
-FILES
-    ~/.git-identities/
-        Directory containing identity configuration files.
+    verify
+        Report the active identity and prove signing works, by making a
+        signed commit in a throwaway repository and validating it.
 
+FILES
     ~/.git-identities/<id>.conf
-        Identity configuration file with format:
             GIT_NAME="Your Name"
-            GIT_EMAIL="your@email.com"
-            SSH_KEY="id_keyname"
+            GIT_EMAIL="you@example.com"
+            SSH_KEY="id_keyname"          # optional
+            SIGNING_KEY="id_keyname"      # optional
+
+    ~/.config/git/allowed_signers
+        Maps emails to signing keys so `git log --show-signature` can
+        verify locally. GitHub's verified badge does not depend on it.
 
 EXAMPLES
-    List identities and show current:
-        $ git-id
+    First run on a new machine:
+        $ git-id setup
 
-    Switch to work identity:
+    Switch identity:
         $ git-id work
 
-    Add a new identity:
-        $ git-id add work "John Doe" john@company.com id_work
-
-    Remove an identity:
-        $ git-id rm work
-
-SETUP NEW SSH KEY
-    1. Generate key:
-        $ ssh-keygen -t ed25519 -f ~/.ssh/id_mykey -C "email@example.com"
-
-    2. Add public key to GitHub:
-        $ cat ~/.ssh/id_mykey.pub
-        Copy output to: GitHub > Settings > SSH Keys > New SSH Key
-
-    3. Register identity:
-        $ git-id add mykey "My Name" email@example.com id_mykey
+    Register a work identity that signs:
+        $ git-id add work "Jane Doe" jane@corp.com id_work id_work
 
 SEE ALSO
-    git-config(1), ssh-keygen(1)
-
+    git-config(1), ssh-keygen(1), gh-auth(1)
 EOF
 }
 
-show_version() {
-    echo "git-id version $VERSION"
+log()  { printf '%s\n' "$1"; }
+warn() { printf '%s\n' "$1" >&2; }
+die()  { printf 'git-id: %s\n' "$1" >&2; exit 1; }
+
+require_tty() {
+    [ -t 0 ] || die "$1 is interactive and needs a terminal."
 }
 
+# Prompt with a default. Empty answer keeps the default.
+ask() {
+    local prompt="$1" default="${2-}" reply
+    if [ -n "$default" ]; then
+        read -r -p "$prompt [$default]: " reply
+        printf '%s' "${reply:-$default}"
+    else
+        read -r -p "$prompt: " reply
+        printf '%s' "$reply"
+    fi
+}
+
+confirm() {
+    local reply
+    read -r -p "$1 [y/N]: " reply
+    case "$reply" in [yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
+}
+
+# ---------------------------------------------------------------- reporting
+
 show_current() {
-    # Not --global: identity lives in ~/.gitconfig.local, which the managed
-    # ~/.gitconfig includes. A --global read does not expand includes.
-    local name email key
+    # Not --global: the identity lives in ~/.gitconfig.local, which the managed
+    # ~/.gitconfig includes, and a --global read does not expand includes.
+    local name email key signing fmt sign
     name=$(git config user.name)
     email=$(git config user.email)
-    key=$(git config core.sshCommand | grep -oE 'id_[a-zA-Z0-9]+')
-    echo "Current: $name <$email> [key: $key]"
+    key=$(git config core.sshCommand | grep -oE 'id_[a-zA-Z0-9_-]+')
+    signing=$(git config user.signingkey)
+    fmt=$(git config gpg.format)
+    sign=$(git config commit.gpgsign)
+
+    if [ -z "$name" ] && [ -z "$email" ]; then
+        log "Current: (none set -- run 'git-id setup')"
+        return
+    fi
+
+    log "Current: $name <$email>${key:+ [ssh: $key]}"
+    if [ "$sign" = "true" ] && [ -n "$signing" ]; then
+        log "Signing: on (${fmt:-openpgp}) $signing"
+    else
+        log "Signing: off"
+    fi
 }
 
 list_identities() {
-    echo "Available identities:"
+    local found=0 f id
+    log "Available identities:"
     for f in "$CONFIG_DIR"/*.conf; do
         [ -f "$f" ] || continue
-        local id
+        found=1
         id=$(basename "$f" .conf)
         # shellcheck source=/dev/null
-        source "$f"
-        echo "  $id: $GIT_NAME <$GIT_EMAIL>"
+        ( source "$f"
+          printf '  %-12s %s <%s>%s\n' \
+              "$id" "$GIT_NAME" "$GIT_EMAIL" \
+              "${SIGNING_KEY:+  [signs with $SIGNING_KEY]}" )
     done
-    echo ""
+    [ "$found" -eq 1 ] || log "  (none yet -- run 'git-id setup')"
+    log ""
     show_current
 }
+
+# ---------------------------------------------------------------- switching
 
 switch_identity() {
     local id="$1"
     local conf="$CONFIG_DIR/$id.conf"
 
     if [ ! -f "$conf" ]; then
-        echo "Error: Identity '$id' not found"
-        local available=()
+        warn "Error: identity '$id' not found"
+        local available=() f
         for f in "$CONFIG_DIR"/*.conf; do
             [ -f "$f" ] && available+=("$(basename "$f" .conf)")
         done
-        echo "Available: ${available[*]}"
+        if [ ${#available[@]} -gt 0 ]; then
+            warn "Available: ${available[*]}"
+        else
+            warn "No identities registered yet. Run 'git-id setup'."
+        fi
         return 1
     fi
 
+    SSH_KEY="" SIGNING_KEY=""
     # shellcheck source=/dev/null
     source "$conf"
 
-    # Written to ~/.gitconfig.local, not ~/.gitconfig: the latter is managed by
-    # chezmoi and would revert these on the next apply.
     git config --file "$LOCAL_CONFIG" user.name "$GIT_NAME"
     git config --file "$LOCAL_CONFIG" user.email "$GIT_EMAIL"
-    git config --file "$LOCAL_CONFIG" core.sshCommand "ssh -i ~/.ssh/$SSH_KEY"
 
-    echo "Switched to: $GIT_NAME <$GIT_EMAIL> [key: $SSH_KEY]"
+    # Unset rather than leave stale: switching from an identity that pinned a
+    # key to one that does not must not keep using the old key.
+    if [ -n "$SSH_KEY" ]; then
+        git config --file "$LOCAL_CONFIG" core.sshCommand "ssh -i ~/.ssh/$SSH_KEY"
+    else
+        git config --file "$LOCAL_CONFIG" --unset core.sshCommand 2>/dev/null
+    fi
+
+    if [ -n "$SIGNING_KEY" ]; then
+        git config --file "$LOCAL_CONFIG" user.signingkey "$HOME/.ssh/$SIGNING_KEY.pub"
+        git config --file "$LOCAL_CONFIG" gpg.format ssh
+        git config --file "$LOCAL_CONFIG" commit.gpgsign true
+        git config --file "$LOCAL_CONFIG" tag.gpgsign true
+        git config --file "$LOCAL_CONFIG" gpg.ssh.allowedSignersFile "$ALLOWED_SIGNERS"
+        register_allowed_signer "$GIT_EMAIL" "$HOME/.ssh/$SIGNING_KEY.pub"
+    else
+        git config --file "$LOCAL_CONFIG" --unset user.signingkey 2>/dev/null
+        git config --file "$LOCAL_CONFIG" --unset gpg.format 2>/dev/null
+        git config --file "$LOCAL_CONFIG" commit.gpgsign false
+        git config --file "$LOCAL_CONFIG" tag.gpgsign false
+    fi
+
+    log "Switched to: $GIT_NAME <$GIT_EMAIL>${SSH_KEY:+ [ssh: $SSH_KEY]}${SIGNING_KEY:+ [signs: $SIGNING_KEY]}"
 }
 
-add_identity() {
-    local id="$1"
-    local name="$2"
-    local email="$3"
-    local key="$4"
+# Append "<email> namespaces=git <keytype> <keydata>" once per key.
+register_allowed_signer() {
+    local email="$1" pubkey="$2" keyline
+    [ -f "$pubkey" ] || return 0
+    keyline=$(cut -d' ' -f1,2 < "$pubkey")
 
-    if [ -z "$id" ] || [ -z "$name" ] || [ -z "$email" ] || [ -z "$key" ]; then
-        echo "Usage: git-id add <id> <name> <email> <ssh_key_name>"
-        echo "Example: git-id add work 'John Doe' john@work.com id_work"
+    mkdir -p "$(dirname "$ALLOWED_SIGNERS")"
+    touch "$ALLOWED_SIGNERS"
+    if ! grep -qF "$keyline" "$ALLOWED_SIGNERS" 2>/dev/null; then
+        printf '%s namespaces="git" %s\n' "$email" "$keyline" >> "$ALLOWED_SIGNERS"
+    fi
+}
+
+# ---------------------------------------------------------------- registry
+
+add_identity() {
+    local id="${1-}" name="${2-}" email="${3-}" key="${4-}" signing="${5-}"
+
+    if [ -z "$id" ] || [ -z "$name" ] || [ -z "$email" ]; then
+        warn "Usage: git-id add <id> <name> <email> [ssh_key] [signing_key]"
+        warn "Example: git-id add work 'Jane Doe' jane@corp.com '' id_work"
         return 1
     fi
 
@@ -159,39 +249,205 @@ add_identity() {
 GIT_NAME="$name"
 GIT_EMAIL="$email"
 SSH_KEY="$key"
+SIGNING_KEY="$signing"
 EOF
-    echo "Added identity: $id"
+    log "Added identity: $id"
 }
 
 remove_identity() {
-    local id="$1"
-    local conf="$CONFIG_DIR/$id.conf"
-
-    if [ -f "$conf" ]; then
+    local id="${1-}" conf="$CONFIG_DIR/${1-}.conf"
+    if [ -n "$id" ] && [ -f "$conf" ]; then
         rm "$conf"
-        echo "Removed identity: $id"
+        log "Removed identity: $id"
     else
-        echo "Identity not found: $id"
+        warn "Identity not found: $id"
+        return 1
     fi
 }
 
-case "$1" in
-    -h|--help)
-        show_help
-        ;;
-    -v|--version)
-        show_version
-        ;;
-    ""|list)
-        list_identities
-        ;;
-    add)
-        add_identity "$2" "$3" "$4" "$5"
-        ;;
-    rm|remove)
-        remove_identity "$2"
-        ;;
-    *)
-        switch_identity "$1"
-        ;;
+# ---------------------------------------------------------------- verify
+
+verify_signing() {
+    show_current
+    log ""
+
+    local signing
+    signing=$(git config user.signingkey)
+    if [ -z "$signing" ] || [ "$(git config commit.gpgsign)" != "true" ]; then
+        warn "Signing is not configured. Run 'git-id setup'."
+        return 1
+    fi
+    [ -f "$signing" ] || die "signing key $signing does not exist"
+
+    # A real commit in a throwaway repo. Checking `git config` only proves the
+    # settings were written; it does not prove git can actually reach the key
+    # and produce a signature, which is the thing that breaks in practice.
+    local tmp
+    tmp=$(mktemp -d) || die "could not create a temporary directory"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp'" RETURN
+
+    (
+        cd "$tmp" || exit 1
+        git init -q .
+        git config user.name "$(git config user.name)"
+        git config user.email "$(git config user.email)"
+        git config gpg.format ssh
+        git config user.signingkey "$signing"
+        git config gpg.ssh.allowedSignersFile "$ALLOWED_SIGNERS"
+        echo test > f
+        git add f
+        git commit -qS -m "signing test" >/dev/null 2>&1
+    ) || { warn "Could not create a signed commit."; return 1; }
+
+    local status
+    status=$(git -C "$tmp" log --format='%G?' -1)
+    case "$status" in
+        G) log "Verified: commit signed and signature validates against $ALLOWED_SIGNERS" ;;
+        U) log "Signed, but the key is untrusted locally (not in $ALLOWED_SIGNERS)." ;;
+        N) warn "Commit was NOT signed."; return 1 ;;
+        *) warn "Unexpected signature status: $status"; return 1 ;;
+    esac
+}
+
+# ---------------------------------------------------------------- setup
+
+gh_bin() { command -v gh >/dev/null 2>&1; }
+
+setup_interactive() {
+    require_tty "setup"
+
+    log "git-id setup"
+    log "============"
+    log ""
+
+    # --- identity from GitHub ------------------------------------------
+    local gh_login="" gh_name="" gh_uid="" noreply=""
+    if gh_bin && gh auth status >/dev/null 2>&1; then
+        gh_login=$(gh api user --jq .login 2>/dev/null)
+        gh_name=$(gh api user --jq '.name // ""' 2>/dev/null)
+        gh_uid=$(gh api user --jq .id 2>/dev/null)
+        if [ -n "$gh_login" ]; then
+            log "GitHub account: $gh_login${gh_name:+ ($gh_name)}"
+            noreply="${gh_uid}+${gh_login}@users.noreply.github.com"
+        fi
+    else
+        warn "gh is not authenticated -- continuing without GitHub defaults."
+        warn "Run 'gh auth login' first if you want them."
+    fi
+    log ""
+
+    local id name email
+    id=$(ask "Identity name (a label, e.g. personal / work)" "${gh_login:-default}")
+    [ -n "$id" ] || die "identity name cannot be empty"
+    name=$(ask "Commit author name" "${gh_name:-$gh_login}")
+    [ -n "$name" ] || die "author name cannot be empty"
+
+    log ""
+    log "Commit email:"
+    [ -n "$noreply" ] && log "  1) $noreply  (GitHub no-reply, keeps your address private)"
+    log "  2) enter another address"
+    log ""
+    local choice
+    if [ -n "$noreply" ]; then
+        choice=$(ask "Choose" "1")
+    else
+        choice=2
+    fi
+    if [ "$choice" = "1" ] && [ -n "$noreply" ]; then
+        email="$noreply"
+    else
+        email=$(ask "Email")
+    fi
+    [ -n "$email" ] || die "email cannot be empty"
+
+    # --- signing key ----------------------------------------------------
+    log ""
+    log "Signing key (SSH):"
+    local -a existing=()
+    local pub
+    for pub in "$HOME"/.ssh/*.pub; do
+        [ -f "$pub" ] && existing+=("$(basename "$pub" .pub)")
+    done
+
+    local signing_key="" i=1
+    if [ ${#existing[@]} -gt 0 ]; then
+        local k
+        for k in "${existing[@]}"; do
+            log "  $i) reuse ~/.ssh/$k"
+            i=$((i + 1))
+        done
+    fi
+    log "  $i) generate a new ed25519 key"
+    log "  0) skip signing"
+    log ""
+    local pick
+    pick=$(ask "Choose" "$i")
+
+    if [ "$pick" = "0" ]; then
+        signing_key=""
+    elif [ "$pick" = "$i" ]; then
+        signing_key=$(ask "New key filename in ~/.ssh" "id_${id}_signing")
+        if [ -f "$HOME/.ssh/$signing_key" ]; then
+            die "$HOME/.ssh/$signing_key already exists; re-run and reuse it instead"
+        fi
+        log ""
+        log "ssh-keygen will ask for a passphrase. An empty one is accepted, but"
+        log "your ~/.ssh/config sets AddKeysToAgent and UseKeychain, so a"
+        log "passphrase is stored in the macOS keychain and asked for once."
+        log ""
+        ssh-keygen -t ed25519 -C "$email" -f "$HOME/.ssh/$signing_key" \
+            || die "ssh-keygen failed"
+    else
+        local idx=$((pick - 1))
+        if [ "$idx" -lt 0 ] || [ "$idx" -ge ${#existing[@]} ]; then
+            die "invalid choice: $pick"
+        fi
+        signing_key="${existing[$idx]}"
+    fi
+
+    # --- register and activate -----------------------------------------
+    log ""
+    add_identity "$id" "$name" "$email" "" "$signing_key" || return 1
+    switch_identity "$id" || return 1
+
+    # --- publish to GitHub ----------------------------------------------
+    if [ -n "$signing_key" ] && gh_bin && gh auth status >/dev/null 2>&1; then
+        log ""
+        log "GitHub shows commits as Verified only once the public key is"
+        log "registered there as a *signing* key. An authentication key with the"
+        log "same bytes does not count; the two lists are separate."
+        log ""
+        if confirm "Upload ~/.ssh/$signing_key.pub to GitHub as a signing key?"; then
+            if ! gh api user/ssh_signing_keys >/dev/null 2>&1; then
+                log "Your gh token lacks the admin:ssh_signing_key scope; requesting it."
+                gh auth refresh -h github.com -s admin:ssh_signing_key \
+                    || warn "Scope refresh failed; upload the key by hand."
+            fi
+            if gh ssh-key add "$HOME/.ssh/$signing_key.pub" \
+                   --type signing --title "$(hostname -s) ($id)" 2>&1; then
+                log "Uploaded."
+            else
+                warn "Upload failed. Add it by hand at:"
+                warn "  https://github.com/settings/ssh/new  (key type: Signing Key)"
+            fi
+        fi
+    fi
+
+    # --- prove it works --------------------------------------------------
+    log ""
+    verify_signing
+}
+
+# ---------------------------------------------------------------- dispatch
+
+case "${1-}" in
+    -h|--help)    show_help ;;
+    -v|--version) echo "git-id version $VERSION" ;;
+    ""|list)      list_identities ;;
+    setup)        setup_interactive ;;
+    verify)       verify_signing ;;
+    add)          add_identity "${2-}" "${3-}" "${4-}" "${5-}" "${6-}" ;;
+    rm|remove)    remove_identity "${2-}" ;;
+    *)            switch_identity "$1" ;;
 esac

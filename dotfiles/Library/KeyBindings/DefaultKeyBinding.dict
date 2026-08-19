@@ -1,0 +1,35 @@
+/* ~/Library/KeyBindings/DefaultKeyBinding.dict — managed by chezmoi
+ * (skill-issue). Edits here are overwritten.
+ *
+ * Read once at launch by every Cocoa text view, which makes this the closest
+ * thing macOS has to a global text-editing keymap. Its reach is exactly that,
+ * though: terminals stream bytes to a shell rather than hosting a text view,
+ * so nothing here affects iTerm. That half lives in the iTerm key mappings set
+ * by run_after_45-iterm-keymap-macos.sh.
+ *
+ * Modifier syntax: ~ Option, @ Command, $ Shift, ^ Control.
+ * \U007F is Delete (backspace), \UF728 is forward-delete.
+ *
+ * Two of the three bindings below merely restate an AppKit default. That is
+ * deliberate: the defaults are undocumented and have changed across releases,
+ * and the point of this file is that the behaviour is owned here rather than
+ * inherited and hoped for.
+ */
+{
+    /* Option+Delete — delete the word before the cursor. AppKit default. */
+    "~\U007F" = "deleteWordBackward:";
+
+    /* Option+ForwardDelete — delete the word after it. AppKit default. */
+    "~\UF728" = "deleteWordForward:";
+
+    /* Command+Delete — delete the WHOLE line, not just back to its start.
+     *
+     * This one is a real change. AppKit binds Cmd+Delete to
+     * deleteToBeginningOfLine: alone, so text to the right of the cursor
+     * survives. zsh's ^U is kill-whole-line, and having the same chord mean
+     * two different things depending on which window has focus is the actual
+     * annoyance. Running both actions in sequence clears the line from either
+     * side of the cursor, matching the terminal.
+     */
+    "@\U007F" = ( "deleteToBeginningOfLine:", "deleteToEndOfLine:" );
+}

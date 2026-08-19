@@ -16,16 +16,12 @@ export PNPM_HOME="$HOME/Library/pnpm"
 {{- else }}
 export PNPM_HOME="$HOME/.local/share/pnpm"
 {{- end }}
-{{- if eq .chezmoi.os "darwin" }}
 
-[ -d "$HOME/Library/Android/sdk" ] && export ANDROID_HOME="$HOME/Library/Android/sdk"
-export JAVA_HOME=$(/usr/libexec/java_home 2>/dev/null)
-
-# Cairo-Native builds against Homebrew LLVM rather than Apple clang. These are
-# global, so they reach every compile in the shell -- move them into a project
-# mise.toml if that ever causes an unrelated build to pick the wrong libc++.
-if [ -d "/opt/homebrew/opt/{{ .llvm }}" ]; then
-    export LDFLAGS="-L/opt/homebrew/opt/{{ .llvm }}/lib"
-    export CPPFLAGS="-I/opt/homebrew/opt/{{ .llvm }}/include"
-fi
-{{- end }}
+# Deliberately absent: LDFLAGS/CPPFLAGS pointing at Homebrew LLVM. They were
+# here for Cairo-Native, but exporting them globally puts a second libc++ ahead
+# of the SDK's for every compile in the shell, not just that one project. If a
+# project needs them, they belong in its own mise.toml.
+#
+# Also absent: ANDROID_HOME and JAVA_HOME. Nothing here uses a JDK or the
+# Android SDK, and `JAVA_HOME=$(/usr/libexec/java_home)` forked a subprocess on
+# every shell start only to export an empty string when no JDK is installed.

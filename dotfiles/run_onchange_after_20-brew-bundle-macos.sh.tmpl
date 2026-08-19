@@ -5,21 +5,33 @@ set -uo pipefail
 # Re-runs whenever the cask/formula inventory changes.
 # casks:    {{ .cask | toJson | sha256sum }}
 # formulae: {{ .formula | toJson | sha256sum }}
-# pinned:   {{ list .gcc .llvm | toJson | sha256sum }}
 
-if ! have brew; then
-    warn brew-bundle "Homebrew not on PATH, skipping"
-    exit 0
+# Both of these used to `exit 0`, which is why no cask was ever installed on a
+# fresh machine: brew is installed earlier in this same apply and so is not yet
+# on PATH here, the script reported success, and run_onchange recorded that
+# success against the current package hash -- so it never retried. Exactly the
+# silent-skip failure the repo forbids. Resolve the path properly, and if brew
+# really is missing, fail the apply instead of blessing it.
+if ! brew_path; then
+    warn brew-bundle "Homebrew not found at /opt/homebrew or /usr/local."
+    warn brew-bundle "10-bootstrap-macos should have installed it -- check its"
+    warn brew-bundle "output above, then re-run 'chezmoi apply'."
+    exit 1
 fi
 
 BREWFILE="$HOME/.config/homebrew/Brewfile"
 if [ ! -f "$BREWFILE" ]; then
-    warn brew-bundle "$BREWFILE not found, skipping"
-    exit 0
+    warn brew-bundle "$BREWFILE not found. chezmoi writes it before this script"
+    warn brew-bundle "runs, so its absence means the apply is in a broken state."
+    exit 1
 fi
 
 log brew-bundle "applying $BREWFILE"
-brew bundle --file "$BREWFILE" || warn brew-bundle "some entries failed, continuing"
+# Not `|| warn ... continuing`: run_onchange would record the failed run as
+# done and never retry it, which is the same trap as the skips above. Exiting
+# non-zero leaves the state unrecorded, so the next apply tries again.
+brew_bundle_failed=0
+brew bundle --file "$BREWFILE" || brew_bundle_failed=1
 
 # OrbStack is the container runtime, so Docker Desktop must go. It has shipped
 # under both cask names over time. The `docker` CLI *formula* is left alone.
@@ -34,4 +46,12 @@ done
 if [ -d "/Applications/Docker.app" ]; then
     warn docker "/Applications/Docker.app is present but not Homebrew-managed."
     warn docker "Quit it and drag it to the Trash to avoid conflicting with OrbStack."
+fi
+
+# Last, so the Docker cleanup above still runs on a partial Brewfile failure.
+if [ "$brew_bundle_failed" -ne 0 ]; then
+    warn brew-bundle "one or more Brewfile entries failed to install."
+    warn brew-bundle "Fix the entry in dotfiles/.chezmoidata/packages.toml, or"
+    warn brew-bundle "comment it out, then re-run 'chezmoi apply'."
+    exit 1
 fi

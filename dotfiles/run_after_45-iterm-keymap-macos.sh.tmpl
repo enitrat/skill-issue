@@ -1,0 +1,106 @@
+#!/bin/bash
+set -uo pipefail
+{{ template "lib.sh" . }}
+
+# Makes Option+Delete kill a word and Cmd+Delete kill a line inside iTerm, so
+# the terminal agrees with the rest of macOS. The Cocoa half of that lives in
+# Library/KeyBindings/DefaultKeyBinding.dict; this is the half that file cannot
+# reach, because a terminal streams bytes to a shell rather than hosting an
+# NSTextView.
+#
+# The mappings are not hand-written. iTerm ships a "Natural Text Editing"
+# preset in its own bundle containing precisely these bindings -- ESC DEL for
+# Option+Delete, 0x15 (^U) for Cmd+Delete, plus word-wise arrows -- so this
+# copies that preset rather than restating undocumented Action enum values that
+# would silently rot when iTerm changes them.
+#
+# Note the missing zsh half is already present: `bindkey` shows ^[^? bound to
+# backward-kill-word and ^U to kill-whole-line by default. Only the escape
+# sequences were never being sent.
+#
+# run_after_ and not run_once_: iTerm rewrites its entire preferences file when
+# it quits, so an edit made while it is running is discarded. That makes this a
+# thing to reconcile on every apply rather than a one-shot -- skipping when
+# iTerm is up is normal, not a failure, and the next apply picks it up.
+
+PRESET="/Applications/iTerm.app/Contents/Resources/PresetKeyMappings.plist"
+PREFS="$HOME/Library/Preferences/com.googlecode.iterm2.plist"
+
+if [ ! -d "/Applications/iTerm.app" ]; then
+    log iterm-keymap "iTerm not installed, nothing to configure"
+    exit 0
+fi
+
+if [ ! -f "$PRESET" ]; then
+    warn iterm-keymap "no preset file at $PRESET -- iTerm layout changed?"
+    exit 1
+fi
+
+if [ ! -f "$PREFS" ]; then
+    log iterm-keymap "iTerm has no preferences yet; launch it once, then re-apply"
+    exit 0
+fi
+
+# Not pgrep. On current macOS, reading another process's argv needs an
+# entitlement the shell does not have, so `pgrep iTerm2` -- with or without
+# -x/-f -- silently reports nothing while iTerm is plainly running, and the
+# guard below would never fire. `ps -Ac` reports the kernel accounting name
+# instead, which needs no such privilege.
+if ps -Ac -o comm= | grep -qx iTerm2; then
+    log iterm-keymap "iTerm is running -- it overwrites its prefs on quit, so"
+    log iterm-keymap "  skipping. Either quit iTerm and re-run 'chezmoi apply',"
+    log iterm-keymap "  or set it now: Settings > Profiles > Keys > Presets... >"
+    log iterm-keymap "  Natural Text Editing"
+    exit 0
+fi
+
+python3 - "$PRESET" "$PREFS" <<'PY'
+import plistlib
+import sys
+
+preset_path, prefs_path = sys.argv[1], sys.argv[2]
+
+with open(preset_path, "rb") as f:
+    preset = plistlib.load(f).get("Natural Text Editing")
+
+if not preset:
+    print("[iterm-keymap] preset 'Natural Text Editing' not found", file=sys.stderr)
+    sys.exit(1)
+
+with open(prefs_path, "rb") as f:
+    prefs = plistlib.load(f)
+
+profiles = prefs.get("New Bookmarks") or []
+if not profiles:
+    print("[iterm-keymap] no profiles in prefs, nothing to do")
+    sys.exit(0)
+
+changed = 0
+for profile in profiles:
+    keymap = profile.get("Keyboard Map") or {}
+    # Merge rather than replace: a profile may carry bindings of its own, and
+    # only the keys this preset defines should be taken over.
+    missing = {k: v for k, v in preset.items() if keymap.get(k) != v}
+    if missing:
+        keymap.update(missing)
+        profile["Keyboard Map"] = keymap
+        changed += 1
+
+if not changed:
+    print("[iterm-keymap] already applied to all profiles")
+    sys.exit(0)
+
+with open(prefs_path, "wb") as f:
+    plistlib.dump(prefs, f, fmt=plistlib.FMT_BINARY)
+
+print(f"[iterm-keymap] Natural Text Editing applied to {changed} profile(s)")
+PY
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+    warn iterm-keymap "failed to update $PREFS"
+    exit 1
+fi
+
+# cfprefsd caches the file it just had read out from under it.
+killall cfprefsd 2>/dev/null || true

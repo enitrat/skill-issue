@@ -3,16 +3,16 @@ typeset -U path
 # Repo tools reach PATH as symlinks in ~/.local/bin, placed by the link-tools
 # provisioning script -- the repo checkout itself is never on PATH, so moving
 # or renaming the clone cannot break them.
+# Entries removed rather than left guarded: Homebrew LLVM (see 10-env), plus
+# openjdk, libpq, texlive and the Android SDK. Each was a `(N)` glob that
+# silently expanded to nothing on a machine without them, so they read as free
+# -- but they are toolchains this setup no longer provisions, and an unused
+# PATH entry is a thing to re-evaluate on every read. Re-add alongside the
+# package that needs it.
 path=(
     "$HOME/.local/bin"
 {{- if eq .chezmoi.os "darwin" }}
     "/opt/homebrew/bin"
-    "/opt/homebrew/opt/{{ .llvm }}/bin"(N)
-    "/opt/homebrew/opt/openjdk/bin"(N)
-    "/opt/homebrew/opt/libpq/bin"(N)
-    ${ANDROID_HOME:+$ANDROID_HOME/emulator}
-    ${ANDROID_HOME:+$ANDROID_HOME/platform-tools}
-    /usr/local/texlive/*/bin/universal-darwin(N)
 {{- end }}
     "$BUN_INSTALL/bin"
     "$HOME/go/bin"

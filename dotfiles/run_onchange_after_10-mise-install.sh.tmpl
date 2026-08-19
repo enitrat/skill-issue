@@ -10,6 +10,13 @@ set -uo pipefail
 
 mise_path
 
+# macOS sets a 256 soft file-descriptor limit (`launchctl limit maxfiles`), and
+# every terminal launched from the GUI inherits it. mise's npm backend unpacks
+# hundreds of packages at once -- @bitwarden/cli alone is 213 -- and dies with
+# "Too many open files (os error 24)" long before finishing. The hard limit is
+# unlimited, so raising the soft one needs no privileges and no sudo.
+ulimit -n 8192 2>/dev/null || true
+
 if ! have mise; then
     warn mise "not on PATH, cannot install tools. Open a new shell and re-run 'chezmoi apply'."
     exit 1

@@ -14,7 +14,6 @@ subagent prompts, Claude rules, and small local tools.
 dotfiles/            # chezmoi source state - dotfiles + provisioning scripts
   .chezmoidata/
     packages.toml    # THE package inventory; mise config + Brewfile derive from it
-    vars.toml        # Version-pinned formulae referenced by path elsewhere
     host.toml        # Host-class flags, all defaulting off (see Host Classes)
   .chezmoitemplates/
     lib.sh           # log/warn/have/mise_path, included by every script

@@ -48,9 +48,15 @@
 # Syntax-aware merge driver. Resolves conflicts that are textually overlapping
 # but semantically independent, e.g. two imports added to the same line range.
 # Falls back to git's own merge for languages it does not parse.
+#
+# Routed through the git-mergiraf wrapper rather than the binary directly.
+# ~/.gitattributes applies this driver to every path, and git has no fallback
+# when a driver is missing -- if the cargo build of mergiraf ever fails, a bare
+# `mergiraf` here turns every merge in every repo into a conflict that silently
+# discards the other side. The wrapper degrades to git's own three-way merge.
 [merge "mergiraf"]
 	name = mergiraf
-	driver = mergiraf merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L
+	driver = git-mergiraf %O %A %B %S %X %Y %P %L
 
 [alias]
 	# Structural diff, opt-in per invocation -- difftastic is far slower than

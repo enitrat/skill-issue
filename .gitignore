@@ -1,2 +1,6 @@
 .agents/
 skills-lock.json
+
+# Claude Code's per-session scratch cache. It was tracked at one point, which
+# committed absolute paths from whichever checkout happened to generate it.
+.claude/tsc-cache/

@@ -1,0 +1,72 @@
+#!/bin/bash
+# git-mergiraf: run mergiraf as a git merge driver, or git's own merge if it is
+# not installed.
+#
+# ~/.gitattributes routes every path through `merge=mergiraf`. Pointing that
+# driver straight at the `mergiraf` binary makes the blanket rule unsafe: the
+# binary comes from `cargo:mergiraf`, which is built from source and can fail,
+# and git has no fallback when a configured driver is missing. The driver exits
+# 127, git records a conflict, and -- verified, not theorised -- the working
+# file is left holding only the current side, with no conflict markers and the
+# other branch's change dropped. A reflexive `git add` there loses work.
+#
+# Git offers no "fall back to the default driver" mechanism, so spell it out:
+# `git merge-file` IS the default three-way merge, exit status and all.
+
+set -uo pipefail
+
+VERSION="1.0.0"
+
+show_help() {
+    cat << 'EOF'
+NAME
+    git-mergiraf - syntax-aware git merge driver with a safe fallback
+
+SYNOPSIS
+    git-mergiraf <ancestor> <current> <other> <base-marker> \
+                 <current-marker> <other-marker> <path> <marker-size>
+
+DESCRIPTION
+    Invoked by git, not by hand. Wire it up with:
+
+        [merge "mergiraf"]
+            name = mergiraf
+            driver = git-mergiraf %O %A %B %S %X %Y %P %L
+
+    Uses mergiraf when it is on PATH, otherwise performs git's standard
+    three-way merge. Either way the result is written to <current> and the
+    exit status follows git's convention: 0 clean, non-zero on conflict.
+
+OPTIONS
+    -h, --help       show this help
+    -v, --version    show version
+EOF
+}
+
+case "${1-}" in
+    -h|--help)    show_help; exit 0 ;;
+    -v|--version) echo "git-mergiraf $VERSION"; exit 0 ;;
+esac
+
+if [ "$#" -lt 8 ]; then
+    echo "git-mergiraf: expected 8 arguments from git, got $#" >&2
+    echo "see 'git-mergiraf --help'" >&2
+    exit 2
+fi
+
+ancestor=$1 current=$2 other=$3
+base_marker=$4 current_marker=$5 other_marker=$6
+path=$7 marker_size=$8
+
+if command -v mergiraf >/dev/null 2>&1; then
+    exec mergiraf merge --git "$ancestor" "$current" "$other" \
+        -s "$base_marker" -x "$current_marker" -y "$other_marker" \
+        -p "$path" -l "$marker_size"
+fi
+
+# Argument order differs from the driver's: merge-file takes current, ancestor,
+# other, and writes the merged result back into the first.
+exec git merge-file \
+    --marker-size="$marker_size" \
+    -L "$current_marker" -L "$base_marker" -L "$other_marker" \
+    "$current" "$ancestor" "$other"

@@ -25,9 +25,14 @@ else
         -c "Add :AppleSymbolicHotKeys:64:value:parameters: integer 1048576" \
         "$PLIST"
 fi
+# Neither kill actually rebinds anything: the WindowServer reads the symbolic
+# hotkey table once, at login, and holds it for the session. They are here to
+# flush the preference caches so the new value is what the next session reads.
+# Saying "released" unqualified was wrong -- Cmd+Space keeps opening Spotlight
+# until you log out, and the obvious conclusion is that the script failed.
 killall SystemUIServer 2>/dev/null || true
 killall cfprefsd 2>/dev/null || true
-log spotlight-hotkey "Cmd+Space released"
+log spotlight-hotkey "Cmd+Space released (takes effect on next login)"
 
 # --- Menu bar --------------------------------------------------------------
 # Tighten spacing so icons stop sliding behind the notch. These keys must go
@@ -36,6 +41,13 @@ log spotlight-hotkey "Cmd+Space released"
 defaults write com.apple.controlcenter "NSStatusItemSpacing" -int 6
 defaults write com.apple.controlcenter "NSStatusItem2ExtensionMinPadding" -int 6
 log menu-bar "spacing set to 6 (takes effect on next login)"
+
+# --- Scroll direction ------------------------------------------------------
+# Off = content moves the way the fingers do NOT, i.e. the pre-"natural"
+# behaviour. There is no trackpad-only key for this: it is one global setting,
+# so an external mouse inverts with it.
+defaults write NSGlobalDomain com.apple.swipescrolldirection -bool false
+log scroll-direction "natural scrolling disabled (takes effect on next login)"
 
 # --- Window tabbing --------------------------------------------------------
 # Prefer tabs over new windows. Electron editors ignore AppleWindowTabbingMode,

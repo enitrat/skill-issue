@@ -9,7 +9,9 @@ alias ....='cd ../../..'
 alias -- -='cd -'
 
 alias gp='git push origin $(git branch --show-current)'
-alias gclean='git branch --merged | grep -v "main\|master\|\*" | xargs -n 1 git branch -d'
+# gclean is a function now, and lives in 60-functions.zsh with the other git
+# helpers that have to unalias an oh-my-zsh definition before defining
+# themselves.
 
 alias df='df -h'
 alias du='du -h'
@@ -28,14 +30,7 @@ alias zf='z $(zoxide query -l | fzf)'
 alias please='sudo $(fc -ln -1)'
 
 alias starkup="curl --proto '=https' --tlsv1.2 -sSf https://sh.starkup.sh | sh -s --"
-{{- if eq .chezmoi.os "darwin" }}
 
-# Homebrew GCC, only when it is actually installed -- otherwise these would
-# shadow Apple clang with a binary that does not exist.
-if command -v {{ .gcc | replace "@" "-" }} >/dev/null 2>&1; then
-    alias gcc="{{ .gcc | replace "@" "-" }}"
-    alias cc="{{ .gcc | replace "@" "-" }}"
-    alias g++="{{ .gcc | replace "@" "-" | replace "gcc" "g++" }}"
-    alias c++="{{ .gcc | replace "@" "-" | replace "gcc" "g++" }}"
-fi
-{{- end }}
+# The gcc/cc/g++/c++ aliases that shadowed Apple clang with Homebrew GCC are
+# gone along with the gcc@15 formula. Nothing here needs a second compiler, and
+# aliasing `cc` machine-wide changes what every build script resolves.

@@ -4,6 +4,8 @@
 {{ if ne .chezmoi.os "darwin" }}
 *-macos.sh
 .config/homebrew/Brewfile
+# Cocoa-only: ~/Library is a macOS path and no Linux app reads this keymap.
+Library
 {{ end }}
 {{ if ne .chezmoi.os "linux" }}
 *-linux.sh

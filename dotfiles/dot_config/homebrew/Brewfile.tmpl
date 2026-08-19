@@ -8,6 +8,4 @@ cask "{{ .name }}"{{ if hasKey . "note" }}  # {{ .note }}{{ end }}
 {{ end }}
 {{ range .formula -}}
 brew "{{ .name }}"{{ if hasKey . "note" }}  # {{ .note }}{{ end }}
-{{ end }}
-brew "{{ .gcc }}"
-brew "{{ .llvm }}"   # for Cairo-Native
+{{ end -}}

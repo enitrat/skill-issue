@@ -1,6 +1,0 @@
-# Homebrew formulae whose install path is referenced elsewhere (compiler flags,
-# PATH entries, shell aliases), so the version has to be pinned in one place.
-# The Brewfile is generated from these too -- they are not in packages.toml
-# because a bare name there would leave the paths free to drift.
-llvm = "llvm@19"
-gcc = "gcc@15"

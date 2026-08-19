@@ -6,38 +6,85 @@ set -uo pipefail
 # install for itself: mise comes from brew, and anything building from source
 # needs clang. Both must land before the rest of the run_once_before_* chain.
 
-if ! have brew; then
+# brew_path, not `have brew`: Homebrew's prefix is not on PATH in chezmoi's
+# script shell, so `have brew` is false on a machine that already has it. That
+# is not only a first-run concern -- this script is run_once keyed on its own
+# hash, so any edit to it re-runs the whole thing, and the bare test would send
+# it off to reinstall Homebrew over a working install.
+if ! brew_path; then
     log brew "not installed, running the official installer"
+
+    # Homebrew needs root exactly once, to create and chown its prefix. The
+    # installer picks its sudo mode from the environment: NONINTERACTIVE=1
+    # makes it use `sudo -n`, which never prompts and so fails outright unless
+    # a sudo timestamp is already cached. That is not a hypothetical -- it is
+    # the default state of a fresh machine, and it aborts with the misleading
+    # "Need sudo access on macOS (e.g. the user X needs to be an
+    # Administrator)!" even when X is an administrator.
+    #
+    # So prime the timestamp ourselves, where a prompt is expected and the
+    # reason for it is on screen. NONINTERACTIVE stays set afterwards to skip
+    # the installer's "Press RETURN to continue" gate; its privileged work all
+    # happens up front, well inside the timestamp's five minutes.
+    if ! sudo -n true 2>/dev/null; then
+        if [ ! -t 0 ]; then
+            warn brew "Homebrew needs sudo to create its prefix, and there is no TTY to ask on."
+            warn brew "Run 'sudo -v' in a terminal, then re-run 'chezmoi apply'."
+            exit 1
+        fi
+        log brew "requesting sudo -- Homebrew needs root to create /opt/homebrew"
+        sudo -v || { warn brew "sudo declined, cannot install Homebrew"; exit 1; }
+    fi
+
     NONINTERACTIVE=1 /bin/bash -c \
         "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
         || { warn brew "install failed"; exit 1; }
+
+    # The installer does not touch the PATH of this shell, so resolve again.
+    brew_path || { warn brew "installed, but no brew found at a known prefix"; exit 1; }
 fi
 
-# The installer does not touch the PATH of this shell.
-for prefix in /opt/homebrew /usr/local; do
-    [ -x "$prefix/bin/brew" ] && eval "$("$prefix/bin/brew" shellenv)" && break
-done
 log brew "$(brew --version | head -1)"
 
 # A CLT install that races a background macOS Software Update lands with a
-# corrupted libc++ -- usr/include/c++/v1 keeps only `__cxx_version` -- while
+# corrupted libc++ -- the c++/v1 dir keeps only `__cxx_version` -- while
 # `xcode-select -p` still reports success. Check the headers, not the receipt.
-CLT_CXX_HEADERS="/Library/Developer/CommandLineTools/usr/include/c++/v1"
+#
+# Where those headers live moved. Through macOS 15 they sat directly under
+# CommandLineTools/usr/include/c++/v1; from macOS 26 that path is gone and the
+# headers ship inside the SDK. Checking only the old path reports a perfectly
+# healthy toolchain as corrupt and then recommends `rm -rf`ing it, so probe
+# both and treat either as the real thing.
+clt_cxx_headers() {
+    local dir
+    for dir in \
+        "$(xcrun --show-sdk-path 2>/dev/null)/usr/include/c++/v1" \
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1" \
+        "/Library/Developer/CommandLineTools/usr/include/c++/v1"; do
+        [ -d "$dir" ] && { printf '%s\n' "$dir"; return 0; }
+    done
+    return 1
+}
 
 clt_healthy() {
     xcode-select -p >/dev/null 2>&1 || return 1
-    [ -d "$CLT_CXX_HEADERS" ] || return 1
+
+    local headers count
+    headers=$(clt_cxx_headers) || return 1
     # A healthy install has ~190 headers; 5 is a floor that catches the
     # corruption without tracking the exact count across macOS versions.
-    local count
-    count=$(find "$CLT_CXX_HEADERS" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
+    count=$(find "$headers" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
     [ "${count:-0}" -gt 5 ]
 }
 
 if clt_healthy; then
     log xcode-clt "installed and healthy"
 elif xcode-select -p >/dev/null 2>&1; then
-    warn xcode-clt "C++ headers are incomplete, likely an interrupted install."
+    warn xcode-clt "C++ headers are missing or incomplete, likely an interrupted install."
+    warn xcode-clt "Confirm before deleting anything -- compiling a file that includes"
+    warn xcode-clt "<vector> is the check that matters:"
+    warn xcode-clt "  echo '#include <vector>' | clang++ -x c++ -fsyntax-only -"
+    warn xcode-clt "If that fails, reinstall:"
     warn xcode-clt "  sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install"
 else
     log xcode-clt "requesting install (GUI dialog - click through manually)"
