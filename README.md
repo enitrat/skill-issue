@@ -49,6 +49,11 @@ Personal skills live under `skills/<name>/`. Third-party skills are downloaded
 into `skills/external/<name>/` from [`skills-external.json`](skills-external.json).
 Both are then exposed by the normal `npx skills add enitrat/skill-issue` flow.
 
+The bundled launchers from the Telegram, agent-conversation, and Slack skills
+are also linked through `tools/`, so `chezmoi apply` exposes `tg`, `agent-conv`,
+and `slack-user` on `$PATH`. Their credentials remain outside the repository in
+the locations documented by each skill.
+
 ## How It Fits Together
 
 | Area | Source of truth | Applied by | Target |

@@ -1,0 +1,616 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "click==8.3.3",
+#     "telethon==1.44.0",
+# ]
+# ///
+"""Read and send your own Telegram chats from the terminal via your user account.
+
+This is the Telegram counterpart to the WhatsApp / iMessage / Slack personal
+CLIs: list conversations, read a thread, search, send. It logs in as **your
+Telegram user account** over MTProto (Telethon), so it sees exactly what your
+account sees — not a bot, which could only read chats it was explicitly added to.
+
+Two facts drive the design and the security posture:
+
+* **The session file is a credential.** After `login`, Telethon stores an
+  authenticated session at `~/.config/tg-cli/session.session`. Anyone with that
+  file (or your `api_id`/`api_hash`) can act as your account, so both are written
+  `chmod 600` inside a `chmod 700` config dir, and kept out of the repo. Revoke a
+  leaked session anytime from the Telegram app: Settings → Devices → terminate.
+* **api_id / api_hash are per-developer, not per-account.** They come from
+  my.telegram.org (My Applications) and identify the client app, not you. They
+  are read from `~/.config/tg-cli/config.json` or the `TG_API_ID` / `TG_API_HASH`
+  environment variables; `login` prompts for them once and stores them.
+
+Reading is non-destructive. Only `send --yes` writes anything (an outgoing
+message) — an outbound action the calling agent must confirm with the user first.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import stat
+import sys
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+import click
+from telethon.sync import TelegramClient
+from telethon import utils
+from telethon.tl import functions, types
+
+logging.basicConfig(
+    level=logging.WARNING, format="%(levelname)s: %(message)s", stream=sys.stderr
+)
+# Telethon logs connection churn at INFO; keep the CLI's stderr clean.
+logging.getLogger("telethon").setLevel(logging.ERROR)
+log = logging.getLogger("tg")
+
+# Config dir is overridable so tests (and throwaway logins) never touch the real
+# session. The session basename is passed to Telethon, which appends `.session`.
+CONFIG_DIR = Path(os.environ.get("TG_CONFIG_DIR", Path.home() / ".config" / "tg-cli"))
+CONFIG_FILE = CONFIG_DIR / "config.json"
+SESSION_BASE = CONFIG_DIR / "session"
+
+
+def _secure_dir() -> None:
+    """Ensure the config dir exists and is private (0700)."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.chmod(stat.S_IRWXU)  # rwx for owner only
+
+
+def _lock_down(path: Path) -> None:
+    """Restrict a credential file to owner read/write (0600)."""
+    if path.exists():
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _load_credentials() -> tuple[int, str]:
+    """Return (api_id, api_hash) from env or the stored config, else fail cleanly.
+
+    Environment wins over the file so a caller can inject creds without writing
+    them to disk. Missing creds are a login-time concern, so the message points
+    at `tg login` rather than dumping setup steps on every command.
+    """
+    env_id, env_hash = os.environ.get("TG_API_ID"), os.environ.get("TG_API_HASH")
+    if env_id and env_hash:
+        return int(env_id), env_hash
+    if CONFIG_FILE.exists():
+        cfg = json.loads(CONFIG_FILE.read_text())
+        return int(cfg["api_id"]), cfg["api_hash"]
+    raise click.ClickException(
+        "No API credentials found. Run `tg login` and provide the api_id / "
+        "api_hash from https://my.telegram.org (API development tools)."
+    )
+
+
+@contextmanager
+def _client():
+    """Yield a connected, authorized client; raise if not logged in.
+
+    Kept separate from `login` because every other command must fail fast with a
+    clear instruction rather than dropping into an interactive auth prompt.
+    """
+    api_id, api_hash = _load_credentials()
+    # Telethon opens (and may create) the session SQLite file eagerly, so the
+    # config dir must exist even before a successful login.
+    _secure_dir()
+    client = TelegramClient(str(SESSION_BASE), api_id, api_hash)
+    client.connect()
+    try:
+        if not client.is_user_authorized():
+            raise click.ClickException("Not logged in. Run `tg login` first.")
+        yield client
+    finally:
+        client.disconnect()
+
+
+def _kind(dialog) -> str:
+    if dialog.is_user:
+        return "dm"
+    if dialog.is_channel and not dialog.is_group:
+        return "channel"
+    return "group"
+
+
+def _resolve_dialog(client, query: str, match: int):
+    """Return the single dialog best matching QUERY, or exit with a picker.
+
+    Matching is a case-insensitive substring test over the dialog name — the same
+    fuzzy behaviour as the iMessage/WhatsApp CLIs. Ambiguity is surfaced (numbered
+    list on stderr) rather than guessed, so an agent never silently targets the
+    wrong chat; `--match N` disambiguates.
+    """
+    needle = query.lower()
+    candidates = [d for d in client.get_dialogs() if needle in (d.name or "").lower()]
+    if not candidates:
+        raise click.ClickException(f"No conversation matches {query!r}.")
+    if len(candidates) > 1 and not match:
+        click.echo(f"Multiple matches for {query!r} — pick with --match N:", err=True)
+        for i, d in enumerate(candidates[:20], 1):
+            click.echo(f"  {i}. {d.name}  [{_kind(d)}]", err=True)
+        raise SystemExit(1)
+    return candidates[match - 1 if match else 0]
+
+
+def _local(dt) -> str:
+    """Format a Telegram (UTC-aware) datetime in local time."""
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M") if dt else ""
+
+
+def _parse_since(value: str | None) -> datetime | None:
+    """Parse an ISO date/datetime cutoff; naive values are read as UTC."""
+    if not value:
+        return None
+    dt = datetime.fromisoformat(value)
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _dialog_filters(client):
+    """Return the account's chat folders (DialogFilter objects)."""
+    res = client(functions.messages.GetDialogFiltersRequest())
+    # Newer Telethon wraps the list in a DialogFilters container; older returns it raw.
+    return res.filters if hasattr(res, "filters") else res
+
+
+def _folder_title(f) -> str:
+    # The title is a TextWithEntities in recent layers, a plain str before that.
+    return f.title.text if hasattr(f.title, "text") else f.title
+
+
+def _folder_peers(f) -> list:
+    """Peers explicitly placed in a folder (pinned + included), de-duplicated."""
+    return list(getattr(f, "pinned_peers", []) or []) + list(
+        getattr(f, "include_peers", []) or []
+    )
+
+
+def _peer_id(peer) -> int | None:
+    """Canonical numeric id for a peer/entity, comparable across InputPeer forms."""
+    try:
+        return utils.get_peer_id(peer)
+    except Exception:
+        return None
+
+
+def _resolve_folder(client, name: str):
+    """Return the single **editable** folder matching NAME, else exit.
+
+    Only plain `DialogFilter` folders are editable here: `DialogFilterDefault`
+    (All chats) has no membership, and `DialogFilterChatlist` (a shared/invite
+    folder) is not owned by this account so its peer list can't be rewritten.
+    """
+    needle = name.lower()
+    chosen = next(
+        (
+            f
+            for f in _dialog_filters(client)
+            if isinstance(f, types.DialogFilter)
+            and needle in (_folder_title(f) or "").lower()
+        ),
+        None,
+    )
+    if chosen is None:
+        raise click.ClickException(f"No editable folder matches {name!r}.")
+    return chosen
+
+
+def _msg_text(msg) -> str:
+    if msg.message:
+        return msg.message
+    if msg.media:
+        return f"[{type(msg.media).__name__}]"
+    if msg.action:
+        return f"[{type(msg.action).__name__}]"
+    return ""
+
+
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+def cli() -> None:
+    """Read and send your own Telegram chats (user account, via Telethon)."""
+
+
+@cli.command()
+@click.option("--api-id", "api_id", default=None, help="Telegram api_id (else prompted/stored).")
+@click.option("--api-hash", "api_hash", default=None, help="Telegram api_hash (else prompted/stored).")
+def login(api_id: str | None, api_hash: str | None) -> None:
+    """Authenticate this device as your Telegram user account (one-time).
+
+    Prompts for the api_id / api_hash (from https://my.telegram.org) if not
+    already stored, then runs Telethon's interactive login: it asks for your
+    phone number, the login code Telegram sends you, and your 2FA password if one
+    is set. The resulting session is stored `chmod 600` in the config dir.
+    """
+    _secure_dir()
+    if not (api_id and api_hash):
+        stored = json.loads(CONFIG_FILE.read_text()) if CONFIG_FILE.exists() else {}
+        api_id = api_id or (str(stored["api_id"]) if "api_id" in stored else None)
+        api_hash = api_hash or stored.get("api_hash")
+    # hide_input keeps every secret off the screen (and thus out of terminal
+    # scrollback): the api_hash, phone, and login code are as sensitive as the
+    # 2FA password, so none of them are ever echoed.
+    if not api_id:
+        api_id = click.prompt("api_id (from my.telegram.org)", hide_input=True)
+    if not api_hash:
+        api_hash = click.prompt("api_hash (from my.telegram.org)", hide_input=True)
+
+    CONFIG_FILE.write_text(json.dumps({"api_id": int(api_id), "api_hash": api_hash}))
+    _lock_down(CONFIG_FILE)
+
+    client = TelegramClient(str(SESSION_BASE), int(api_id), api_hash)
+    # Drive Telethon's interactive login through masked prompts rather than its
+    # default plaintext input() for phone and code.
+    client.start(
+        phone=lambda: click.prompt("phone number (e.g. +33…)", hide_input=True),
+        code_callback=lambda: click.prompt("login code Telegram sent you", hide_input=True),
+        password=lambda: click.prompt("2FA password", hide_input=True),
+    )
+    _lock_down(Path(str(SESSION_BASE) + ".session"))
+    me = client.get_me()
+    client.disconnect()
+    click.echo(f"Logged in as {utils.get_display_name(me)} (@{me.username or me.id}).")
+
+
+@cli.command()
+def logout() -> None:
+    """Revoke this session server-side and delete the local session file."""
+    with _client() as client:
+        client.log_out()
+    session = Path(str(SESSION_BASE) + ".session")
+    session.unlink(missing_ok=True)
+    click.echo("Logged out; session revoked and local session file removed.")
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def whoami(as_json: bool) -> None:
+    """Show the logged-in account."""
+    with _client() as client:
+        me = client.get_me()
+    info = {
+        "id": me.id,
+        "name": utils.get_display_name(me),
+        "username": me.username,
+        "phone": me.phone,
+    }
+    click.echo(json.dumps(info, ensure_ascii=False) if as_json else
+               f"{info['name']} (@{info['username'] or info['id']})")
+
+
+@cli.command()
+@click.option("--limit", default=30, help="Number of conversations to list.")
+@click.option("--not-in-folder", "not_in_folder", default=None, help="Only list chats NOT already in the folder matching this name — spot newly-joined partner groups sitting outside a curated folder.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def chats(limit: int, not_in_folder: str | None, as_json: bool) -> None:
+    """List conversations, most recent first.
+
+    With --not-in-folder, restrict the listing to chats that are NOT members of
+    the named folder. A folder-scoped digest job uses this to catch partner
+    groups you were just added to that never landed in the curated folder (and
+    would otherwise be missed by a folder-only sweep).
+    """
+    with _client() as client:
+        dialogs = client.get_dialogs(limit=limit)
+        exclude: set = set()
+        if not_in_folder:
+            exclude = {_peer_id(p) for p in _folder_peers(_resolve_folder(client, not_in_folder))}
+        out = [
+            {
+                "last": _local(d.date),
+                "name": d.name,
+                "kind": _kind(d),
+                "unread": d.unread_count,
+            }
+            for d in dialogs
+            if not not_in_folder or _peer_id(d.entity) not in exclude
+        ]
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False))
+        return
+    for c in out:
+        badge = f" ({c['unread']} unread)" if c["unread"] else ""
+        click.echo(f"{c['last']}  [{c['kind']}] {c['name']}{badge}")
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def folders(as_json: bool) -> None:
+    """List chat folders and how many chats each explicitly contains."""
+    with _client() as client:
+        out = [
+            {"title": _folder_title(f), "chats": len(_folder_peers(f))}
+            for f in _dialog_filters(client)
+            if not isinstance(f, types.DialogFilterDefault)
+        ]
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False))
+        return
+    for f in out:
+        click.echo(f"{f['chats']:>3}  {f['title']}")
+
+
+@cli.command(name="folder-add")
+@click.argument("folder")
+@click.argument("query")
+@click.option("--match", default=0, help="Pick the Nth matching chat when QUERY is ambiguous (1-based).")
+@click.option("--yes", is_flag=True, help="Actually apply. Without it, prints a dry-run only.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def folder_add(folder: str, query: str, match: int, yes: bool, as_json: bool) -> None:
+    """Add the chat matching QUERY into the chat folder matching FOLDER.
+
+    A write to your account's folder layout (never to any chat's messages), so it
+    defaults to a dry-run; pass --yes to apply. Idempotent — a chat already in the
+    folder is left untouched. Use it to fold a newly-joined partner group into a
+    curated folder so a folder-scoped digest stops missing it.
+    """
+    with _client() as client:
+        chosen = _resolve_folder(client, folder)
+        dialog = _resolve_dialog(client, query, match)
+        target_id = _peer_id(dialog.entity)
+        existing = {_peer_id(p) for p in _folder_peers(chosen)}
+        result = {
+            "folder": _folder_title(chosen),
+            "chat": dialog.name,
+            "already_in_folder": target_id in existing,
+            "added": False,
+        }
+        if result["already_in_folder"]:
+            click.echo(json.dumps(result, ensure_ascii=False) if as_json else
+                       f"{dialog.name!r} is already in folder {result['folder']!r}.")
+            return
+        if not yes:
+            result["dry_run"] = True
+            if as_json:
+                click.echo(json.dumps(result, ensure_ascii=False))
+            else:
+                click.echo("DRY-RUN (folder unchanged). Re-run with --yes to apply.")
+                click.echo(f"  add: {dialog.name!r}  →  folder {result['folder']!r}")
+            return
+        # Append the new peer to include_peers and push the whole filter back.
+        chosen.include_peers = list(getattr(chosen, "include_peers", []) or []) + [
+            client.get_input_entity(dialog.entity)
+        ]
+        client(functions.messages.UpdateDialogFilterRequest(id=chosen.id, filter=chosen))
+        result["added"] = True
+        click.echo(json.dumps(result, ensure_ascii=False) if as_json else
+                   f"Added {dialog.name!r} to folder {result['folder']!r}.")
+
+
+@cli.command()
+@click.argument("name")
+@click.option("--since", default=None, help="ISO date/datetime; keep only messages at/after it (UTC if no tz).")
+@click.option("--limit", default=100, help="Max messages fetched per chat before the --since filter.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def folder(name: str, since: str | None, limit: int, as_json: bool) -> None:
+    """Read recent messages from every chat in the folder matching NAME.
+
+    Windowed batch read across a whole folder — the building block a digest job
+    uses: enumerate the folder's chats, fetch each chat's recent messages, and
+    keep those at/after --since. Each message carries an `epoch` field so a
+    caller can filter precisely against its own cutoff.
+    """
+    cutoff = _parse_since(since)
+    needle = name.lower()
+    with _client() as client:
+        chosen = next(
+            (
+                f
+                for f in _dialog_filters(client)
+                if not isinstance(f, types.DialogFilterDefault)
+                and needle in (_folder_title(f) or "").lower()
+            ),
+            None,
+        )
+        if chosen is None:
+            raise click.ClickException(f"No folder matches {name!r}.")
+        out = []
+        for peer in _folder_peers(chosen):
+            entity = client.get_entity(peer)
+            messages = client.get_messages(entity, limit=limit)
+            rows = [
+                {
+                    "ts": _local(m.date),
+                    "epoch": int(m.date.timestamp()),
+                    "sender": "me" if m.out else utils.get_display_name(m.sender)
+                    or str(m.sender_id),
+                    "text": _msg_text(m),
+                }
+                for m in reversed(messages)
+                if cutoff is None or m.date >= cutoff
+            ]
+            out.append({"chat": utils.get_display_name(entity), "messages": rows})
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False))
+        return
+    for chat in out:
+        if not chat["messages"]:
+            continue
+        click.echo(f"\n# {chat['chat']} — {len(chat['messages'])} messages")
+        for m in chat["messages"]:
+            click.echo(f"{m['ts']}  {m['sender']}: {m['text']}")
+
+
+@cli.command()
+@click.argument("query")
+@click.option("--limit", default=50, help="Number of messages to show.")
+@click.option("--match", default=0, help="Pick the Nth match when ambiguous (1-based).")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def read(query: str, limit: int, match: int, as_json: bool) -> None:
+    """Read messages from the chat best matching QUERY (name substring)."""
+    with _client() as client:
+        dialog = _resolve_dialog(client, query, match)
+        messages = client.get_messages(dialog.entity, limit=limit)
+        out = [
+            {
+                "ts": _local(m.date),
+                "sender": "me" if m.out else utils.get_display_name(m.sender)
+                or str(m.sender_id),
+                "text": _msg_text(m),
+            }
+            for m in reversed(messages)
+        ]
+        title = dialog.name
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False))
+        return
+    click.echo(f"# {title} — {len(out)} messages\n")
+    for m in out:
+        click.echo(f"{m['ts']}  {m['sender']}: {m['text']}")
+
+
+@cli.command()
+@click.argument("text")
+@click.option("--chat", "chat_query", default=None, help="Restrict to the chat matching this name (reliable, single request).")
+@click.option("--match", default=0, help="Pick the Nth chat match when --chat is ambiguous.")
+@click.option("--limit", default=50, help="Number of matches to show.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def search(text: str, chat_query: str | None, match: int, limit: int, as_json: bool) -> None:
+    """Search messages containing TEXT.
+
+    With --chat, searches that one conversation (one API call, exact). Without it,
+    runs a best-effort global search across all your chats via Telegram's global
+    search endpoint.
+    """
+    with _client() as client:
+        if chat_query:
+            dialog = _resolve_dialog(client, chat_query, match)
+            messages = client.get_messages(dialog.entity, search=text, limit=limit)
+            out = [
+                {"ts": _local(m.date), "chat": dialog.name, "text": _msg_text(m)}
+                for m in messages
+            ]
+        else:
+            result = client(
+                functions.messages.SearchGlobalRequest(
+                    q=text,
+                    filter=types.InputMessagesFilterEmpty(),
+                    min_date=None,
+                    max_date=None,
+                    offset_rate=0,
+                    offset_peer=types.InputPeerEmpty(),
+                    offset_id=0,
+                    limit=limit,
+                )
+            )
+            # The response bundles the peers referenced by the hits; map raw ids
+            # to names so each result shows which chat it came from.
+            names = {u.id: utils.get_display_name(u) for u in result.users}
+            names.update({c.id: utils.get_display_name(c) for c in result.chats})
+
+            def _peer_name(peer) -> str:
+                for attr in ("user_id", "chat_id", "channel_id"):
+                    pid = getattr(peer, attr, None)
+                    if pid is not None:
+                        return names.get(pid, str(pid))
+                return "?"
+
+            out = [
+                {"ts": _local(m.date), "chat": _peer_name(m.peer_id), "text": _msg_text(m)}
+                for m in result.messages
+            ]
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False))
+        return
+    for m in out:
+        click.echo(f"{m['ts']}  {m['chat']}: {m['text']}")
+
+
+@cli.command()
+@click.argument("query")
+@click.argument("text", required=False, default="")
+@click.option("--file", "file_path", default=None, help="Attach and send this file/document; TEXT (if any) becomes its caption.")
+@click.option("--peer", "peer_override", default=None, help="Send to this exact @username / phone / id, skipping query resolution.")
+@click.option("--match", default=0, help="Pick the Nth matching chat when ambiguous (1-based).")
+@click.option("--yes", is_flag=True, help="Actually send. Without it, prints a dry-run only.")
+def send(query: str, text: str, file_path: str | None, peer_override: str | None, match: int, yes: bool) -> None:
+    """Send a message (and/or a file) to the chat matching QUERY.
+
+    With --file, sends that document; any TEXT becomes its caption. Defaults to a
+    dry-run that prints the resolved recipient and payload without sending. Pass
+    --yes to actually send — an outbound action the calling agent must confirm
+    with the user first.
+    """
+    if not text and not file_path:
+        raise click.ClickException("Nothing to send: provide TEXT, --file, or both.")
+    attachment = Path(file_path).expanduser() if file_path else None
+    if attachment and not attachment.is_file():
+        raise click.ClickException(f"File not found: {attachment}")
+
+    with _client() as client:
+        if peer_override:
+            entity = client.get_entity(peer_override)
+            label = utils.get_display_name(entity) or peer_override
+        else:
+            dialog = _resolve_dialog(client, query, match)
+            entity, label = dialog.entity, dialog.name
+
+        if not yes:
+            click.echo("DRY-RUN (nothing sent). Re-run with --yes to send.")
+            click.echo(f"  to:      {label}")
+            if attachment:
+                click.echo(f"  file:    {attachment}")
+            if text:
+                click.echo(f"  message: {text}")
+            return
+
+        if attachment:
+            client.send_file(entity, str(attachment), caption=text or None)
+        else:
+            client.send_message(entity, text)
+    what = f"file {attachment.name}" if attachment else "message"
+    click.echo(f"Sent {what} to {label}.")
+
+
+@cli.command()
+@click.argument("query")
+@click.option("--limit", default=20, help="How many recent messages to scan for media.")
+@click.option("--since", default=None, help="ISO date/datetime; only download attachments from messages at/after it (UTC if no tz).")
+@click.option("--docs-only", is_flag=True, help="Skip photos/stickers; download only file documents (PDF, decks, …).")
+@click.option("--match", default=0, help="Pick the Nth matching chat when ambiguous (1-based).")
+@click.option("--out", default=".", help="Directory to save attachments into (created if missing).")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def download(query: str, limit: int, since: str | None, docs_only: bool, match: int, out: str, as_json: bool) -> None:
+    """Download attachments from the recent messages of the chat matching QUERY.
+
+    Scans the last --limit messages of the matched chat and saves every media
+    attachment into --out, using Telegram's own filename where available. Narrow
+    the set with --since (only in-window messages) and --docs-only (files, not
+    photos/stickers).
+    """
+    cutoff = _parse_since(since)
+    outdir = Path(out).expanduser()
+    outdir.mkdir(parents=True, exist_ok=True)
+    with _client() as client:
+        dialog = _resolve_dialog(client, query, match)
+        saved = []
+        for m in client.get_messages(dialog.entity, limit=limit):
+            if not m.media:
+                continue
+            if cutoff is not None and m.date < cutoff:
+                continue
+            # A "document" is any non-photo file (PDF, deck, video, …); photos and
+            # stickers are not `m.document`, so this cleanly drops image chatter.
+            if docs_only and not m.document:
+                continue
+            path = client.download_media(m, file=str(outdir))
+            if path:
+                saved.append({"ts": _local(m.date), "file": path, "caption": _msg_text(m)})
+    if as_json:
+        click.echo(json.dumps(saved, ensure_ascii=False))
+        return
+    if not saved:
+        click.echo(f"No attachments found in the last {limit} messages of {dialog.name!r}.")
+        return
+    click.echo(f"Saved {len(saved)} attachment(s) from {dialog.name!r} into {outdir}:")
+    for s in saved:
+        click.echo(f"  {s['ts']}  {s['file']}")
+
+
+if __name__ == "__main__":
+    cli()

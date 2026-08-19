@@ -1,0 +1,11 @@
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+.claude
+.codex
+tests
+TONE.md
+.DS_Store
