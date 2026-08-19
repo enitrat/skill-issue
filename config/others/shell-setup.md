@@ -83,6 +83,10 @@ Not scripted, on purpose:
   side; you set it in Raycast → Settings → General.
 - **Menu bar spacing** takes effect on next login, not via `killall`.
 
+iTerm's managed `Hotkey Window` profile opens from a double-tap of Right
+Option. It floats on the screen containing the pointer, follows every Space,
+and hides when it loses focus. Regular iTerm windows remain independent.
+
 Deliberately not synced, so no long-lived credential lands on a remote box:
 
 - `gh auth login` — intentionally manual, because authentication cannot be a
