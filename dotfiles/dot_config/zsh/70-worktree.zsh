@@ -157,7 +157,5 @@ _wt_dirs() {
     dirs=(${(f)"$(__wt_paths)"})
     compadd -- ${dirs:t}
 }
-# Guarded for the same half-provisioned case 40-completions allows for: with
-# neither oh-my-zsh nor compinit, compdef is undefined and this would be the
-# only line in the file that errors.
+# A syntax-only or partially provisioned shell may not initialize completion.
 (( $+functions[compdef] )) && compdef _wt_dirs wtcd wtr

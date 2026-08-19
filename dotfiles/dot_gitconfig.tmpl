@@ -45,15 +45,8 @@
 	# "which side is right" guessing into reading.
 	conflictstyle = zdiff3
 
-# Syntax-aware merge driver. Resolves conflicts that are textually overlapping
-# but semantically independent, e.g. two imports added to the same line range.
-# Falls back to git's own merge for languages it does not parse.
-#
-# Routed through the git-mergiraf wrapper rather than the binary directly.
-# ~/.gitattributes applies this driver to every path, and git has no fallback
-# when a driver is missing -- if the cargo build of mergiraf ever fails, a bare
-# `mergiraf` here turns every merge in every repo into a conflict that silently
-# discards the other side. The wrapper degrades to git's own three-way merge.
+# Git has no fallback when a configured merge driver is missing; the wrapper
+# uses Git's three-way merge when Mergiraf is unavailable or unsupported.
 [merge "mergiraf"]
 	name = mergiraf
 	driver = git-mergiraf %O %A %B %S %X %Y %P %L
@@ -106,9 +99,6 @@
 [credential]
 	helper = osxkeychain
 {{ end }}
-# Resolved through PATH rather than an absolute install path: the previous
-# config pinned .../gh_2.96.0_macOS_arm64/bin/gh, which mise invalidates on the
-# next gh release.
 [credential "https://github.com"]
 	helper =
 	helper = !gh auth git-credential

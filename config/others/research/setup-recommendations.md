@@ -36,15 +36,13 @@ Before expanding the inventory, add and commit a mise lockfile, pin shell plugin
 revisions, and make Homebrew upgrades an explicit maintenance action rather
 than a side effect of `chezmoi apply`.
 
-## Inventory decisions to make
+## Inventory decisions
 
-- Choose whether Bun and pnpm are genuine global defaults or project-level
-  choices alongside Node LTS.
-- Choose Terraform or OpenTofu according to actual provider/team constraints;
-  avoid an unpinned global tool with no declared use.
-- Either provision Git LFS or remove the required global LFS filter.
-- Decide whether both Bitwarden CLI and 1Password CLI belong in the baseline.
-- Keep HTTPie only if it earns a global Python-tool installation over `curl`.
+- Bun and pnpm remain global defaults alongside Node LTS.
+- Terraform remains in the baseline.
+- Git LFS is provisioned because the global Git configuration requires it.
+- Bitwarden CLI and 1Password CLI both remain in the baseline.
+- HTTPie is removed; use `curl`, or `uvx httpie` if it becomes useful later.
 
 The existing Git/search/navigation stack is coherent. Keep `ripgrep`, `fd`,
 `fzf`, `bat`, `eza`, `zoxide`, Atuin, Starship, tmux, sesh, delta, difftastic,
@@ -79,6 +77,6 @@ Mergiraf, git-spice, and `gh` unless usage evidence says otherwise.
 3. Add mise locking and intentional update commands.
 4. Make Brew Bundle use `--no-upgrade`; gate Docker Desktop removal behind host
    policy and separate editor configuration from macOS defaults.
-5. Resolve the small inventory decisions above.
+5. Verify the retained inventory on a fresh host.
 6. Trial optional replacements one at a time, without adding them to the shared
    baseline until they displace an existing tool.

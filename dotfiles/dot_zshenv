@@ -3,10 +3,6 @@
 # Sourced by every zsh, including non-interactive ones. Nothing that costs time
 # or assumes a terminal belongs here; put it in ~/.config/zsh/*.zsh instead.
 
-# Ubuntu's /etc/zsh/zshrc runs its own compinit before ~/.zshrc is read, so the
-# completion system was being initialised three times per shell: that global one,
-# then oh-my-zsh, then the fragment that needed compdef. Each pass re-audits fpath
-# and the global one writes a dump nothing ever reads again. Opting out is the
-# documented mechanism -- see the comment above the block in /etc/zsh/zshrc --
-# and it must be set here, since ~/.zshenv is the only file zsh reads earlier.
+# Ubuntu initializes completion globally before user configuration can add its
+# completion paths. This must be set in .zshenv to keep one user-owned pass.
 skip_global_compinit=1

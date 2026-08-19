@@ -1,0 +1,18 @@
+[".local/share/zsh/plugins/zsh-autosuggestions"]
+type = "archive"
+url = "https://github.com/zsh-users/zsh-autosuggestions/archive/refs/tags/v0.7.1.tar.gz"
+exact = true
+stripComponents = 1
+checksum.sha256 = "0df7affff21cd87ed298e6a3970ed08a1dd66a6efa676454ee5b091ad503badf"
+
+[".local/share/zsh/plugins/zsh-syntax-highlighting"]
+type = "archive"
+url = "https://github.com/zsh-users/zsh-syntax-highlighting/archive/refs/tags/0.8.0.tar.gz"
+exact = true
+stripComponents = 1
+checksum.sha256 = "5981c19ebaab027e356fe1ee5284f7a021b89d4405cc53dc84b476c3aee9cc32"
+
+[".iterm2_shell_integration.zsh"]
+type = "file"
+url = "https://raw.githubusercontent.com/gnachman/iTerm2/v3.6.11/Resources/shell_integration/iterm2_shell_integration.zsh"
+checksum.sha256 = "91027c6d5221ee7123609e8e5aa8840ea218f98583e516c3d425d5f8a2b20e7a"

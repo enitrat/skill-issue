@@ -12,3 +12,6 @@
 # Snapshot/restore VM: filesystem replaced under a running session, hostname
 # regenerated at every boot. Selects .config/zsh/00-ephemeral-host.zsh.
 ephemeral_host = false
+
+# Removing another container runtime is destructive, so hosts opt in.
+remove_docker_desktop = false

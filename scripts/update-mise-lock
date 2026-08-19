@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "$0")/.." && pwd)
+lock_root=$(mktemp -d /tmp/skill-issue-mise-lock.XXXXXX)
+trap 'rm -rf "$lock_root"' EXIT
+
+command -v chezmoi >/dev/null 2>&1 || {
+    echo "chezmoi not found on PATH" >&2
+    exit 1
+}
+command -v mise >/dev/null 2>&1 || {
+    echo "mise not found on PATH" >&2
+    exit 1
+}
+
+mkdir -p "$lock_root/mise"
+chezmoi cat -S "$repo_root" ~/.config/mise/config.toml > "$lock_root/mise/config.toml"
+XDG_CONFIG_HOME="$lock_root" mise lock --global --bump \
+    --platform macos-arm64,macos-x64,linux-arm64,linux-x64 \
+    --minimum-release-age 7d --yes
+install -m 0644 "$lock_root/mise/mise.lock" \
+    "$repo_root/dotfiles/dot_config/mise/mise.lock"

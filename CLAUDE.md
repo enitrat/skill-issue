@@ -15,18 +15,16 @@ dotfiles/            # chezmoi source state - dotfiles + provisioning scripts
   .chezmoidata/
     packages.toml    # THE package inventory; mise config + Brewfile derive from it
     host.toml        # Host-class flags, all defaulting off (see Host Classes)
+  .chezmoiexternal.toml # Checksum-pinned third-party shell files
   .chezmoitemplates/
     lib.sh           # log/warn/have/mise_path, included by every script
+  .chezmoiscripts/   # Provisioning scripts with normal run_* attributes
   .chezmoiignore     # Per-OS and per-host-class file selection
   dot_zshenv         # -> ~/.zshenv; pre-.zshrc setup only, sourced by every zsh
   dot_zshrc          # -> ~/.zshrc; a loop over the fragments below
   dot_config/
     zsh/NN-*.zsh     # Shell config fragments, sourced in numeric order
-    mise/, homebrew/ # Generated from packages.toml
-  run_once_before_*  # Bootstrap that must precede the dotfiles landing
-  run_onchange_after_*  # Package installs; re-run when the inventory changes
-  run_once_after_*   # One-time host setup (system defaults, ssh, logins)
-  run_after_*        # Runs on every apply
+    mise/, homebrew/ # Generated inventory configs and mise lockfile
 
 skills/              # Agent skills, one directory per skill
   <skill-name>/
@@ -58,8 +56,8 @@ sh -c "$(curl -fsLS https://get.chezmoi.io)" -- init --apply enitrat/skill-issue
 chezmoi update
 ```
 
-Provisioning belongs in `dotfiles/run_*.sh.tmpl`. Keep those scripts idempotent
-and OS-aware — via the `-macos.sh` / `-linux.sh` suffix that `.chezmoiignore`
+Provisioning belongs in `dotfiles/.chezmoiscripts/run_*.sh.tmpl`. Keep those
+scripts idempotent and OS-aware — via the `-macos.sh` / `-linux.sh` suffix that `.chezmoiignore`
 filters on, not via a template conditional that renders down to `exit 0`.
 
 Pick the prefix by re-run semantics, not by habit:
@@ -163,10 +161,11 @@ the repo checkout on PATH — it has been at three different paths already.
 ### Dotfiles
 
 1. Put managed files under `dotfiles/` using chezmoi naming.
-2. To add a package, edit `.chezmoidata/packages.toml` and nothing else. The
-   mise config and Brewfile are generated; hand-editing them is pointless, and
+2. To add a package, edit `.chezmoidata/packages.toml`, refresh the generated
+   mise lockfile with `scripts/update-mise-lock`, and apply. The mise config and Brewfile are generated;
    `mise use -g` is reverted on the next apply.
-3. Choose the `run_*` prefix by re-run semantics (see Machine Provisioning).
+3. Put scripts in `.chezmoiscripts/` and choose the `run_*` prefix by re-run
+   semantics (see Machine Provisioning).
 4. Test with `chezmoi execute-template -S .`, then `chezmoi diff`. Note that
    `chezmoi`'s configured source dir may be a *different clone* than the one
    you are editing — check `chezmoi source-path` before trusting a diff.

@@ -67,7 +67,7 @@ matches chezmoi's documented one-command install flow: install chezmoi, clone th
 repo, apply the target state, and run scripts.
 
 This repo uses `.chezmoiroot` to point chezmoi at `dotfiles/`. The provisioning
-logic lives in `dotfiles/run_once_*.sh.tmpl`, which keeps setup versioned,
+logic lives in `dotfiles/.chezmoiscripts/`, which keeps setup versioned,
 idempotent, and testable without a repo-specific transport script.
 
 Installed baseline:
@@ -77,11 +77,12 @@ Installed baseline:
   presence — a CLT install can be silently corrupted by a racing background
   macOS Software Update, leaving `clang++` unable to find `<string>` and
   other C++ standard headers even though `xcode-select -p` reports success.
-- Shell: zsh, oh-my-zsh plugins, Starship, MesloLGS Nerd Font config.
+- Shell: native zsh, pinned autosuggestions/syntax-highlighting plugins,
+  Starship, and MesloLGS Nerd Font config.
 - Runtime/tool manager: `mise` instead of separate `nvm`, `asdf`, or `pyenv`
   shell setup.
 - CLI tools: `atuin`, `bat`, `carapace`, `delta`, `difftastic`, `eza`, `fd`,
-  `fzf`, `gh`, `git-spice`, `httpie`, `mergiraf`, `ripgrep`, `sesh`, `tmux`,
+  `fzf`, `gh`, `git-lfs`, `git-spice`, `mergiraf`, `ripgrep`, `sesh`, `tmux`,
   `uv`, `zoxide`.
 - Configs: `~/.tmux.conf` (remote-friendly, sesh popup) and `~/.ssh/config`
   (connection multiplexing + keepalives; personal hosts go in the unmanaged
@@ -89,9 +90,9 @@ Installed baseline:
 - Remote helpers: Tailscale, mosh, Cursor remote-server cache cleanup, iTerm2
   shell integration.
 - macOS: GUI apps are declared in a `Brewfile` (`~/.config/homebrew/Brewfile`):
-  Raycast, Cursor, OrbStack, Tailscale, Amphetamine, Hidden Bar, plus the Nerd
-  Font. OrbStack is the container runtime and Docker Desktop is uninstalled if
-  present. Raycast's Spotlight Cmd+Space binding is freed up automatically. See
+  iTerm2, Raycast, Cursor, OrbStack, Tailscale, Hidden Bar, plus the Nerd Font.
+  OrbStack is the container runtime; removing Docker Desktop is an opt-in host
+  policy. Raycast's Spotlight Cmd+Space binding is freed up automatically. See
   [config/others/macos-settings.md](config/others/macos-settings.md) for the
   one manual step this needs (Raycast's own hotkey preference).
 
@@ -112,9 +113,9 @@ More detail: [config/others/shell-setup.md](config/others/shell-setup.md).
 ```text
 .chezmoiroot                    # Tells chezmoi to use dotfiles/ as source root
 dotfiles/                       # chezmoi source root
+  .chezmoiscripts/              # Provisioning and convergence scripts
   dot_zshrc.tmpl
   dot_config/starship.toml
-  run_once_*.sh.tmpl
 skills/                         # Agent skills, segmented by ownership
   external/                     # Downloaded third-party skills
 skills-external.json            # Upstream references and download sources
@@ -146,11 +147,14 @@ Add a third-party skill:
 
 Add a machine setup step:
 
-1. Put the behavior in `dotfiles/run_once_before_*.sh.tmpl` or
-   `dotfiles/run_once_after_*.sh.tmpl`.
-2. Keep it idempotent: check whether the package/config already exists.
+1. Put the behavior in `dotfiles/.chezmoiscripts/` with the appropriate
+   `run_`, `run_once_`, or `run_onchange_` attributes.
+2. Keep it idempotent and return non-zero when incomplete work must be retried.
 3. Test with `chezmoi diff`, `chezmoi apply --dry-run --verbose`, or a
    disposable remote/container.
+
+After changing the package inventory, run `scripts/update-mise-lock` before
+applying or committing it.
 
 Add a local CLI:
 

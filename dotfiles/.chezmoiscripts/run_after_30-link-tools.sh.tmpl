@@ -5,8 +5,8 @@ set -uo pipefail
 # Runs on every apply rather than run_once, so a newly added tool is linked
 # without needing a state reset. Relinking is a handful of syscalls.
 #
-# ~/.local/bin is already on PATH, so linking here keeps the repo checkout off
-# PATH entirely -- the clone can move or be renamed without breaking anything.
+# ~/.local/bin is already on PATH. Reapplying repairs links after the checkout
+# moves.
 
 SRC="{{ .chezmoi.sourceDir | dir }}/tools"
 DEST="$HOME/.local/bin"

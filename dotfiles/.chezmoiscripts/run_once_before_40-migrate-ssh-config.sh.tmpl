@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+{{ template "lib.sh" . }}
+
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+
+local_config="$HOME/.ssh/config.local"
+[ -e "$local_config" ] && exit 0
+
+managed_config="$HOME/.ssh/config"
+if [ -f "$managed_config" ] && ! grep -q 'managed by chezmoi (skill-issue)' "$managed_config"; then
+    cp "$managed_config" "$local_config"
+    log ssh "preserved existing ~/.ssh/config as config.local"
+else
+    touch "$local_config"
+fi
+chmod 600 "$local_config"

@@ -6,7 +6,7 @@ set -uo pipefail
 # ~/.config/mise/config.toml matters: `include` would hash that file's template
 # source, which does not change when packages.toml does.
 # mise tools:  {{ .mise | toJson | sha256sum }}
-# uv tools:    {{ .uvtool | toJson | sha256sum }}
+# mise lock:   {{ include "dot_config/mise/mise.lock" | sha256sum }}
 
 mise_path
 
@@ -32,7 +32,3 @@ if ! mise install --yes; then
     exit 1
 fi
 log mise "all tools installed"
-
-{{ range .uvtool -}}
-uv tool install --quiet {{ .name }} || warn uv "{{ .name }} install failed"
-{{ end -}}

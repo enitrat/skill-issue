@@ -1,5 +1,5 @@
 #!/bin/bash
-set -uo pipefail
+set -euo pipefail
 {{ template "lib.sh" . }}
 
 if have apt-get; then
@@ -9,7 +9,7 @@ if have apt-get; then
 elif have dnf; then
     sudo dnf install -y zsh git curl @development-tools unzip glibc-langpack-en mosh
 elif have pacman; then
-    sudo pacman -Sy --noconfirm zsh git curl base-devel unzip mosh
+    sudo pacman -Syu --needed --noconfirm zsh git curl base-devel unzip mosh
 else
     warn shell "no apt/dnf/pacman found, skipping base packages"
 fi
@@ -17,8 +17,8 @@ fi
 # Minimal images ship no generated locale, which makes zsh warn on every start
 # and mangles the prompt's Nerd Font glyphs.
 if have locale-gen && ! locale -a 2>/dev/null | grep -qi "en_US.utf8"; then
-    sudo locale-gen en_US.UTF-8 || true
-    sudo update-locale LANG=en_US.UTF-8 || true
+    sudo locale-gen en_US.UTF-8
+    sudo update-locale LANG=en_US.UTF-8
 fi
 
 if have tailscale; then

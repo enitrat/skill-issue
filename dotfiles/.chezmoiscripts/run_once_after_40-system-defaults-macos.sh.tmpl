@@ -2,9 +2,6 @@
 set -uo pipefail
 {{ template "lib.sh" . }}
 
-# Every scriptable macOS system tweak, in one place. Runs after the Brewfile so
-# the apps these settings are for already exist.
-
 # --- Spotlight hotkey ------------------------------------------------------
 # Raycast and Spotlight both want Cmd+Space, so release the macOS side of it.
 # Claiming it for Raycast stays manual: Raycast stores its own hotkey outside
@@ -25,11 +22,8 @@ else
         -c "Add :AppleSymbolicHotKeys:64:value:parameters: integer 1048576" \
         "$PLIST"
 fi
-# Neither kill actually rebinds anything: the WindowServer reads the symbolic
-# hotkey table once, at login, and holds it for the session. They are here to
-# flush the preference caches so the new value is what the next session reads.
-# Saying "released" unqualified was wrong -- Cmd+Space keeps opening Spotlight
-# until you log out, and the obvious conclusion is that the script failed.
+# The WindowServer reads symbolic hotkeys at login; these only flush caches for
+# the next session.
 killall SystemUIServer 2>/dev/null || true
 killall cfprefsd 2>/dev/null || true
 log spotlight-hotkey "Cmd+Space released (takes effect on next login)"
@@ -50,38 +44,8 @@ defaults write NSGlobalDomain com.apple.swipescrolldirection -bool false
 log scroll-direction "natural scrolling disabled (takes effect on next login)"
 
 # --- Window tabbing --------------------------------------------------------
-# Prefer tabs over new windows. Electron editors ignore AppleWindowTabbingMode,
-# so they need the equivalent flipped in their own settings.json.
 defaults write -g AppleWindowTabbingMode -string always
 log window-tabbing "AppleWindowTabbingMode=always"
-
-set_open_in_same_window() {
-    local name="$1" settings="$2"
-    # Don't conjure a settings dir for an editor that isn't installed.
-    [ -d "$(dirname "$settings")" ] || return 0
-    python3 - "$settings" <<'PY' && log window-tabbing "${name} set to reuse window"
-import json
-import sys
-
-path = sys.argv[1]
-try:
-    with open(path) as f:
-        data = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    data = {}
-
-if data.get("window.openFoldersInNewWindow") == "off":
-    sys.exit(1)
-
-data["window.openFoldersInNewWindow"] = "off"
-with open(path, "w") as f:
-    json.dump(data, f, indent=4)
-    f.write("\n")
-PY
-}
-
-set_open_in_same_window "Cursor" "$HOME/Library/Application Support/Cursor/User/settings.json"
-set_open_in_same_window "VS Code" "$HOME/Library/Application Support/Code/User/settings.json"
 
 echo
 echo "Next: open Raycast > Settings (Cmd+,) > General and set 'Raycast Hotkey'"

@@ -6,26 +6,12 @@ set -uo pipefail
 # install for itself: mise comes from brew, and anything building from source
 # needs clang. Both must land before the rest of the run_once_before_* chain.
 
-# brew_path, not `have brew`: Homebrew's prefix is not on PATH in chezmoi's
-# script shell, so `have brew` is false on a machine that already has it. That
-# is not only a first-run concern -- this script is run_once keyed on its own
-# hash, so any edit to it re-runs the whole thing, and the bare test would send
-# it off to reinstall Homebrew over a working install.
+# Homebrew may be installed before its prefix reaches this process's PATH.
 if ! brew_path; then
     log brew "not installed, running the official installer"
 
-    # Homebrew needs root exactly once, to create and chown its prefix. The
-    # installer picks its sudo mode from the environment: NONINTERACTIVE=1
-    # makes it use `sudo -n`, which never prompts and so fails outright unless
-    # a sudo timestamp is already cached. That is not a hypothetical -- it is
-    # the default state of a fresh machine, and it aborts with the misleading
-    # "Need sudo access on macOS (e.g. the user X needs to be an
-    # Administrator)!" even when X is an administrator.
-    #
-    # So prime the timestamp ourselves, where a prompt is expected and the
-    # reason for it is on screen. NONINTERACTIVE stays set afterwards to skip
-    # the installer's "Press RETURN to continue" gate; its privileged work all
-    # happens up front, well inside the timestamp's five minutes.
+    # NONINTERACTIVE makes Homebrew use sudo -n, so cache authorization before
+    # launching the otherwise unattended installer.
     if ! sudo -n true 2>/dev/null; then
         if [ ! -t 0 ]; then
             warn brew "Homebrew needs sudo to create its prefix, and there is no TTY to ask on."
@@ -86,8 +72,10 @@ elif xcode-select -p >/dev/null 2>&1; then
     warn xcode-clt "  echo '#include <vector>' | clang++ -x c++ -fsyntax-only -"
     warn xcode-clt "If that fails, reinstall:"
     warn xcode-clt "  sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install"
+    exit 1
 else
     log xcode-clt "requesting install (GUI dialog - click through manually)"
     xcode-select --install 2>&1 || true
     log xcode-clt "re-run 'chezmoi apply' once it finishes to verify"
+    exit 1
 fi

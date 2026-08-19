@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# Renders every chezmoi template and syntax-checks the result.
-#
-# The failure this exists to catch: chezmoi runs templates with
-# missingkey=error, so an optional key in packages.toml that a template reads
-# unguarded renders fine in review and blows up on someone's fresh machine.
-# Nothing surfaces that until an apply, which is exactly too late.
+# Renders, parses, and lints the complete chezmoi source state.
 
 set -uo pipefail
 
@@ -39,7 +34,12 @@ while IFS= read -r tmpl; do
     rendered="$out"
     base="$(basename "$tmpl" .tmpl)"
     case "$base" in
-        *.sh)   check "$base (bash -n)" "$(bash -n <(printf '%s' "$rendered") 2>&1)" ;;
+        *.sh)
+            check "$base (bash -n)" "$(bash -n <(printf '%s' "$rendered") 2>&1)"
+            if command -v shellcheck >/dev/null 2>&1; then
+                check "$base (shellcheck)" "$(printf '%s' "$rendered" | shellcheck -s bash - 2>&1)"
+            fi
+            ;;
         *.zsh)  check "$base (zsh -n)"  "$(zsh -n <(printf '%s' "$rendered") 2>&1)" ;;
     esac
 done < <(find dotfiles -name '*.tmpl' | sort)
@@ -68,4 +68,6 @@ fi
 if [ "$fail" -eq 0 ]; then
     echo "chezmoi: all templates render and parse"
 fi
+
+check "source state" "$(chezmoi managed -S . >/dev/null 2>&1 || echo 'chezmoi could not build the managed target list')"
 exit "$fail"

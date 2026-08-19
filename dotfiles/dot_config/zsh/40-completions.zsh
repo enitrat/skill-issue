@@ -9,22 +9,10 @@ for _cmd in scarb snforge sncast; do
 done
 unset _cmd
 
-# oh-my-zsh already ran compinit against $ZSH_COMPDUMP. Running it a second time
-# here does not pick up anything new -- it writes a whole separate dump under a
-# different name on every shell start, and re-audits all of fpath to do it. The
-# guard is for the half-provisioned case 00-omz allows for: if oh-my-zsh is not
-# installed its source was skipped, so nothing has defined compdef yet.
-(( $+functions[compdef] )) || {
-    autoload -Uz compinit
-    # ZSH_COMPDUMP is oh-my-zsh's own variable, so it may well be unset here --
-    # spelled out rather than as a ${:+} expansion, which zsh would hand to
-    # compinit as the single argument "-d /path" and silently ignore.
-    if [[ -n $ZSH_COMPDUMP ]]; then
-        compinit -d "$ZSH_COMPDUMP"
-    else
-        compinit
-    fi
-}
+ZSH_COMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-${ZSH_VERSION}"
+[[ -d ${ZSH_COMPDUMP:h} ]] || mkdir -p "${ZSH_COMPDUMP:h}"
+autoload -Uz compinit
+compinit -d "$ZSH_COMPDUMP"
 
 compdef _scarb scarb
 compdef _snforge snforge

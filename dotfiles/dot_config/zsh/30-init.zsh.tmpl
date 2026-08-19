@@ -7,10 +7,8 @@ have mise     && eval "$(mise activate zsh)"
 have zoxide   && eval "$(zoxide init zsh)"
 have starship && eval "$(starship init zsh)"
 
-# `fzf --zsh` ships the keybindings inline; the ~/.fzf.zsh this used to source
-# only exists if fzf came from its own git installer, which it does not here.
-# The version test is not paranoia: a stale Homebrew fzf earlier on PATH than
-# the mise one predates the flag and would error on every shell start.
+# `fzf --zsh` is unavailable in older installations that may shadow mise on
+# PATH, so verify the integration before sourcing it.
 if have fzf && fzf --zsh >/dev/null 2>&1; then
     source <(fzf --zsh)
     export FZF_DEFAULT_COMMAND='fd --type f --hidden --exclude .git'
@@ -23,7 +21,6 @@ fi
 # searchable synced history is the one worth having there.
 have atuin && eval "$(atuin init zsh)"
 
-[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
 [ -f "$HOME/.iterm2_shell_integration.zsh" ] && source "$HOME/.iterm2_shell_integration.zsh"
 {{- if eq .chezmoi.os "darwin" }}
 [ -f "$HOME/.starkli/env" ] && . "$HOME/.starkli/env"

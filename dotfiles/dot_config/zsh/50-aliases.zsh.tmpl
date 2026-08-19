@@ -9,9 +9,6 @@ alias ....='cd ../../..'
 alias -- -='cd -'
 
 alias gp='git push origin $(git branch --show-current)'
-# gclean is a function now, and lives in 60-functions.zsh with the other git
-# helpers that have to unalias an oh-my-zsh definition before defining
-# themselves.
 
 alias df='df -h'
 alias du='du -h'
@@ -30,7 +27,3 @@ alias zf='z $(zoxide query -l | fzf)'
 alias please='sudo $(fc -ln -1)'
 
 alias starkup="curl --proto '=https' --tlsv1.2 -sSf https://sh.starkup.sh | sh -s --"
-
-# The gcc/cc/g++/c++ aliases that shadowed Apple clang with Homebrew GCC are
-# gone along with the gcc@15 formula. Nothing here needs a second compiler, and
-# aliasing `cc` machine-wide changes what every build script resolves.

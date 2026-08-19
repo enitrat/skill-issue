@@ -46,6 +46,7 @@ fi
 # -x/-f -- silently reports nothing while iTerm is plainly running, and the
 # guard below would never fire. `ps -Ac` reports the kernel accounting name
 # instead, which needs no such privilege.
+# shellcheck disable=SC2009
 if ps -Ac -o comm= | grep -qx iTerm2; then
     log iterm-keymap "iTerm is running -- it overwrites its prefs on quit, so"
     log iterm-keymap "  skipping. Either quit iTerm and re-run 'chezmoi apply',"

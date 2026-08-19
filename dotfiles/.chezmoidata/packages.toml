@@ -16,6 +16,8 @@ name = "bat"
 [[mise]]
 name = "carapace"
 [[mise]]
+name = "chezmoi"
+[[mise]]
 name = "delta"
 [[mise]]
 name = "difftastic"
@@ -27,6 +29,8 @@ name = "fd"
 name = "fzf"
 [[mise]]
 name = "gh"
+[[mise]]
+name = "git-lfs"
 [[mise]]
 name = "ripgrep"
 [[mise]]
@@ -74,21 +78,20 @@ name = "github:schpet/linear-cli"
 # Hosted on GitLab with no release binaries, so it has to be built.
 [[mise]]
 name = "cargo:mergiraf"
-# Bitwarden CLI (binary is `bw`). Taken from npm rather than the homebrew-core
-# formula of the same name, which depends on Homebrew's node and would stand up
-# a second Node alongside the mise-managed one. Cross-platform, so it belongs
-# here by the placement rule at the top of this file either way.
+# The Homebrew formula depends on Homebrew's Node; the npm package reuses the
+# mise-managed runtime.
 [[mise]]
 name = "npm:@bitwarden/cli"
 
 # --- macOS GUI apps --------------------------------------------------------
 [[cask]]
 name = "bitwarden"
-note = "desktop vault; self-updating, so brew will not manage upgrades"
 [[cask]]
 name = "1password-cli"
 [[cask]]
 name = "raycast"
+[[cask]]
+name = "iterm2"
 [[cask]]
 name = "slack"
 [[cask]]
@@ -98,13 +101,6 @@ note = "native macOS client; 'telegram-desktop' is the cross-platform Qt build"
 name = "cursor"
 [[cask]]
 name = "tailscale-app"
-note = "renamed upstream from 'tailscale'; the old name still resolves but warns"
-# Amphetamine is not here because it cannot be: it ships only through the Mac
-# App Store, so there is no cask for it and `brew search amphetamine` returns
-# nothing. Install it from the App Store by hand. Leaving the entry in place
-# broke the whole Brewfile -- `brew bundle` aborts on the first unresolvable
-# name and then reports every other entry as failed too, which reads as a
-# systemic outage rather than one bad line.
 [[cask]]
 name = "hiddenbar"
 note = "hide/reveal menu-bar icons around the notch"
@@ -116,17 +112,6 @@ name = "font-meslo-lg-nerd-font"
 note = "installs under the name \"MesloLGS NF\""
 
 # --- macOS formulae mise cannot provide ------------------------------------
-# gcc@15 and llvm@19 used to be pinned in .chezmoidata/vars.toml, because their
-# install paths were referenced by PATH entries and by global LDFLAGS/CPPFLAGS.
-# Both the formulae and the references are gone -- Apple clang is the compiler
-# here, and a project needing a different one should pin it in its own
-# mise.toml rather than shadowing `cc` for the whole machine.
 [[formula]]
 name = "mosh"
 note = "roaming-friendly SSH for flaky connections"
-
-# --- Python tools ----------------------------------------------------------
-# Installed with `uv tool install` -- mise's pipx backend needs a pre-existing
-# pipx that nothing else here wants.
-[[uvtool]]
-name = "httpie"

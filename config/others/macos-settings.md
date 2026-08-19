@@ -41,14 +41,10 @@ The built-in `caffeinate` command doesn't reliably prevent sleep when the MacBoo
 
 ### Installation
 
-Amphetamine is declared in `dotfiles/.chezmoidata/packages.toml` and installed
-with the rest of the Brewfile. To install it standalone:
+Amphetamine is a Mac App Store application and is intentionally a manual
+install; there is no Homebrew cask for it:
 
 ```bash
-# Install via Homebrew
-brew install --cask amphetamine
-
-# Or download from Mac App Store
 open "macappstore://apps.apple.com/app/amphetamine/id937984704"
 ```
 

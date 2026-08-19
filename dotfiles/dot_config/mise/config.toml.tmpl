@@ -3,6 +3,10 @@
 # `mise use -g` also writes this file, so installing a global tool by hand will
 # be reverted on the next apply. Add it to packages.toml instead.
 
+[settings]
+lockfile = true
+minimum_release_age = "7d"
+
 [tools]
 {{ range .mise -}}
 "{{ .name }}" = "{{ if hasKey . "version" }}{{ .version }}{{ else }}latest{{ end }}"

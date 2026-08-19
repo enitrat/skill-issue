@@ -30,8 +30,9 @@ Day to day: `chezmoi diff` to preview, `chezmoi update` to pull and apply.
 | Path | Role |
 |------|------|
 | `.chezmoidata/packages.toml` | **The** package inventory. Every tool, cask, and formula. |
-| `.chezmoidata/vars.toml` | Version-pinned formulae whose install paths are referenced elsewhere (`llvm`, `gcc`). |
 | `.chezmoitemplates/lib.sh` | `log`/`warn`/`have`/`mise_path`, included by every script. |
+| `.chezmoiscripts/` | Bootstrap and convergence scripts, without target-root noise. |
+| `.chezmoiexternal.toml` | Checksum-pinned Zsh plugins and iTerm2 integration. |
 | `.chezmoiignore` | Skips `*-macos.sh` / `*-linux.sh` on the other OS. |
 | `dot_config/mise/config.toml.tmpl` | Generated from `packages.toml`. |
 | `dot_config/homebrew/Brewfile.tmpl` | Generated from `packages.toml`. |
@@ -57,7 +58,9 @@ Placement rule: if mise can install it cross-platform it goes in `[[mise]]`.
 things mise can't provide.
 
 Installing a global tool with `mise use -g` will be **reverted** on the next
-apply — that command writes the same generated file.
+apply — that command writes the same generated file. Exact resolved versions
+and supported download checksums live in the generated `mise.lock`; refresh it
+with `scripts/update-mise-lock` when updating the inventory.
 
 ### Shell fragment order
 
@@ -82,7 +85,8 @@ Not scripted, on purpose:
 
 Deliberately not synced, so no long-lived credential lands on a remote box:
 
-- `gh auth login` (prompted interactively during apply when a TTY exists)
+- `gh auth login` — intentionally manual, because authentication cannot be a
+  reliable one-shot provisioning step
 - `atuin login -u <username>` — shared shell history
 - `tailscale up` — join your tailnet
 - `git-id add ...` — git identity, see `git-id --help`
@@ -121,10 +125,10 @@ handshake), keepalives that survive Wi-Fi and NAT drops, `HashKnownHosts`,
 
 ## Container runtime
 
-OrbStack, not Docker Desktop. The brew-bundle script uninstalls the Docker
-Desktop cask if it finds one; a hand-installed `/Applications/Docker.app` is
-only flagged, never deleted. OrbStack is free for personal use and needs a paid
-license for commercial use.
+OrbStack is the default container runtime. Docker Desktop removal is disabled
+unless the machine opts in with `remove_docker_desktop = true`; a package apply
+does not otherwise remove a competing runtime. OrbStack is free for personal
+use and needs a paid license for commercial use.
 
 ## Custom tools
 
@@ -152,4 +156,5 @@ it at this repo's `raycast-scripts/`.
 `time zsh -i -c exit`. The config keeps this low by activating only mise (no
 nvm/asdf/pyenv), calling `compinit` exactly once, generating Scarb/snforge/
 sncast completions lazily on first Tab, and de-duplicating PATH with
-`typeset -U`.
+`typeset -U`. Autosuggestions and syntax highlighting are checksum-pinned
+chezmoi externals; syntax highlighting loads after every other widget.

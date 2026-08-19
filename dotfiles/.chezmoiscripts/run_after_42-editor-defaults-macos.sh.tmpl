@@ -1,0 +1,37 @@
+#!/bin/bash
+set -euo pipefail
+{{ template "lib.sh" . }}
+
+set_open_in_same_window() {
+    local name="$1" settings="$2"
+    [ -d "$(dirname "$settings")" ] || return 0
+
+    python3 - "$settings" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as error:
+        print(f"invalid JSON in {path}: {error}", file=sys.stderr)
+        sys.exit(1)
+else:
+    data = {}
+
+if data.get("window.openFoldersInNewWindow") == "off":
+    sys.exit(0)
+
+data["window.openFoldersInNewWindow"] = "off"
+with open(path, "w") as f:
+    json.dump(data, f, indent=4)
+    f.write("\n")
+PY
+    log editor-defaults "$name reuses its current window"
+}
+
+set_open_in_same_window "Cursor" "$HOME/Library/Application Support/Cursor/User/settings.json"
+set_open_in_same_window "VS Code" "$HOME/Library/Application Support/Code/User/settings.json"

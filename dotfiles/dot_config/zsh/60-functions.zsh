@@ -17,13 +17,6 @@ port() { lsof -i ":$1" }
 # --no-project so a stray pyproject.toml in the cwd is not resolved and synced.
 serve() { uv run --no-project python -m http.server "${1:-8000}" }
 
-# The git plugin defines these as aliases, which cannot take arguments. The
-# unalias has to happen before the definitions: zsh expands an alias while
-# *parsing* the `name()` line, so a colliding alias is a parse error, not a
-# silent override. gclean is here for that reason alone -- the git plugin has
-# it as `git clean --interactive -d`.
-unalias gcm gac gri gclean 2>/dev/null
-
 gcm() { git commit -m "$*" }
 gac() { git add -A && git commit -m "$*" }
 gri() { git rebase -i HEAD~"$1" }
