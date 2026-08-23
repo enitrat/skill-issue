@@ -296,6 +296,78 @@ checksum = "sha256:b5b1b641c0648c83661fa9eda991cd3eff945264dabc2cdf411a80dfe7ec0
 url = "https://github.com/git-lfs/git-lfs/releases/download/v3.7.1/git-lfs-darwin-amd64-v3.7.1.zip"
 url_api = "https://api.github.com/repos/git-lfs/git-lfs/releases/assets/305262587"
 
+[[tools."github:abhinav/git-spice"]]
+version = "0.31.2"
+backend = "github:abhinav/git-spice"
+
+[tools."github:abhinav/git-spice"."platforms.linux-arm64"]
+checksum = "sha256:47492e167fa55a934e615e8e850345d8bb4c42ec6c03158896df7e5bec6559f8"
+url = "https://github.com/abhinav/git-spice/releases/download/v0.31.2/git-spice.Linux-aarch64.tar.gz"
+url_api = "https://api.github.com/repos/abhinav/git-spice/releases/assets/484895531"
+
+[tools."github:abhinav/git-spice"."platforms.linux-x64"]
+checksum = "sha256:4fbaffe8b6f69d1effce3bc3050083748ee8765b71fd928a966ad480b2d5d4f0"
+url = "https://github.com/abhinav/git-spice/releases/download/v0.31.2/git-spice.Linux-x86_64.tar.gz"
+url_api = "https://api.github.com/repos/abhinav/git-spice/releases/assets/484895529"
+
+[tools."github:abhinav/git-spice"."platforms.macos-arm64"]
+checksum = "sha256:a2c362d19a818ed1745e7308a40e7eedc57e462eba839fae752e287dbd4057c7"
+url = "https://github.com/abhinav/git-spice/releases/download/v0.31.2/git-spice.Darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/abhinav/git-spice/releases/assets/484895560"
+
+[tools."github:abhinav/git-spice"."platforms.macos-x64"]
+checksum = "sha256:5dcb7ecb140f92625a043e01fb00fdf96d9f5a52b00c5924f0bfa2694b2550f8"
+url = "https://github.com/abhinav/git-spice/releases/download/v0.31.2/git-spice.Darwin-x86_64.tar.gz"
+url_api = "https://api.github.com/repos/abhinav/git-spice/releases/assets/484895534"
+
+[[tools."github:joshmedeski/sesh"]]
+version = "2.28.0"
+backend = "github:joshmedeski/sesh"
+
+[tools."github:joshmedeski/sesh"."platforms.linux-arm64"]
+checksum = "sha256:30249b47a0f60a2da557ecde76c169d0dbc82161b12aa46f9ed47af27a265dc6"
+url = "https://github.com/joshmedeski/sesh/releases/download/v2.28.0/sesh_Linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/joshmedeski/sesh/releases/assets/490857146"
+
+[tools."github:joshmedeski/sesh"."platforms.linux-x64"]
+checksum = "sha256:ac4a0b07f0be4cbb13691a197055ac82e00341e77b915d878df8ad2bcc867fda"
+url = "https://github.com/joshmedeski/sesh/releases/download/v2.28.0/sesh_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/joshmedeski/sesh/releases/assets/490857157"
+
+[tools."github:joshmedeski/sesh"."platforms.macos-arm64"]
+checksum = "sha256:112f0171ff7379c3f1f4317561f796fc6fd77af04320ed952711a38f96f7d30c"
+url = "https://github.com/joshmedeski/sesh/releases/download/v2.28.0/sesh_Darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/joshmedeski/sesh/releases/assets/490857156"
+
+[tools."github:joshmedeski/sesh"."platforms.macos-x64"]
+checksum = "sha256:098a4b817b1d7a183ebb3618850a5b6c1ef9cd5e9439dc032d8601b00b6d2fe5"
+url = "https://github.com/joshmedeski/sesh/releases/download/v2.28.0/sesh_Darwin_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/joshmedeski/sesh/releases/assets/490857155"
+
+[[tools."github:schpet/linear-cli"]]
+version = "2.5.0"
+backend = "github:schpet/linear-cli"
+
+[tools."github:schpet/linear-cli"."platforms.linux-arm64"]
+checksum = "sha256:c8ddd7fb478ff23cd752026eb609f25ef91cc36cb1b55900db9f182f4aeb47b5"
+url = "https://github.com/schpet/linear-cli/releases/download/v2.5.0/linear-aarch64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/schpet/linear-cli/releases/assets/510689180"
+
+[tools."github:schpet/linear-cli"."platforms.linux-x64"]
+checksum = "sha256:62accf1eb36c31e897f8490e826182f012b9a4b3a2c0d3bf8c8dde906039c3ea"
+url = "https://github.com/schpet/linear-cli/releases/download/v2.5.0/linear-x86_64-unknown-linux-gnu.tar.xz"
+url_api = "https://api.github.com/repos/schpet/linear-cli/releases/assets/510689212"
+
+[tools."github:schpet/linear-cli"."platforms.macos-arm64"]
+checksum = "sha256:6d11eb5a0ee2aa10d24625d23c605bf56987a94741e60bb9817f87b123a9a00b"
+url = "https://github.com/schpet/linear-cli/releases/download/v2.5.0/linear-aarch64-apple-darwin.tar.xz"
+url_api = "https://api.github.com/repos/schpet/linear-cli/releases/assets/510689174"
+
+[tools."github:schpet/linear-cli"."platforms.macos-x64"]
+checksum = "sha256:f57c7acc974c1bc01c0ac141658a2fd380e36776b85f15da9fcbf2e824c0823c"
+url = "https://github.com/schpet/linear-cli/releases/download/v2.5.0/linear-x86_64-apple-darwin.tar.xz"
+url_api = "https://api.github.com/repos/schpet/linear-cli/releases/assets/510689193"
+
 [[tools.go]]
 version = "1.26.5"
 backend = "core:go"
@@ -339,6 +411,10 @@ url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-darwin-x64.tar.gz"
 [[tools."npm:@bitwarden/cli"]]
 version = "2026.7.0"
 backend = "npm:@bitwarden/cli"
+
+[[tools."npm:agent-browser"]]
+version = "0.34.0"
+backend = "npm:agent-browser"
 
 [[tools.pnpm]]
 version = "11.21.0"

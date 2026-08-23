@@ -82,6 +82,9 @@ name = "cargo:mergiraf"
 # mise-managed runtime.
 [[mise]]
 name = "npm:@bitwarden/cli"
+# Browser automation CLI for AI agents; its Chrome binary is installed below.
+[[mise]]
+name = "npm:agent-browser"
 
 # --- macOS GUI apps --------------------------------------------------------
 [[cask]]
@@ -107,6 +110,8 @@ note = "hide/reveal menu-bar icons around the notch"
 [[cask]]
 name = "orbstack"
 note = "free for personal use; commercial use needs a paid license"
+[[cask]]
+name = "obsidian"
 [[cask]]
 name = "font-meslo-lg-nerd-font"
 note = "installs under the name \"MesloLGS NF\""

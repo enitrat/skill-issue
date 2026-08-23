@@ -1,0 +1,17 @@
+#!/bin/bash
+set -uo pipefail
+{{ template "lib.sh" . }}
+
+# Re-runs with the package inventory so a newly installed or updated
+# agent-browser gets its Chrome for Testing binary as well.
+# agent-browser: {{ .mise | toJson | sha256sum }}
+
+mise_path
+
+if ! have agent-browser; then
+    warn agent-browser "not on PATH after mise install"
+    exit 1
+fi
+
+agent-browser install
+log agent-browser "Chrome for Testing installed"
