@@ -19,6 +19,14 @@
     {
       "name": "effect",
       "source": "https://github.com/kitlangton/skills/tree/main/skills/effect"
+    },
+    {
+      "name": "effect-service-design",
+      "source": "https://github.com/dmmulroy/skills/tree/main/effect-service-design"
+    },
+    {
+      "name": "coding-standards",
+      "source": "https://github.com/dmmulroy/skills/tree/main/coding-standards"
     }
   ]
 }
