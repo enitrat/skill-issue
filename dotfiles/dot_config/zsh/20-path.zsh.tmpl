@@ -4,6 +4,7 @@ typeset -U path
 # provisioning script, so the checkout itself does not need to be on PATH.
 path=(
     "$HOME/.local/bin"
+    "$HOME/.foundry/bin"
 {{- if eq .chezmoi.os "darwin" }}
     "/opt/homebrew/bin"
 {{- end }}

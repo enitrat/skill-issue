@@ -15,6 +15,10 @@
     {
       "name": "slack-user-cli",
       "source": "https://github.com/ClementWalter/slack-user-cli"
+    },
+    {
+      "name": "effect",
+      "source": "https://github.com/kitlangton/skills/tree/main/skills/effect"
     }
   ]
 }

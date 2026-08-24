@@ -1,0 +1,29 @@
+#!/bin/bash
+set -euo pipefail
+{{ template "lib.sh" . }}
+
+foundry_path() {
+    export PATH="$HOME/.foundry/bin:$PATH"
+}
+
+foundry_path
+
+if have forge && have cast && have anvil && have chisel; then
+    log foundry "already installed"
+    exit 0
+fi
+
+if ! have foundryup; then
+    log foundry "installing foundryup"
+    curl -L https://getfoundry.sh/install | bash
+    foundry_path
+fi
+
+have foundryup || {
+    warn foundry "foundryup was not installed"
+    exit 1
+}
+
+log foundry "installing Foundry toolchain"
+foundryup
+log foundry "installed forge, cast, anvil, and chisel"
