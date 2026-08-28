@@ -27,6 +27,14 @@
     {
       "name": "coding-standards",
       "source": "https://github.com/dmmulroy/skills/tree/main/coding-standards"
+    },
+    {
+      "name": "unslop",
+      "source": "https://github.com/cursor/plugins/tree/main/pstack/skills/unslop"
+    },
+    {
+      "name": "technical-writing",
+      "source": "https://github.com/cursor/plugins/tree/main/pstack/skills/technical-writing"
     }
   ]
 }

@@ -1,122 +1,118 @@
-# Writing Projects
+# Shaping a project
 
-A project is a **committed, bounded outcome**: it has a definition of done, a lead, a target date, stage milestones, and a link to the initiative (KR) it serves. If it cannot end, it is not a project.
-
-This file replaces the old epic guidance. The `epic` label is retired: what used to be a labeled epic is either a **project** (multi-person, >~2 weeks, or deserves its own status reporting) or a **parent issue** (one deliverable decomposed into sub-issues).
+A project is a committed, bounded outcome with an end date. Shaping runs in a fixed order, because each artifact leans on the one before: **grill → brief → milestones → issues**. Skipping a step is how boards reach designers as a list of questions and tickets carry decisions nobody wrote down.
 
 ## Candidate → committed gate
 
-Ideas accumulate as **candidate projects** (project state `Backlog`): problem statement, linked evidence, open questions, rough appetite. That's all a candidate needs — and all it may have. Commitment is a deliberate transition requiring:
+Ideas accumulate as candidate projects (project state `Backlog`) holding a problem statement, evidence links and open questions. Commitment requires every box:
 
-- [ ] Outcome stated (what is observably different when done)
-- [ ] Definition of done + non-goals
-- [ ] Lead named, target date set
-- [ ] Stage milestones defined
-- [ ] Linked to ≥1 initiative
-- [ ] Initial decomposition exists (at least the first milestone's issues)
+- [ ] Brief written to the template below
+- [ ] Lead named, target date set, ≥1 initiative linked
+- [ ] Stage milestones with dates
+- [ ] First milestone decomposed into issues
 
-A project in `Todo`/`In Progress` containing a `[TO SCOPE]` brain-dump issue failed this gate — flag it during triage.
+A committed project holding a `[TO SCOPE]` issue failed this gate; demote it or run the gate.
 
-## Project brief structure
+## Grill
 
-Six core sections plus delivery. The reference example is *Delegated View Grants* (SUP team) — match its density, not its length.
+Question the brief until every open decision has an answer with a reason, using the context the user brings. Run the `grilling` skill if installed; otherwise ask, at minimum: who is the user and what job are they doing; what is out of scope and why; in which order do the pieces ship and what does the first piece unblock; what already exists in the product that this must match; what does each party get and give; which failure would embarrass us. Every answer is a recommendation the user can argue against. Keep a running **decided** list and check it before asking again.
 
-### 1. Background
-Ground a reader who has never seen this domain. Narrative prose that teaches: concepts, architecture, protocol mechanics needed to understand the problem. Substantial is fine; rambling is not.
+## Decisions
 
-### 2. What's Wrong Today
-Concrete failures, who they affect, why no incremental patch fixes it. If failures share a root cause, name it. This section justifies the project's existence.
+A decision lives at the scope it binds:
 
-### 3. Acceptance Criteria
-5–10 numbered, outcome-level capability assertions. Testable by someone who never read the issues. No class names or architecture — observable behavior only. Mark research ACs explicitly *(research)* — "a documented decision to stop" is a valid AC.
+- **Issue-scoped** (this screen shows X, this error reads Y, this field is optional): a comment on the issue, then the description edited if the contract changed. The comment is the record; the description is the contract.
+- **Project-scoped** (delivery order, vocabulary, what is out for the whole project, a rule every issue obeys): a comment on the project brief or milestone, or, when there are more than a handful, a project document titled "Decisions" with one line per decision and a short **Open** list. Tickets point at the line they rest on.
 
-### 4. Success Metrics
-| Metric | Target |
-|---|---|
+A Decisions document holds one line per decision. It carries no per-feature sections: mechanics that bind one issue live on that issue, or on a context file attached to it.
 
-Mandatory when the project exists because something is slow, broken, or costly. Optional for pure refactors.
+Either way, a decision reached in Slack or a meeting is linked in (Cmd-K → link Slack message) within a day, with the outcome in one line. Change the decision where it lives first, then the tickets that lean on it.
 
-### 5. Non-Goals
-What this project does NOT attempt, each with a one-sentence reason (deferred, unnecessary, blocked on external work). Consolidate scattered "out of scope" notes from issues here.
+## Project brief
 
-### 6. Assumptions & Dependencies
-| Assumption | Impact if wrong |
-|---|---|
+The project description. Business altitude: someone outside the team learns something in the first two sections, and anything only an implementer needs goes to a ticket. The brief stands alone; links live under "Where the detail lives".
 
-Include interface stability, external services, protocol invariants, prerequisite work owned by other teams.
+Put a screen's storyboard, frames, copy and design-system gaps on the issue that owns it. Keep the project brief focused on shared decisions and sources.
 
-### 7. Decisions & Sources
-- Decisions made, rationale, and rejected alternatives — especially **reopened decisions**: if the project revisits a call someone already made, say whose, when, and why reopening is justified.
-- Source links: Slack threads, Notion docs, incident reports, customer requests. Preserve the chain from evidence to commitment.
+```markdown
+## Summary
+<4 lines: what, for whom, when it ships>
 
-## Brief voice
+## Why it matters
+<the business case: which KR, what breaks without it, what it positions us for, what risk it carries>
 
-- **The brief stands alone.** A reader from product, engineering, or commercial catches up in one read without opening a link. State facts and own them; links live only in Sources as the evidence chain. (Issues are the opposite: they point at paths and let the agent read — [ISSUE-WRITING.md](ISSUE-WRITING.md).)
-- **Density, not register.** Clarity rules — active voice, one meaning per word, no hedges — at normal sentence length. Explain mechanism and why, with connective tissue between sentences, not staccato definitions. Match the density of the reference brief, not its register.
+## What we ship
+1. **<piece>** (M0, <date>). <one sentence>. <issues>
+2. ...
+
+## How it works
+<two paragraphs a newcomer can follow: the mechanism, what the user sees, the one thing copy must never do>
+
+## Who
+| Party | Role | Owner |
+
+## Scope
+**In:** ... **Not in:** <each with a reason: deferred, unnecessary, external>
+
+## Acceptance criteria
+1. <outcome-level assertion testable by someone who never read the issues>
+
+## Risks and dependencies
+| If this is wrong | Then |
+
+## Where the detail lives
+- Decisions, sources
+```
+
+Three rewrites of one brief taught the altitude: v1 read like a protocol paper, v2 carried screen-level detail, v3 opened with the business. Write v3 first.
+
+## States and storyboards
+
+The product owner lists every situation a user can be in on each screen (session, data loading and failure, in-flight actions, empty), names them as situations ("price provider down"), never as code conditions, and gives each a one-sentence policy. Then **group the states into pictures as text**: states with the same visual output share one picture. Approve the grouping before drawing anything. The storyboard (one picture per group, one caption) is the enumeration engineers build from; states no picture can show (indexer lag, race conditions) become done-when bullets on the issue. One Storybook story per picture.
 
 ## Milestones
 
-Milestones are **stages of the project lifecycle**, never components or layers.
-
-Each milestone description states:
-- **Stage outcome** — what is true when it completes.
-- **Exit evidence** — what proves it (a live E2E run, a written go/no-go, a demo).
-- **External dependencies** — anything gating it that this team doesn't own, with owner and date.
-- **Purpose when non-obvious** — de-risking vs delivery, and what decision it feeds.
-
-Good: `Amoy testnet (rehearsal)`, `M1 — Decision & feasibility`, `Mainnet go-live`. Bad: `Backend`, `Frontend`, `Testing`. A milestone that outgrows its project gets promoted to its own project.
-
-Sequence milestones so the **highest-risk or most time-critical stage comes first**, and say in the description why the order is what it is.
+Stages with exit evidence, never layers. Each description states the outcome, what proves it (an E2E run, a live demo, a go/no-go), external dependencies with owner and date, and why it sits where it does. Highest-risk or launch-bound stage first. Each stage carries its own date; milestones that all share one date are stages in name only.
 
 ## Decomposition
 
-- **Slice vertically, not horizontally.** Each issue delivers a user-observable or structurally complete outcome. "All frontend work" delivers nothing alone.
-- **Order by risk.** The first issues test the riskiest assumption. Easy cleanup comes last.
-- **Parent issues use real sub-issues.** Decomposition via `relatedTo` links is a triage finding: related issues don't roll up, so the parent shows no progress and its checklist rots.
-- **Size leaves at 1–5 days.** Larger → needs sub-issues. Smaller than a ticket (one-line config) → checklist item inside a leaf.
-- **The parent survives approach changes; leaves are disposable.** Product decisions live at the parent/project level, never hidden inside a leaf.
-- Issues follow the U-shaped template ([ISSUE-WRITING.md](ISSUE-WRITING.md)) and stay under their word caps — the brief carries the narrative so issues don't have to. State a constraint that applies to all sub-issues once, here in the brief; leaves reference it.
+- Vertical slices: each issue delivers a user-observable or structurally complete outcome.
+- Risk first: the first issues test the riskiest assumption.
+- Parent issues use real sub-issues; `relatedTo` decomposition is a finding.
+- Leaves are 1–5 days. Larger → sub-issues; smaller than a ticket → a checklist line.
+- Project-scoped decisions live at project level, never inside a leaf.
+- A constraint shared by several issues is stated once in the brief; leaves point at it.
+- Present the shape first (milestones, issue titles, what gets cancelled or merged), then the bodies, then write in one batch.
 
 ## Project updates
 
-Weekly for active projects. An agent drafts from issue changes and linked discussions; the **lead judges health and publishes** — health is an interpretation, not a computation.
+Weekly while active. The agent drafts from issue changes, comments and linked threads; the lead judges health and publishes.
 
 ```markdown
 Health: On track | At risk | Off track
 
 Since last update:
 - Shipped or validated:
-- Learned:
-- Scope/assumption changes:
+- Decisions taken (linked):
+- Handoffs completed (issue → role):
+- Scope or assumption changes:
 
-Risks & decisions:
-- Decision needed, owner, deadline:
-- Blockers and dependencies:
+Risks and decisions:
+- Decision needed, owner, date:
+- Blockers and external dependencies:
 
-Next:
-- Next meaningful outcome and its expected evidence:
+Next week:
+- Outcome expected, its due date and its evidence:
 ```
 
 ## Anti-patterns
 
-| Anti-pattern | What's wrong | Fix |
-|---|---|---|
-| **Immortal bucket** | No outcome, no end ("Continuous Enhancements") | New outcomes → own project; ambient fixes → team backlog |
-| **Committed-but-unshaped** | Project in Todo holding `[TO SCOPE]` dumps | Demote to candidate or run the commitment gate |
-| **Spec in brief** | Class names, signatures, schemas in the project | Move to the foundation issue; brief owns outcomes |
-| **relatedTo decomposition** | Children linked as "related", no roll-up | Convert to sub-issues |
-| **Layer milestones** | "Backend", "Frontend" stages | Re-cut as lifecycle stages with exit evidence |
-| **Orphan project** | No initiative link | Attach to its KR, or question why it's committed |
-| **Dangling initiative** | KR with zero projects after shaping | Create the delivery project or mark the KR at-risk |
-| **Never-updated** | health unknown, no updates | Weekly update cadence, agent-drafted, lead-published |
-
-## Red flags during triage
-
-| Flag | Condition | Severity |
-|---|---|---|
-| Empty brief | Description < 100 chars on a committed project | Critical |
-| No milestones | Committed project without stages | Major |
-| No initiative | Committed project unlinked to any KR | Major |
-| Stale | No update in 14+ days while active | Warning |
-| TBD/WIP content | Brief is placeholder text | Critical |
-| Grandfathered epic | `epic`-labeled issue still in a bucket project | Warning — promote when next active |
+| Pattern | Fix |
+|---|---|
+| Brief at implementer altitude | Rewrite to the template |
+| States table as the handoff artifact | Grouping as text, then storyboard; non-drawable states as done-when |
+| Decisions in Slack or a meeting with no trace in Linear | Comment at the scope it binds, Slack link attached |
+| Issue-scoped decision written into a project document, or the reverse | Move it to its scope |
+| All milestones on the launch date | Re-cut the stages and date each one where its evidence lands |
+| Immortal bucket project | New outcomes → own project; ambient fixes → team backlog |
+| Milestones named after layers | Re-cut as stages with exit evidence |

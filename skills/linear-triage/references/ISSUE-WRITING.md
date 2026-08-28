@@ -1,12 +1,10 @@
-# Writing Issues
+# Writing issues
 
-An issue is a prompt: the human skims it, the agent executes it. Both readers attend to the top and the end and lose the middle — humans by F-pattern scanning, LLMs by U-shaped positional attention. So the layout is **U-shaped**: the contract (outcome, done-when, scope) above the fold, binding constraints at the end, and the only skippable content — narrative — in the middle **dead zone**.
+An issue is a prompt: humans skim it, agents execute it, and both attend to the top and the end and lose the middle. The layout is **U-shaped**: the contract (Outcome, Done when, Scope) above the fold, binding Constraints last, narrative in the middle. Density beats length; evidence in [issue-writing-research.md](issue-writing-research.md) when a rule is challenged.
 
-Length is not the variable to optimize; **position and density** are. The strongest evidence (3,180 agent-authored PRs, arXiv:2512.21426): self-contained issues merge +16.7% more, well-scoped +16.4%, named files +7% — while body length correlates *negatively* with success. Raise density, not word count. Full evidence and sources: [issue-writing-research.md](issue-writing-research.md) — read it when a rule here is challenged.
+One issue is owned by three seats in turn, so the body **grows by stage**. Each stage adds its blocks and never rewrites the previous seat's blocks without a comment.
 
 ## The template
-
-Fixed order, no exceptions:
 
 ```markdown
 # <Imperative title: verb + object + qualifier, ≤12 words>
@@ -14,163 +12,172 @@ Fixed order, no exceptions:
 **Outcome.** One sentence: what is true after this ships that is not true now.
 
 ## Done when
-- [ ] <observable assertion>
-- [ ] <observable assertion>
-- [ ] `<literal command that must pass>`        ← at least one, always
+- [ ] <observable assertion>                       ← product: behaviour
+- [ ] <state no picture shows, as an assertion>    ← product: indexer lag, races
+- [ ] One Storybook story per picture on the storyboard   ← when area:ux
+- [ ] `<literal command that must pass>`           ← engineer: at least one, always
 
 ## Scope
 **In:** <1–4 bullets>
-**Out:** <1–4 bullets — the no-gos>
+**Out:** <1–4 bullets, each pointing at the issue that owns it or "nothing">
 **Appetite:** <one PR | S | M | L>
 
-## Why                                          ← ≤80 words; the dead zone carries the skippable part
-<Two or three sentences, with the evidence link (Slack/report/parent). Or just a link.>
+## Why                                             ← ≤80 words; the record carries the rest
+<Two sentences and a link to the decision this rests on, if any.>
 
-## Pointers
+## Design                                          ← when area:ux; keep the issue's design context here
+- Storyboard: <link>, pictures <n–m>
+- Frames: <Figma link per picture, or "in Storybook">
+- Copy: <where the strings live; "placeholder, owner: marketing">
+- DS gaps filed: <issues>
+
+## Pointers                                        ← engineer; label it "production details" if the designer reads it
 - `path/to/file.ts` — <why it matters, ~6 words>
-- Prior art: <link or path>
+- Prior art: <path>
 
-## Constraints                                  ← last = recency position; severity in CAPS
+## Constraints                                     ← last = recency; severity in CAPS
 - MUST NOT <...>
 - MUST <...>
 - SHOULD <...>
-- MAY <...>
 
-<collapsed appendix: logs, traces, schema dumps, alternatives considered>
+<collapsed appendix: traces, schema dumps, alternatives considered>
 ```
 
-Appendix mechanics: use a Linear collapsible section (`/collapsible`) with an informative summary line ("Appendix: full stack trace + repro env"). Collapsed content stays in the description string, so agents read it while humans skip it. Constraints stay visible — a collapsed MUST escapes human review. (Verify once that collapsibles survive the MCP round-trip; fall back to a trailing `## Appendix` heading if not.)
+Constraints stay visible; a collapsed MUST escapes human review. Use a Linear collapsible for the appendix, or a trailing `## Appendix` heading.
 
-## Section contract — who reads what
+## What each stage adds
+
+| Stage (status) | Seat | Adds | Exit when |
+|---|---|---|---|
+| Product shaping | Product | Title, Outcome, Why, Scope, behavioural done-when, storyboard link, milestone, priority | Every state on the storyboard is a picture or a done-when |
+| Design shaping | Design | Frames per picture, copy, DS gaps filed, redrawn pictures with a one-line reason | Every picture has a frame and copy; assignee moves to the engineer; Slack ping posted |
+| Ready | Engineer | Pointers, Constraints, the command done-when, estimate (confirmed), due date, relations | Readiness test in [SKILL.md](../SKILL.md) passes |
+
+A ticket without `area:ux` skips Design shaping.
+
+## Section contract
 
 | Block | Human | Agent |
 |---|---|---|
-| Title + Outcome + Done-when + Scope | **Read.** Answers: is this mine, how big, when am I finished. | Read; done-when is the definition of complete; run the commands. |
-| Why | Skim or skip. | Disambiguate only — never expand scope from it. |
-| Pointers | Skim. | Start here; fetch these files. |
-| Constraints | Read the MUSTs. | Read all; violating a MUST fails the task regardless of tests. |
-| Appendix | Skip. | Read. |
+| Title, Outcome, Done when, Scope | Read: is this mine, how big, when am I finished | Done-when is the definition of complete; run the commands |
+| Why | Skim | Disambiguate only; never widen scope from it |
+| Design | Design and engineer read | Frames name the components to use |
+| Pointers | Skim | Start here |
+| Constraints | Read the MUSTs | Violating a MUST fails the task regardless of tests |
+| Appendix | Skip | Read |
 
-The contract makes "I didn't read that" a process error: load-bearing information in the skip zone is the author's fault, missed done-when is the reader's.
+Load-bearing content in a skip zone is the author's fault; a missed done-when is the reader's.
 
-## Word budgets — hard caps
+## Word budgets
 
-Counts exclude collapsed appendices and code blocks (pasted traces are free — verbatim evidence is high-signal).
+Counts exclude appendices and code blocks.
 
 | Type | Target | Cap | Required blocks |
 |---|---|---|---|
-| Chore / mechanical | 40–100 | 150 | Title, Outcome, one command |
-| Bug | 120–220 | 300 | Title, Outcome, **Reproduction** (replaces Why), Done-when incl. failing test, Pointers |
-| Spike | 120–250 | 300 | Question, **Timebox**, Deliverable (decision/doc/prototype), Kill criteria |
+| Chore | 40–100 | 150 | Title, Outcome, one command |
+| Bug | 120–220 | 300 | Title, Outcome, **Reproduction** (replaces Why), done-when incl. failing test, Pointers |
+| Spike | 120–250 | 300 | Question, **Timebox**, Deliverable (a written decision), Kill criteria |
 | Feature, one PR | 250–400 | 500 | Full template |
-| Feature, multi-PR | 350–500 | 600 | Full template + parent/project brief carries the narrative |
+| Feature, multi-PR | 350–500 | 600 | Full template; the brief and record carry the narrative |
 
-Over the cap → it is not one issue. Split it, or move the design rationale into the project brief ([PROJECT-WRITING.md](PROJECT-WRITING.md)) and link it from Pointers. The brief carries the narrative so the issue doesn't have to.
+Over the cap → split it, or move project-level rationale to the project and link it.
 
-### Variant notes
+- **Bug:** Reproduction replaces Why: steps, environment, first seen, verbatim error. Hypotheses go to the appendix, labelled.
+- **Spike:** the deliverable is a written decision; "no change" is valid. Timebox is the appetite.
 
-- **Bug:** Reproduction replaces Why — steps, environment, first occurrence, verbatim error. Developers rank repro steps and stack traces as the most valuable bug content; nobody needs a narrative about why a crash is bad. Hypotheses go in the appendix, labeled as hypotheses.
-- **Spike:** the deliverable is a written decision; "no change" is a valid outcome. Kill criteria say when to stop digging. Spikes carry Timebox instead of Appetite — for a spike, the timebox *is* the appetite.
+## Constraints
 
-## Constraints: lock the contract, free the implementation
+Lock what breaking would hurt a consumer or a downstream issue: public signatures, behavioural contracts, module boundaries, invariants, error contracts. Leave internal structure, naming and order to the implementer. Test: would removing the line let a competent implementer make a *wrong* choice, not merely a different one? If no, cut it.
 
-Constraints lock what breaking would hurt a consumer or a downstream issue: public API signatures, behavioral contracts, module boundaries, invariants, error contracts. Internal structure, naming, file layout, and implementation order stay free — the implementer decides. The test: would removing this line let a competent implementer make a *wrong* choice (not just a *different* one)? If no, cut it.
+Severity is RFC 2119 in ALL CAPS. A constraint that appears in a second issue moves into CLAUDE.md, a skill, a type or a CI check, and leaves every issue.
 
-Severity uses RFC 2119 in ALL CAPS — MUST / MUST NOT / SHOULD / MAY — and nothing else. An unmarked constraint in prose is unenforceable: one reader hears mandatory, another hears optional.
+## Formatting
 
-**The harness rule:** a constraint that appears in a second issue moves out of issues entirely — into CLAUDE.md, a skill, or a CI check. Every promotion shortens all future issues at once and loses nothing.
+1. One idea per line, key word first: `MUST NOT change the wire format`.
+2. Tables for enumerable dimensions, prose for reasoning.
+3. Checkboxes only for independently checkable assertions.
+4. At least one done-when is a literal command, or for UI a named observable check (story, E2E, screenshot state).
+5. Full backticked paths.
+6. Errors and user feedback verbatim.
+7. Plain assertions: `logged-out user hitting /decrypt → 401, no ciphertext in body`.
+8. Appetite is a budget in the description; the estimate field is a forecast. Disagreement is signal.
 
-## Formatting rules
+## Voice
 
-1. One idea per line; front-load the line's key word (`MUST NOT change the wire format`, not `The wire format must not be changed`).
-2. Tables for enumerable dimensions, prose for causal reasoning. A scope list under ~4 rows is cheaper as two bullets than a table.
-3. Checkboxes only for independently checkable state transitions. `- [ ] code is clean` trains readers to ignore checkboxes.
-4. At least one done-when is a literal command in backticks — it closes the agent's own verification loop instead of making you the loop. For UI work, the command's equivalent is a named observable check (screenshot state, E2E test).
-5. Full backticked paths, no gestures: `modules/screening/hooks/use-prewarm-screening.ts`, not "the screening layer".
-6. Paste errors and user feedback verbatim; never paraphrase a stack trace.
-7. Plain assertions, not Gherkin: `logged-out user hitting /decrypt → 401, no ciphertext in body`. Given/When/Then triples the tokens for zero gain unless generating Cucumber tests.
-8. Appetite is mandatory on features — it is the only line telling the implementer when to stop gold-plating. Appetite is a **budget** in the description; the estimate field is a **forecast** — when they disagree, that's signal, not error.
+1. Imperative for work, present indicative for facts.
+2. Delete hedges (*probably, maybe, ideally, try to*): each is a decision outsourced to the reader. Unknown → spike, or `MAY` and mean it.
+3. Decisions without ceremony: "Use X". Inline rationale only when it prevents a wrong choice.
+4. A decision made in a comment is edited into the description in the same sitting, with the comment as its record.
+5. AI drafts need a subtraction pass: cut restated outcomes, "Summary" and "Next steps" sections.
+6. Say what a thing is, never what it is not. Error copy says what happened and what to do next; it explains nothing about the system.
 
-## Voice rules
+## Cut list
 
-1. Imperative for work, present indicative for facts: "`decrypt()` panics on empty input. Add a bounds check."
-2. Delete every hedge — *probably, maybe, ideally, we might want to, try to*. Each is an unresolved decision outsourced to the reader; an agent resolves it arbitrarily and silently. Genuinely unknown → file a spike, or write `MAY` and mean it.
-3. Decisions without ceremony: "Use X", not "We decided to use X". Inline rationale only when it prevents a wrong choice: `Use a BTreeMap (iteration order is part of the ABI)` earns its parenthetical; `(Bob suggested this)` doesn't.
-4. Decisions made in comments get edited back into the description — comments are unreliable context and compete with the description for the agent's attention.
-5. AI-drafted prose needs a subtraction pass: LLM drafts restate the outcome in three places and grow "Summary" and "Next steps" sections. The human edit is a cut.
-6. Say what a thing is; never define it by what it isn't. A "note on the name" explaining what the work is *not* is a naming problem — rename the thing.
+Outcome restated under a second heading · background the assignee has · Slack archaeology (the link is the evidence) · "As a user, I want…" · Gherkin · uncheckable checkboxes · "nice to have" in done-when · estimates in the body · boilerplate shared across issues · instructions on how to be an agent · pasted file contents.
 
-## Cut list — delete on sight
+## Quality score
 
-- The outcome restated under a second heading; "Summary"/"Conclusion" sections on a 400-word doc
-- Background the assignee already has; meeting/Slack archaeology (who said what when) — the *link* is the evidence, not the retelling
-- "As a user, I want…" framing; Gherkin wrappers around single assertions
-- Uncheckable checkboxes; "nice to have" mixed into done-when (it's a separate issue or nothing)
-- Estimates/points in the description (that's a field)
-- Boilerplate identical across issues (→ harness rule)
-- "Think step by step", "be careful" — instructions about how to be an agent
-- Whole file contents pasted in — pass paths, let the agent read
-
-## Quality scoring
-
-One point each. State the score whenever drafting or reviewing.
+One point each; state it when drafting or reviewing.
 
 | # | Criterion |
 |---|---|
-| 1 | Imperative title, ≤12 words |
-| 2 | Outcome is one sentence stating the post-ship truth |
-| 3 | Done-when: 2–6 observable, independently checkable assertions |
-| 4 | ≥1 done-when is a runnable command (or named observable check) |
-| 5 | Scope has In, Out, and Appetite |
-| 6 | Under the word cap for its type |
-| 7 | Every constraint severity-marked; none hiding unmarked in prose |
+| 1 | Imperative title ≤12 words |
+| 2 | Outcome is one sentence of post-ship truth |
+| 3 | Done-when: 2–6 observable assertions |
+| 4 | ≥1 done-when is a command or named check |
+| 5 | Scope has In, Out, Appetite |
+| 6 | Under the cap |
+| 7 | Every constraint severity-marked |
 | 8 | Pointers name full paths and prior art |
-| 9 | Hedge-free: no unresolved decision handed to the implementer |
-| 10 | Metadata: priority, category + module label, evidence link, estimate proposed |
+| 9 | Hedge-free; open questions listed as open, not smuggled |
+| 10 | Metadata: priority, category + module label, milestone, due date, estimate proposed, Design block complete when `area:ux` |
 
 | Score | Action |
 |---|---|
-| 9–10 | Eligible for **Ready** once the estimate is human-confirmed |
-| 7–8 | Note the gaps, fix inline |
-| ≤6 | Stays in Backlog/Shaping; propose the rewrite |
+| 9–10 | Ready once the estimate is confirmed and the due date is set |
+| 7–8 | Fix inline, note the gaps |
+| ≤6 | Stays in shaping; propose the rewrite |
 
-## Worked example (feature, ~300 words — at cap density)
+## Worked example (feature with a design stage)
 
 ```markdown
-# Reject malformed ciphertexts at the decryption boundary with a 400
+# Decryption rights page: list the rights a user granted across enabled chains
 
-**Outcome.** Malformed ciphertext input returns a structured 400-class error instead
-of a panic-induced 500, so partners self-diagnose and our 5xx rate means "our fault" again.
+**Outcome.** A connected user opens one page and sees every active right they granted on any enabled chain, with grantee, what it can read, chain, granted date and expiry.
 
 ## Done when
-- [ ] Wrong length, unknown scheme id, and truncated payload each return a 400 with a distinct error code
-- [ ] Error codes documented in `docs/api/errors.md`
-- [ ] `pnpm test --filter fhevm-service decrypt-validation` passes, covering all three cases
-- [ ] Existing decryption tests pass unchanged (correct clients see no behavior change)
+- [ ] Top-level route; wallet menu links to it as "Manage decryption rights"
+- [ ] One list across every enabled chain; unknown grantees shown as address with no name
+- [ ] Loading until every chain answers; any chain failing shows one failure state and no rows
+- [ ] Expired and revoked rights are not shown
+- [ ] Row stays visible with an "Updating" marker after our own revoke until the indexer confirms
+- [ ] One Storybook story per picture 1–7 and 10–12 of the storyboard
+- [ ] `pnpm typecheck && pnpm test -- decryption-rights` passes; `decryption-rights-list.spec.ts` passes on the `indexer` project
 
 ## Scope
-**In:** single-ciphertext decryption endpoint.
-**Out:** encryption endpoint (→ SUP-###), key management, SDK error types, dashboards.
-**Appetite:** one PR.
+**In:** route, multichain query, list, empty and failure states, menu link.
+**Out:** revoke (TEAM-325), external requests (TEAM-323), self-decryption permits.
+**Appetite:** M, one PR.
 
 ## Why
-Partners send malformed ciphertexts; the FHE library panics; we return an opaque 500.
-They open a support ticket, we read logs, it was a 47-byte payload. Report: <slack link>.
+A permission the user cannot find is not one they control. Project decisions: multichain because this is account management; all-or-nothing loading because "none" must never mean "unknown".
+
+## Design
+- Storyboard: <tldraw link>, page "Decryption rights page", pictures 1–7
+- Frames: <Figma file>, frames 1–7; copy v1 in frame notes, owner marketing
+- DS gaps filed: TEAM-39x (Table Row slots), TEAM-39y (Page Header aside)
 
 ## Pointers
-- `services/decrypt.ts` — add validation before the library call
-- `services/errors.ts` — extend `ClientError`; expected length is parameter-set-dependent per key
-- Prior art: input validation in `register-key.ts`
+- `apps/web/modules/wallet/` — session, menu
+- `packages/ui/src/organisms/state-prompt-card.tsx`, `empty-state` — gate and empty conventions
+- `apps/web/app/earn/_components/vaults-table.tsx` — table family to match
 
 ## Constraints
-- MUST NOT panic on any input reachable from the request path.
-- MUST NOT include raw input bytes or key material in error messages — they land in logs.
-- MUST validate at the service boundary, not inside the FHE library (other consumers).
-- SHOULD extend `ClientError` rather than introduce a parallel type.
+- MUST NOT show a partial list when a chain failed.
+- MUST NOT import from `app/earn`; the integrator table lives in a module.
+- MUST take every string as data.
 ```
 
-What the 890-word draft of this lost in compression: nothing. Meeting archaeology (~95 words) changed no decision; the security paragraph became a MUST NOT that can actually bind; four prose invariants became done-whens or MUSTs; "batch path: maybe, if it's cheap" — the worst line, an unresolved scope decision an agent resolves silently — became a decided **Out**; hedges became severity markers; and the repro trace was *added*, free, in the appendix.
+## The one rule
 
-## The one rule if you keep only one
-
-Done-when goes above Why, and one done-when is a runnable command. The reorder puts the contract where both readers actually look; the command makes "done" pass/fail instead of "looks done". Narrative-first structure is what invites narrative-length drafts — remove the opening act and the word count falls on its own.
+Done-when above Why, one done-when a runnable command, and every picture on the storyboard accounted for. That makes "done" pass/fail for the engineer and "designed" pass/fail for the designer.

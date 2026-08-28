@@ -1,67 +1,60 @@
-# Label Taxonomy
+# Labels
 
-Division of labor: **statuses** say where work is in the lifecycle, **relations** say why it's blocked, **labels** say what kind of work it is and where it lives. Labels never duplicate what a status or relation already expresses.
+Statuses say where work is, relations say why it waits, the assignee says who owns it now, labels say what kind of work it is and where it lives. A label never duplicates a status, relation or assignee.
 
-## Category labels (exactly one per issue)
+## Category (exactly one)
 
-| Label | Color | When to apply |
-|---|---|---|
-| `Bug` | Red `#EB5757` | Observed behavior differs from expected behavior. |
-| `Feature` | Purple `#BB87FC` | New capability that doesn't exist yet. |
-| `Improvement` | Blue `#4EA7FC` | Enhancement to existing functionality: DX, performance, API surface, polish. |
-| `Documentation` | Blue `#0075ca` | Docs-only change: guides, API reference, migration notes. |
-| `Spike` | Red `#eb5757` | Time-boxed research. Deliverable is a written decision, not code. "No change" is a valid outcome. |
-| `Security` | Red `#d93f0b` | Vulnerability, audit finding, or hardening task. |
-
-Tie-breaker: adds a new public capability → `Feature`; changes how an existing thing works → `Improvement`.
-
-## Module labels (at most one — where in the product)
-
-| Label | When to apply |
+| Label | When |
 |---|---|
-| `module:platform` | Cross-cutting infra: auth, wallet, tx lifecycle, decryption UX, design system, analytics, compliance, routing. |
-| `module:portfolio` | Home, balances, shield/unshield, transfer, onramp. |
-| `module:earn` | Yield vaults, Morpho integration, batcher, deposits/redemptions. |
-| `module:swap` | cToken-to-cToken exchange, solver/RFQ, quote flow. |
-| `module:activity` | Unified tx history, decryptable receipts, shareable links. |
+| `Bug` | Observed behaviour differs from expected |
+| `Feature` | New capability |
+| `Improvement` | Existing capability changes: DX, performance, API surface, polish |
+| `Documentation` | Docs-only |
+| `Spike` | Time-boxed research; deliverable is a written decision |
+| `Security` | Vulnerability, audit finding, hardening |
 
-## Area labels (additive — what expertise it touches)
+Tie-break: adds a public capability → `Feature`; changes how one works → `Improvement`.
 
-| Label | When to apply |
+## Module (at most one)
+
+| Label | Where |
 |---|---|
-| `area:ux` | Needs design input, UX review, or visual/design-system work. |
-| `area:devx` | Tooling, CI, monorepo setup, linting, testing infra. |
-| `area:sdk` | Involves Zama SDK consumption, dogfooding, or SDK-facing integration. |
+| `module:platform` | Cross-cutting: auth, wallet, tx lifecycle, decryption UX, design system, analytics, compliance, routing |
+| `module:portfolio` | Home, balances, shield/unshield, transfer, onramp |
+| `module:earn` | Vaults, Morpho, batcher, deposits and redemptions |
+| `module:swap` | cToken exchange, solver/RFQ, quote flow |
+| `module:activity` | Transaction history, receipts, shareable links |
+
+## Area (additive)
+
+| Label | Meaning |
+|---|---|
+| `area:ux` | The issue passes through **Design shaping**: it has screens, copy, or design-system work. Drives the Design block and readiness item 8 |
+| `area:devx` | Tooling, CI, monorepo, linting, test infra |
+| `area:sdk` | Zama SDK consumption or SDK-facing integration |
 
 ## State label (the only one)
 
-| Label | When to apply | When to remove |
-|---|---|---|
-| `needs-info` | Waiting on external input: reporter clarification, another team's decision, vendor response. Legal in any status before In Progress. | When the information arrives. |
+`needs-info`: waiting on external input (reporter, another team, vendor). Legal in any status before In Progress; removed when the answer arrives.
 
-## Retired labels — do not apply, migrate on sight
+## Retired — migrate on sight
 
-Migration executed 2026-08-03. If any resurface (restored issues, imports), re-migrate:
+Still present in the workspace as of 2026-08-28; the migration of 2026-08-03 did not delete them.
 
 | Retired | Replacement |
 |---|---|
 | `Enhancement` | `Improvement` |
-| `ui`, `ui-debt` | `area:ux` (+ infer a category label if none remains) |
-| `to-refine` | `needs-scoping` was the old mapping; now → status `Shaping` or `Backlog` |
-| `ready` | Status `Ready` (gate in [SKILL.md](../SKILL.md)) |
-| `needs-scoping` | Status `Backlog`/`Shaping` |
-| `blocked` | Blocking **relation** only |
-| `epic` | Project, or plain parent issue with sub-issues ([PROJECT-WRITING.md](PROJECT-WRITING.md)). Grandfathered on existing epics until promoted. |
-| `KR 1.1` | Project → initiative link |
+| `ui`, `ui-debt` | `area:ux` (+ a category label if none remains) |
+| `to-refine`, `needs-scoping` | Status `Backlog` or `Product shaping` |
+| `ready` | Status `Ready` |
+| `blocked` | A `blockedBy` relation |
+| `epic` | Project, or parent issue with sub-issues |
 
-## Provisioning
+## Enforcement
 
-Before applying a label, check it exists via `list_issue_labels`; create missing canonical labels with `create_issue_label` using the colors above. Never create labels outside this taxonomy without asking.
-
-## Enforcement during triage
-
-1. **Exactly one category label?** Infer from title/description and propose.
-2. **Module label present** where the issue clearly belongs to one module? Propose it.
-3. **Retired label present?** Migrate per the table.
-4. **Stale `needs-info`?** Check comments — if the answer arrived, propose removal and a status move.
-5. **`blocked`-style prose** ("waiting on X") without a relation? Propose the relation.
+1. Exactly one category label; propose from title and description.
+2. Module label where the issue clearly belongs to one.
+3. Retired label → migrate.
+4. `needs-info` with the answer in comments → remove and propose the status move.
+5. "Waiting on X" in prose without a relation → propose the relation.
+6. Check a label exists with `list_issue_labels` before applying; create canonical ones with `create_issue_label`; ask before creating anything outside this taxonomy.
