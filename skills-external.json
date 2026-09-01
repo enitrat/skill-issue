@@ -35,6 +35,10 @@
     {
       "name": "technical-writing",
       "source": "https://github.com/cursor/plugins/tree/main/pstack/skills/technical-writing"
+    },
+    {
+      "name": "show-me",
+      "source": "https://github.com/humanlayer/skills/tree/main/plugins/show-me/skills/show-me"
     }
   ]
 }
