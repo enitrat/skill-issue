@@ -39,6 +39,10 @@
     {
       "name": "show-me",
       "source": "https://github.com/humanlayer/skills/tree/main/plugins/show-me/skills/show-me"
+    },
+    {
+      "name": "thermo-nuclear-code-quality-review",
+      "source": "https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review"
     }
   ]
 }
