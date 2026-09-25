@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -53,6 +60,17 @@ for (const skill of manifest.skills ?? []) {
     }
     rmSync(destination, { recursive: true, force: true });
     cpSync(fetched, destination, { recursive: true });
+
+    if (skill.modelInvocable) {
+      const skillFile = join(destination, "SKILL.md");
+      writeFileSync(
+        skillFile,
+        readFileSync(skillFile, "utf8").replace(
+          /^disable-model-invocation:.*\n/m,
+          "",
+        ),
+      );
+    }
   } finally {
     rmSync(stagingRoot, { recursive: true, force: true });
   }

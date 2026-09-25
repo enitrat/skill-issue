@@ -42,7 +42,8 @@
     },
     {
       "name": "thermo-nuclear-code-quality-review",
-      "source": "https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review"
+      "source": "https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review",
+      "modelInvocable": true
     }
   ]
 }
