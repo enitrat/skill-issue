@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Vendors pstack from cursor/plugins. Usage: plugins/pstack/sync [ref]
+set -euo pipefail
+
+ref="${1:-main}"
+here="$(cd "$(dirname "$0")" && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+git clone -q --depth 1 --branch "$ref" --filter=blob:none --sparse https://github.com/cursor/plugins "$tmp"
+git -C "$tmp" sparse-checkout set pstack
+
+rm -rf "$here/skills" "$here/agents"
+cp -R "$tmp/pstack/skills" "$tmp/pstack/agents" "$here/"
+cp "$tmp/pstack/LICENSE" "$here/LICENSE"
+
+# Cursor-only: writes ~/.cursor/rules, drives Grok Bot webhooks.
+rm -rf "$here/skills/setup-pstack" "$here/skills/make-bot-ui"
+
+# Claude-only: every model slug becomes `opus`, so panels run as N Opus runners.
+find "$here/skills" "$here/agents" -name '*.md' -exec sed -i '' -E \
+  's/claude-opus-5-5-max|gpt-5\.6-sol-max|grok-4\.7-xhigh-fast/opus/g' {} +
+
+version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$tmp/pstack/.cursor-plugin/plugin.json")"
+sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$version\"/" "$here/.claude-plugin/plugin.json"
+git -C "$tmp" rev-parse HEAD > "$here/UPSTREAM"
+echo "pstack $version @ $(cat "$here/UPSTREAM")"

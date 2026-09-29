@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Vendors Emil Kowalski's skills (emilkowalski/skills). Usage: plugins/emil/sync [ref]
+set -euo pipefail
+
+ref="${1:-main}"
+here="$(cd "$(dirname "$0")" && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+git clone -q --depth 1 --branch "$ref" https://github.com/emilkowalski/skills "$tmp"
+
+rm -rf "$here/skills"
+cp -R "$tmp/skills" "$here/skills"
+cp "$tmp/LICENSE" "$here/LICENSE"
+git -C "$tmp" rev-parse HEAD > "$here/UPSTREAM"
+echo "emil @ $(cat "$here/UPSTREAM")"

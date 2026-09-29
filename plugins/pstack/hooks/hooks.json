@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sed \"s|{{root}}|${CLAUDE_PLUGIN_ROOT}|g\" \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-code.md\""
+          }
+        ]
+      }
+    ]
+  }
+}

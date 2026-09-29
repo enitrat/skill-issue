@@ -1,0 +1,8 @@
+{
+  "name": "emil",
+  "version": "0.1.0",
+  "description": "Emil Kowalski's design-engineering and animation skills, vendored for Claude Code.",
+  "author": { "name": "Emil Kowalski" },
+  "homepage": "https://emilkowal.ski/skill",
+  "license": "MIT"
+}

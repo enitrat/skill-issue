@@ -54,6 +54,28 @@ are also linked through `tools/`, so `chezmoi apply` exposes `tg`, `agent-conv`,
 and `slack-user` on `$PATH`. Their credentials remain outside the repository in
 the locations documented by each skill.
 
+## Claude Code Plugins
+
+`plugins/` is a Claude Code marketplace for skill bundles that should be toggled
+as a unit instead of installed flat. It sits outside the repo root so
+`npx skills add .` ignores it.
+
+```bash
+claude plugin marketplace add ~/workspace/skill-issue/plugins
+claude plugin install pstack@skill-issue            # user scope, on everywhere
+claude plugin install emil@skill-issue
+claude plugin disable pstack@skill-issue            # off by default
+claude plugin enable pstack@skill-issue --scope local   # on for one repo only
+```
+
+`plugins/pstack/` vendors [pstack](https://github.com/cursor/plugins/tree/main/pstack).
+`make pstack-sync` refreshes it; `plugins/pstack/UPSTREAM` pins the commit.
+`hooks/claude-code.md` maps its Cursor-specific instructions to Claude Code.
+
+`plugins/emil/` vendors the [Emil Kowalski](https://emilkowal.ski/skill) skills
+(design engineering, animation, Apple design, mobile/Swift, UI library picker).
+`make emil-sync` refreshes it; `plugins/emil/UPSTREAM` pins the commit.
+
 ## How It Fits Together
 
 | Area | Source of truth | Applied by | Target |

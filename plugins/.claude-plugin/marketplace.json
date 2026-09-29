@@ -1,0 +1,21 @@
+{
+  "name": "skill-issue",
+  "owner": {
+    "name": "Mathieu"
+  },
+  "plugins": [
+    {
+      "name": "pstack",
+      "source": "./pstack",
+      "description": "poteto's pstack (cursor/plugins), vendored for Claude Code: poteto-mode, playbooks, principles, how, architect, interrogate."
+    },
+    {
+      "name": "emil",
+      "source": "./emil",
+      "description": "Emil Kowalski's skills (emilkowal.ski/skill), vendored: design engineering, animation, Apple design, mobile/Swift, UI library picking."
+    }
+  ],
+  "metadata": {
+    "description": "Claude Code plugins bundled from skill-issue."
+  }
+}
