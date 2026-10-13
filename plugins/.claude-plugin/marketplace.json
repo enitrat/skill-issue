@@ -13,6 +13,11 @@
       "name": "emil",
       "source": "./emil",
       "description": "Emil Kowalski's skills (emilkowal.ski/skill), vendored: design engineering, animation, Apple design, mobile/Swift, UI library picking."
+    },
+    {
+      "name": "mermaid-term",
+      "source": "./mermaid-term",
+      "description": "Mod that draws ```mermaid blocks in replies as Unicode diagrams via mmdflux (cargo install mmdflux)."
     }
   ],
   "metadata": {

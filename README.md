@@ -64,6 +64,7 @@ as a unit instead of installed flat. It sits outside the repo root so
 claude plugin marketplace add ~/workspace/skill-issue/plugins
 claude plugin install pstack@skill-issue            # user scope, on everywhere
 claude plugin install emil@skill-issue
+claude plugin install mermaid-term@skill-issue
 claude plugin disable pstack@skill-issue            # off by default
 claude plugin enable pstack@skill-issue --scope local   # on for one repo only
 ```
@@ -75,6 +76,11 @@ claude plugin enable pstack@skill-issue --scope local   # on for one repo only
 `plugins/emil/` vendors the [Emil Kowalski](https://emilkowal.ski/skill) skills
 (design engineering, animation, Apple design, mobile/Swift, UI library picker).
 `make emil-sync` refreshes it; `plugins/emil/UPSTREAM` pins the commit.
+
+`plugins/mermaid-term/` is a mod: it redraws ```` ```mermaid ```` fences in
+replies as Unicode diagrams by piping them through
+[mmdflux](https://github.com/kevinswiber/mmdflux) (`cargo:mmdflux` in
+`packages.toml`). Unsupported or too-wide diagrams stay as source.
 
 ## How It Fits Together
 

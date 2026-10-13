@@ -78,6 +78,9 @@ name = "github:schpet/linear-cli"
 # Hosted on GitLab with no release binaries, so it has to be built.
 [[mise]]
 name = "cargo:mergiraf"
+# Renders Mermaid as Unicode text for the mermaid-term Claude Code mod.
+[[mise]]
+name = "cargo:mmdflux"
 # The Homebrew formula depends on Homebrew's Node; the npm package reuses the
 # mise-managed runtime.
 [[mise]]
