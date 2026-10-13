@@ -1,6 +1,0 @@
-{
-  "name": "mermaid-term",
-  "version": "0.1.0",
-  "description": "Draws ```mermaid blocks in replies as Unicode diagrams via mmdflux",
-  "author": { "name": "Mathieu" }
-}
