@@ -9,8 +9,8 @@
       "source": "https://github.com/ClementWalter/tg-cli"
     },
     {
-      "name": "agent-conv-cli",
-      "source": "https://github.com/ClementWalter/agent-conv-cli"
+      "name": "one-conv-cli",
+      "source": "https://github.com/ClementWalter/one-conv-cli"
     },
     {
       "name": "slack-user-cli",
