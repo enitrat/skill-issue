@@ -19,7 +19,7 @@ rm -rf "$here/skills/setup-pstack" "$here/skills/make-bot-ui"
 
 # Claude-only: every model slug becomes `opus`, so panels run as N Opus runners.
 find "$here/skills" "$here/agents" -name '*.md' -exec sed -i '' -E \
-  's/claude-opus-5-5-max|gpt-5\.6-sol-max|grok-4\.7-xhigh-fast/opus/g' {} +
+  's/claude-opus-5-5-[a-z]+|gpt-5\.6-sol-[a-z]+|grok-4\.7-[a-z-]+/opus/g' {} +
 
 version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$tmp/pstack/.cursor-plugin/plugin.json")"
 sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$version\"/" "$here/.claude-plugin/plugin.json"
