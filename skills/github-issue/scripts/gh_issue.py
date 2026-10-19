@@ -858,109 +858,48 @@ def labels(
 @app.command()
 def init(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
-    template: str = typer.Option("default", "--template", "-t", help="Template: default, bug, feature"),
+    template: str = typer.Option("task", "--template", "-t", help="Template: task, question, bug"),
 ):
-    """Initialize an issue body file with the Why/What/How template."""
+    """Initialize an issue body file for one of the three issue shapes."""
     templates = {
-        "default": """## Why
+        "task": """## What
 
-Currently, [describe current state/behavior].
+[The change in product terms: what a user or caller can do afterwards.]
 
-This causes [specific problem or bottleneck], which [impact on users/system/workflow].
+## Why
 
-Addressing this will [concrete benefit - improved metrics, unlocked capabilities, better UX].
-
-## What
-
-[Verb] [specific thing] to [achieve outcome].
-
-Scope:
-- [In scope item 1]
-- [In scope item 2]
-
-Out of scope:
-- [Explicitly excluded item]
+[The concrete problem. Then the system, so a newcomer gets it in one read.]
 
 ## How
 
-Approach: [brief strategy - e.g., "Extend existing X pattern", "Add new Y component"]
+Guidance only. [Owner] owns the final shape.
 
-Key areas:
-1. [Component/file] - [what changes here]
-2. [Component/file] - [what changes here]
-
-## Acceptance Criteria
-
-- [ ] [Observable behavior or state that confirms completion]
-- [ ] [Integration with existing system works as expected]
-- [ ] [Edge case or error condition handled]
-
-## Testing Plan
-
-- [ ] [How to manually verify the change]
-- [ ] [Key integration scenario to test]
+- [Pointer: prior art, a link, a constraint]
 """,
-        "bug": """## Bug Description
+        "question": """**Question.** [One sentence ending in ?]
 
-**Current behavior**: [What happens now]
+## What we found
 
-**Expected behavior**: [What should happen]
+[Evidence, with links.]
 
-**Steps to reproduce**:
-1. [Step 1]
-2. [Step 2]
-3. [Observe error]
+## Options
 
-## Environment
+1. [Option and its cost]
+2. Something else?
 
-- Version: [version]
-- OS: [operating system]
-- Browser: [if applicable]
-
-## Additional Context
-
-[Any error messages, logs, screenshots]
-
-## Acceptance Criteria
-
-- [ ] Bug no longer reproduces with steps above
-- [ ] No regression in related functionality
+[Who decides.]
 """,
-        "feature": """## Why
+        "bug": """## What happens
 
-[Background and motivation for this feature]
+[Verbatim error or observed behaviour.]
 
-**User story**: As a [type of user], I want [goal] so that [benefit].
+## Expected
 
-## What
+[What should happen.]
 
-[Specific feature description]
+## How to reproduce
 
-Scope:
-- [Feature aspect 1]
-- [Feature aspect 2]
-
-Out of scope:
-- [What this does NOT include]
-
-## How
-
-Approach: [High-level implementation strategy]
-
-Key components:
-1. [Component] - [purpose]
-2. [Component] - [purpose]
-
-## Acceptance Criteria
-
-- [ ] [User can do X]
-- [ ] [System behaves as Y]
-- [ ] [Edge case Z handled]
-
-## Testing Plan
-
-- [ ] [Manual verification steps]
-- [ ] [Integration test scenario]
+1. [Step]
 """,
     }
 
