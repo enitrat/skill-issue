@@ -24,6 +24,8 @@ name = "difftastic"
 [[mise]]
 name = "eza"
 [[mise]]
+name = "ffmpeg"
+[[mise]]
 name = "fd"
 [[mise]]
 name = "fzf"
