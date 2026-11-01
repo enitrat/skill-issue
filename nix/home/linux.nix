@@ -30,6 +30,10 @@
   # in /tmp, which Boat never restores. herdr creates the directory.
   home.sessionVariables.HERDR_SOCKET_PATH = "/tmp/herdr-user/herdr.sock";
 
+  # Playwright's default, ~/.cache/ms-playwright, is not kept in a Boat snapshot, so a
+  # box would download its browsers again.
+  home.sessionVariables.PLAYWRIGHT_BROWSERS_PATH = "$HOME/.local/share/ms-playwright";
+
   # Standalone home-manager manages its own CLI.
   programs.home-manager.enable = true;
 

@@ -41,6 +41,7 @@ check "rg: config file in use" test -r "$RIPGREP_CONFIG_PATH"
 check "repo tools linked" test -x ~/.local/bin/git-id
 if [[ $OSTYPE == linux* ]]; then
     check "herdr: socket outside the restored disk" eval '[[ $HERDR_SOCKET_PATH == /tmp/* ]]'
+    check "playwright: browsers outside ~/.cache" eval '[[ $PLAYWRIGHT_BROWSERS_PATH == $HOME/.local/* ]]'
     check "nix: daemon restarts after a Boat restore" systemctl is-enabled nix-after-restore.service
 fi
 
