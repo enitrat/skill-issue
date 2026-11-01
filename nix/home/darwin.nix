@@ -23,6 +23,9 @@ in
     # OrbStack's own integration: docker, orb and friends on PATH.
     source ~/.orbstack/shell/init.zsh 2>/dev/null || :
   '';
+  # The Boat CLI's own installer and self-updater keep it here.
+  home.sessionPath = [ "$HOME/.ascii/bin" ];
+
   # ...and `ssh orb`.
   programs.ssh.includes = [ "~/.orbstack/ssh/config" ];
 

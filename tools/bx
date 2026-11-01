@@ -1,0 +1,273 @@
+#!/bin/bash
+# bx: Boat sandboxes for development. Builds the saved snapshots that task sandboxes
+# start from, and creates, lists and removes those sandboxes together with their herdr
+# machine entries. Everything else is plain `boat`.
+set -euo pipefail
+
+VERSION="0.2.0"
+
+# A stopped sandbox older than this is garbage for `bx gc`.
+GC_DAYS=3
+
+usage() {
+  cat <<'EOF'
+bx - Boat sandboxes for development
+
+USAGE
+    bx new --env <env> --name <name>
+                            Start a sandbox from `<env>-base`, log gh in with your token,
+                            and add it to herdr under <name>
+    bx ls                   List sandboxes: name, id, state, age, whether herdr has them
+    bx list                 List envs to start from: built or not, age, size, repos
+    bx rm <name|id>         Remove a sandbox from herdr and delete it
+    bx gc                   Find sandboxes stopped for over 3 days and herdr entries whose
+                            sandbox is gone; delete them after asking
+    bx bake dev             Build the `dev-base` snapshot: bare Ubuntu plus bootstrap/linux.sh
+    bx bake <env>           Build `<env>-base` from `dev-base`: clone the repos listed in
+                            ~/.config/bx/<env> into ~/<env>/ and install their dependencies
+    bx --help | --version
+
+Sandbox names are unique, so a name works wherever an id does. `ssh` and herdr use the id
+(`ssh bx_<id>`, or `bx_<id>.wake` to resume a stopped one).
+
+Snapshots hold no credentials. A sandbox from `bx new` gets Boat's agent logins from your
+default Boat environment, plus your `gh auth token` and git name and email, so agents can
+commit, push and open pull requests. Deleting the sandbox deletes them.
+
+An env file lists one owner/repo per line. It stays on this Mac, so private repo names
+never reach this public repository. `bx bake` clones with your `gh auth token`, sent over
+SSH for the clone only: no token is written to the build sandbox or kept in the snapshot.
+Each repo gets: git submodules, `pnpm install --frozen-lockfile` when it has a pnpm
+lockfile, and `make setup` when its Makefile has that target.
+
+Build sandboxes start with --no-env, so no Boat credentials land in a snapshot. A failed
+build keeps its sandbox for inspection and prints how to delete it.
+EOF
+}
+
+die() { echo "bx: $*" >&2; exit 1; }
+log() { echo "bx: $*" >&2; }
+
+# Every sandbox, in any state, as JSON lines: {id, name, state, createdAt, stoppedAt}.
+sandboxes() {
+  boat list --all --json | jq -c '.sandboxes[] | {id, name, state, createdAt, stoppedAt}'
+}
+
+# herdr machine entries that point at a Boat sandbox, as JSON lines.
+herdr_boxes() {
+  herdr machine list --json | jq -c '.[] | select(.target | startswith("bx_"))'
+}
+
+# Prints the id of the sandbox named or numbered $1.
+resolve() {
+  case $1 in bx_*) echo "$1"; return ;; esac
+  local ids
+  ids=$(sandboxes | jq -r --arg n "$1" 'select(.name == $n) | .id')
+  [ -n "$ids" ] || die "no sandbox named $1"
+  [ "$(printf '%s\n' "$ids" | wc -l)" -eq 1 ] || die "several sandboxes are named $1; use the id"
+  echo "$ids"
+}
+
+# Removes the herdr entries for sandbox $1, if any.
+herdr_forget() {
+  local profile
+  for profile in $(herdr_boxes | jq -r --arg id "$1" 'select(.target == $id) | .id'); do
+    herdr machine remove "$profile" >/dev/null
+  done
+}
+
+new() {
+  local env=$1 name=$2 id
+  if ! boat snapshots --json | jq -e --arg n "$env-base" '.named[] | select(.name == $n)' >/dev/null; then
+    die "no env $env: $env-base is not built. See bx list"
+  fi
+  if sandboxes | jq -e --arg n "$name" 'select(.name == $n)' >/dev/null; then
+    die "a sandbox named $name exists; pick another name or bx rm $name"
+  fi
+  log "starting $name from $env-base"
+  id=$(boat new --from "$env-base" --name "$name" --json | jq -r 'select(.event == "ready") | .id' | grep .) \
+    || die "could not create $name from $env-base"
+  log "$id: logging gh in and setting your git identity"
+  # The token travels on stdin only, never in a command line or Boat's variables. It goes
+  # straight into hosts.yml: `gh auth login` also rewrites config.yml, which home-manager
+  # owns read-only.
+  gh auth token | ssh -o BatchMode=yes "$id" "
+    set -e
+    read -r token
+    mkdir -p ~/.config/gh
+    (umask 077; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: %s\n' \"\$token\" $(printf %q "$(gh api user -q .login)") > ~/.config/gh/hosts.yml)
+    gh auth status >/dev/null
+    git config -f ~/.gitconfig.local user.name $(printf %q "$(git config user.name)")
+    git config -f ~/.gitconfig.local user.email $(printf %q "$(git config user.email)")
+  " || die "could not log gh in on $id. Delete: bx rm $id"
+  log "$id: adding to herdr as $name"
+  herdr machine add "$id" --label "$name" >/dev/null || log "herdr machine add failed; run it yourself: herdr machine add $id --label $name"
+  echo "$id"
+  log "ready: ssh $id"
+}
+
+list_envs() {
+  local built files=() f
+  built=$(boat snapshots --json | jq -c '[.named[] | select(.name | endswith("-base"))]')
+  for f in "$HOME"/.config/bx/*; do [ -f "$f" ] && files+=("$(basename "$f")"); done
+  {
+    printf 'ENV\tBUILT\tSIZE\tREPOS\n'
+    for env in $( (echo dev; printf '%s\n' "${files[@]+"${files[@]}"}"; echo "$built" | jq -r '.[].name | sub("-base$"; "")') | sort -u); do
+      local repos=-
+      [ "$env" = dev ] && repos="(bootstrap only)"
+      [ -f "$HOME/.config/bx/$env" ] && repos=$(grep -v -e '^#' -e '^$' "$HOME/.config/bx/$env" | paste -sd, -)
+      echo "$built" | jq -r --arg n "$env-base" --arg l "$env" --arg r "$repos" '
+        (map(select(.name == $n)) | first) as $s
+        | if $s == null then [$l, "not built", "-", $r]
+          else [$l, ((now - ($s.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 86400
+                     | if . < 1 then "today" else "\(floor)d ago" end),
+                "\($s.sizeBytes / 1e9 * 10 | round / 10) GB", $r] end | @tsv'
+    done
+  } | column -t -s "$(printf '\t')"
+}
+
+ls_boxes() {
+  local herdr_ids
+  herdr_ids=$(herdr_boxes | jq -r '.target' | tr '\n' ' ')
+  sandboxes | jq -r --arg herdr " $herdr_ids" '
+    def age: (now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 3600
+      | if . < 48 then "\(floor)h" else "\(. / 24 | floor)d" end;
+    .id as $id | [.name, .id, .state, age, (if ($herdr | contains(" \($id) ")) then "herdr" else "" end)] | @tsv' \
+    | (printf 'NAME\tID\tSTATE\tAGE\tHERDR\n'; cat) | column -t -s "$(printf '\t')"
+}
+
+rm_box() {
+  local id
+  id=$(resolve "$1")
+  herdr_forget "$id"
+  boat delete "$id" --yes >/dev/null
+  log "deleted $id"
+}
+
+gc() {
+  local stale gone line answer
+  stale=$(sandboxes | jq -r --argjson days "$GC_DAYS" '
+    select(.state == "stopped" and .stoppedAt != null)
+    | select((now - (.stoppedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) > $days * 86400)
+    | "\(.id)\t\(.name)"')
+  local live
+  live=" $(sandboxes | jq -r .id | tr '\n' ' ')"
+  gone=$(herdr_boxes | jq -r --arg live "$live " \
+    '.target as $t | select($live | contains(" \($t) ") | not) | $t')
+  if [ -z "$stale" ] && [ -z "$gone" ]; then log "nothing to clean"; return; fi
+  [ -z "$stale" ] || { echo "Sandboxes stopped for over $GC_DAYS days, to delete:"; printf '  %s\n' "$stale"; }
+  [ -z "$gone" ] || { echo "herdr entries whose sandbox is gone, to remove:"; printf '  %s\n' "$gone"; }
+  printf 'Proceed? [y/N] '
+  read -r answer
+  [ "$answer" = y ] || { log "nothing changed"; return; }
+  for line in $(printf '%s\n' "$stale" | cut -f1); do rm_box "$line"; done
+  for line in $gone; do herdr_forget "$line"; done
+}
+
+# Linux side of a env build. stdin: the GitHub token. Arguments: env, then owner/repo...
+env_script() {
+  cat <<'EOF'
+set -euo pipefail
+read -r GH_TOKEN
+export GH_TOKEN
+. "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh"
+export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
+env=$1
+shift
+for repo in "$@"; do
+  dir="$HOME/$env/${repo#*/}"
+  echo "== $repo -> $dir"
+  [ -d "$dir/.git" ] || git clone --quiet "https://github.com/$repo" "$dir"
+  cd "$dir"
+  git submodule update --init --recursive --quiet
+  if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile --reporter=silent; fi
+  if grep -q '^setup:' Makefile 2>/dev/null; then make setup; fi
+done
+EOF
+}
+
+# Creates a sandbox and prints its id. Arguments go to `boat new`.
+create() {
+  boat new --no-env --json "$@" | jq -r 'select(.event == "ready") | .id' | grep . \
+    || die "could not create a sandbox"
+}
+
+# Waits for the setup script that `boat new --setup-file` started.
+wait_setup() {
+  local status
+  while :; do
+    status=$(boat info "$1" --json | jq -r '.sandbox.setupStatus')
+    case $status in
+      running | pending | null) sleep 5 ;;
+      done) return ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+bake() {
+  local env=$1 id snapshot=$1-base
+  if [ "$env" = dev ]; then
+    local setup
+    setup=$(mktemp)
+    # shellcheck disable=SC2016 # $HOME expands on the sandbox, not here.
+    printf '%s\n' '#!/bin/bash' 'set -euo pipefail' \
+      'curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/main/bootstrap/linux.sh | bash' \
+      '"$HOME/skill-issue/bootstrap/check.sh"' >"$setup"
+    log "creating a bare sandbox"
+    id=$(create --name "bake-$snapshot" --setup-file "$setup")
+    rm -f "$setup"
+    log "$id: running the bootstrap (about 2 minutes)"
+    wait_setup "$id" || die "bootstrap failed on $id. Inspect: boat info $id. Delete: boat delete $id"
+  else
+    local list=$HOME/.config/bx/$env line repos=()
+    [ -f "$list" ] || die "no env file $list (one owner/repo per line)"
+    # macOS ships bash 3.2, which has no mapfile.
+    while read -r line; do
+      case $line in '' | '#'*) ;; *) repos+=("$line") ;; esac
+    done <"$list"
+    [ ${#repos[@]} -gt 0 ] || die "$list lists no repos"
+    log "creating a sandbox from dev-base"
+    id=$(create --from dev-base --name "bake-$snapshot")
+    log "$id: cloning ${repos[*]}"
+    env_script | ssh -o BatchMode=yes "$id" 'cat > /tmp/bx-env.sh'
+    gh auth token | ssh -o BatchMode=yes "$id" bash /tmp/bx-env.sh "$env" "${repos[@]}" \
+      || die "env setup failed on $id. Inspect: ssh $id. Delete: boat delete $id"
+    ssh -o BatchMode=yes "$id" rm /tmp/bx-env.sh
+  fi
+  log "$id: saving as $snapshot"
+  boat snapshot "$id" "$snapshot" --json | jq -e 'select(.event == "saved")' >/dev/null \
+    || die "could not save $snapshot from $id"
+  boat delete "$id" --yes >/dev/null
+  log "saved $snapshot. Start from it: boat new --from $snapshot"
+}
+
+case ${1:-} in
+  -h | --help) usage ;;
+  --version) echo "bx $VERSION" ;;
+  new)
+    shift
+    env='' name=''
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --env) env=${2:-}; shift 2 || true ;;
+        --name) name=${2:-}; shift 2 || true ;;
+        *) die "unknown argument $1. Usage: bx new --env <env> --name <name>" ;;
+      esac
+    done
+    [ -n "$env" ] && [ -n "$name" ] || die "usage: bx new --env <env> --name <name>"
+    new "$env" "$name"
+    ;;
+  ls) ls_boxes ;;
+  list) list_envs ;;
+  rm)
+    [ $# -eq 2 ] || die "usage: bx rm <name|id>"
+    rm_box "$2"
+    ;;
+  gc) gc ;;
+  bake)
+    [ $# -eq 2 ] || die "usage: bx bake <dev|env>"
+    bake "$2"
+    ;;
+  *) usage >&2; exit 1 ;;
+esac

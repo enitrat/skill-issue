@@ -77,9 +77,9 @@ ensure_running() {
 authorize() {
   mkdir -p "$cache"
   umask 077
-  call POST "/sandboxes/$id/sshkey" "$(jq -nc --arg k "$(cat "$pubkey")" '{key: $k}')" >"$cache/$id.json.tmp" \
+  call POST "/sandboxes/$id/sshkey" "$(jq -nc --arg k "$(cat "$pubkey")" '{key: $k}')" >"$cache/$id.json.$$" \
     || die "could not authorize the SSH key on $id"
-  mv "$cache/$id.json.tmp" "$cache/$id.json"
+  mv "$cache/$id.json.$$" "$cache/$id.json"
 }
 
 case $mode in

@@ -43,8 +43,9 @@ if [ ! -e "$repo_dir/flake.nix" ]; then
 fi
 
 log "switching home-manager to $flake_output"
-# -b moves files that home-manager would overwrite (a stock .zshrc) aside.
-nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$flake_output" -b pre-nix
+# -b moves files that home-manager would overwrite (a stock .zshrc) aside. Run from
+# a scratch directory: the first switch leaves its build links in the current one.
+(cd "$(mktemp -d)" && nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$flake_output" -b pre-nix)
 
 zsh_path=$(command -v zsh)
 if [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$zsh_path" ]; then
