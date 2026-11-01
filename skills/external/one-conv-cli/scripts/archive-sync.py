@@ -1,7 +1,12 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
-# dependencies = ["click==8.3.3"]
+# requires-python = ">=3.12"
+# dependencies = [
+#     "click==8.3.3",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
 # ///
 """Copy native conversations into an archive. Native files change only through --free-older-than and --restore."""
 
@@ -9,6 +14,7 @@ import argparse
 import base64
 import dataclasses
 import errno
+import fcntl
 import importlib.machinery
 import importlib.util
 import json
@@ -30,10 +36,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from one_conv.archive import (
     SYNC_LOCK,
-    SYNC_STALE_SECONDS,
     SYNC_STATE,
     ArchiveError,
     configured_client,
+    configured_origin,
     conversation_key,
     digest,
     encode,
@@ -45,11 +51,11 @@ from one_conv.archive import (
 )
 
 # Captures re-run when the reader or this capture code changes, even if sources did not.
-CAPTURE_VERSION = digest((ROOT / "bin/one-conv").read_bytes() + Path(__file__).read_bytes())
+CAPTURE_VERSION = digest((ROOT / "one_conv_cli.py").read_bytes() + Path(__file__).read_bytes())
 
 
 def load_reader():
-    loader = importlib.machinery.SourceFileLoader("archive_reader", str(ROOT / "bin/one-conv"))
+    loader = importlib.machinery.SourceFileLoader("archive_reader", str(ROOT / "one_conv_cli.py"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     reader = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = reader
@@ -187,16 +193,24 @@ def source_stamp(reader, handle, paths):
     return digest(encode(fingerprint(paths)))
 
 
-def load_stamps(reader):
+def lane_file(name, lane):
+    """A state file of one sync lane; lanes run concurrently, so each keeps its own lock, state and stamps."""
+    if not lane:
+        return name
+    stem, dot, suffix = name.rpartition(".")
+    return f"{stem}-{lane}{dot}{suffix}"
+
+
+def load_stamps(reader, lane=""):
     try:
-        stamps = json.loads((reader.STATE_DIR / "archive-stamps.json").read_text())
+        stamps = json.loads((reader.STATE_DIR / lane_file("archive-stamps.json", lane)).read_text())
     except (OSError, ValueError):
         return {}
     return stamps if isinstance(stamps, dict) else {}
 
 
-def save_stamps(reader, stamps):
-    path = reader.STATE_DIR / "archive-stamps.json"
+def save_stamps(reader, stamps, lane=""):
+    path = reader.STATE_DIR / lane_file("archive-stamps.json", lane)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     partial = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     partial.write_text(json.dumps(stamps, sort_keys=True))
@@ -304,6 +318,10 @@ def captured_copy(reader, handle, paths, originals):
         yield rebuilt_handle(reader, handle, root / handle.path.relative_to(base))
 
 
+class EmptyConversation(ArchiveError):
+    """A conversation that holds nothing yet, such as a Cursor chat opened and never used."""
+
+
 def original_records(reader, handle, paths):
     if handle.source == "cursor":
         conn = reader._cursor_connect()
@@ -312,12 +330,17 @@ def original_records(reader, handle, paths):
         try:
             rows = conn.execute("SELECT key, value FROM cursorDiskKV WHERE key = ? OR key LIKE ?",
                 (f"composerData:{handle.composer_id}", f"bubbleId:{handle.composer_id}:%")).fetchall()
-            if not rows:
-                raise ArchiveError("Cursor conversation records are unavailable")
             header = conn.execute("SELECT composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, value "
                                   "FROM composerHeaders WHERE composerId = ?", (handle.composer_id,)).fetchone()
+            if not rows:
+                # Cursor lists a chat as soon as it is opened but writes its records only on first use.
+                if header is not None:
+                    raise EmptyConversation("Cursor conversation has no messages yet")
+                raise ArchiveError("Cursor conversation records are unavailable")
             # One record keeps a conversation's many small rows in a few chunks.
-            return {"cursorDiskKV": encode({key: base64.b64encode(value if isinstance(value, bytes) else value.encode()).decode()
+            # Cursor leaves some unreferenced bubble rows NULL; they stay null so the copy is exact.
+            return {"cursorDiskKV": encode({key: None if value is None else
+                                            base64.b64encode(value if isinstance(value, bytes) else value.encode()).decode()
                                             for key, value in sorted(rows, key=lambda row: row[0])}),
                     "composerHeaders": encode(list(header) if header else None)}
         finally:
@@ -375,18 +398,19 @@ def history_roots(reader, source):
 
 
 def acquire_lock(path):
-    for _ in range(2):
-        try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-            return True
-        except FileExistsError:
-            try:
-                if time.time() - path.stat().st_mtime < SYNC_STALE_SECONDS:
-                    return False
-                path.unlink()  # The previous sync stopped without releasing it.
-            except FileNotFoundError:
-                pass
-    return False
+    """Hold the sync lock for the rest of this process.
+
+    The OS releases it when the process ends, even killed or with its machine put to sleep,
+    so an interrupted sync never blocks the next one: a session on a machine that goes away
+    can only be taken over up to its last upload.
+    """
+    descriptor = os.open(path, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+        return False
+    return True
 
 
 def running_reason(handle, paths):
@@ -567,6 +591,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", choices=reader.SOURCES, action="append")
     parser.add_argument("--project", help="Restrict to project paths containing this text")
+    parser.add_argument("--lane", default="", choices=("", "ide"),
+                        help="Run as a separate lane with its own lock and state, beside the default sync")
     parser.add_argument("--limit", type=int, default=0, help="Maximum conversations (0 = all)")
     parser.add_argument("--free-older-than", type=int, metavar="DAYS",
                         help=f"After syncing, delete native {'/'.join(FREEABLE_SOURCES)} files unchanged for DAYS "
@@ -583,12 +609,14 @@ def main():
     if args.restore:
         print(json.dumps(restore(reader, client, args.restore)))
         return 0
-    origin = origin_id(reader)
-    lock = reader.STATE_DIR / SYNC_LOCK
+    # A live node uploads under its node name, which its NODE/harness:id addresses carry.
+    origin = configured_origin() or origin_id(reader)
+    reader.STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock = reader.STATE_DIR / lane_file(SYNC_LOCK, args.lane)
     if not acquire_lock(lock):
         print(json.dumps({"skipped": "another sync is running"}))
         return 0
-    state_path, started = reader.STATE_DIR / SYNC_STATE, time.time()
+    state_path, started = reader.STATE_DIR / lane_file(SYNC_STATE, args.lane), time.time()
     result, failures, error = {}, [], None
     try:
         result, failures = sync(reader, client, origin, args, lock)
@@ -596,15 +624,13 @@ def main():
         error = f"{type(exception).__name__}: {exception}"
         raise
     finally:
-        try:
-            finished = time.time()
-            state = {"requested": started, **read_json(state_path), **result, "started": started, "finished": finished,
-                     "error": error, "failed": len(failures), "failures": failures[:5]}
-            if not error and not failures:
-                state["succeeded"] = finished
-            write_json(state_path, state)
-        finally:
-            lock.unlink(missing_ok=True)
+        # The lock file stays: unlinking it would let a second sync lock a fresh inode.
+        finished = time.time()
+        state = {"requested": started, **read_json(state_path), **result, "started": started, "finished": finished,
+                 "error": error, "failed": len(failures), "failures": failures[:5]}
+        if not error and not failures:
+            state["succeeded"] = finished
+        write_json(state_path, state)
     print(json.dumps(result))
     return 1 if failures else 0
 
@@ -622,7 +648,7 @@ def sync(reader, client, origin, args, lock):
     print(f"{datetime.now():%Y-%m-%d %H:%M:%S} sync of {len(handles)} conversations", file=sys.stderr)
     result = {"uploaded": 0, "unchanged": 0}
     failures = []
-    stamps = load_stamps(reader)
+    stamps = load_stamps(reader, args.lane)
     for key, handle in keyed:
         lock.touch()
         try:
@@ -654,11 +680,13 @@ def sync(reader, client, origin, args, lock):
             existing[key] = {"key": key, "revision": head, "mtime": handle.mtime}
             stamps[key] = {"stamp": stamp, "revision": head}
             result["uploaded"] += 1
+        except EmptyConversation:
+            result["empty"] = result.get("empty", 0) + 1  # Nothing to archive until it is used.
         # One unreadable or malformed conversation must not stop the others.
         except SYNC_ERRORS + (reader.click.ClickException,) as error:
             failures.append(f"{handle.source}/{handle.uuid}: {type(error).__name__}: {error}")
             print(failures[-1], file=sys.stderr)
-    save_stamps(reader, stamps)
+    save_stamps(reader, stamps, args.lane)
     if args.free_older_than:
         result.update(free_older(reader, client, keyed, existing, time.time() - args.free_older_than * 86400, lock))
     if failures:

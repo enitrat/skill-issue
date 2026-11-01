@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Phone layouts keep long workspace content and controls inside both browser viewports."""
 
 import os
@@ -33,7 +54,7 @@ def phone_width(request):
 @pytest.fixture
 def long_workspace(paired, phone_width):
     """Bounded literal labels and URLs exercise content-driven minimum sizes."""
-    page, cloud = paired
+    page, _state = paired
     page.set_viewport_size({"width": phone_width, "height": 844})
     now = time.time()
     topic = "release-" + "planning" * 7
@@ -52,10 +73,6 @@ def long_workspace(paired, phone_width):
     page.route("**/api/topics/*", lambda route: route.fulfill(json={"messages": rows}))
     page.route("**/api/devices/pair", lambda route: route.fulfill(json={"url": page.url.split("#")[0] + "#pair=" + "p" * 43,
                "expires_at": now + 600, "single_use": True, "access": "owner"}))
-    cloud["profiles"] = {"default": {"label": "RepositoryAccess" * 16}}
-    cloud["jobs"] = [{"id": "b" * 32, "status": "unconfirmed", "phase": "allocation-blocked",
-                       "blocked_by_pool": "unresolved", "spec": {"name": "reviewer-" + "r" * 23, "profile": "default"},
-                       "error": "https://example.invalid/" + "error_" * 70}]
     page.route("**/api/providers/accounting", lambda route: route.fulfill(json={
         "cards": [{"cost_center_id": "reviewer", "name": "AccountingOwner" * 12, "hourly_rate": {
             "amount": "123456789.12345678", "currency": "USD", "basis": "allocated",
@@ -80,6 +97,9 @@ def phone_screen(long_workspace, request):
         page.locator(".sidebar").evaluate("node => Promise.all(node.getAnimations().map(animation => animation.finished))")
     if request.param in ("topic", "direct"):
         page.locator(".show-more").click()
+        # The resting composer is one input line; its send button is the primary control once in use.
+        page.locator("#message-input").focus()
+        page.locator("#send-message").wait_for(state="visible")
         selectors += [".conversation", ".conversation-header", ".conversation-intro", ".message-scroll", ".composer-area"]
     elif request.param == "people":
         page.locator("#members-toggle").click()
@@ -93,8 +113,8 @@ def phone_screen(long_workspace, request):
         important = "#copy-invitation"
     elif request.param == "staffing":
         page.locator("#staff-team").click()
-        page.locator(".worker-job").wait_for()
-        selectors += ["#staff-dialog", ".field-grid", ".worker-job"]
+        page.locator("#staff-dialog").wait_for()
+        selectors += ["#staff-dialog", ".field-grid"]
         important = "#staff-submit"
     elif request.param == "accounting":
         page.locator("#show-costs").click()

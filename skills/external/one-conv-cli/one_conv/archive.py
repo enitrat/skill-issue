@@ -1,6 +1,7 @@
 """Versioned archive transport and capture format, shared by the client and the server."""
 
 import base64
+import gzip
 import hashlib
 import json
 import math
@@ -18,14 +19,13 @@ MAX_REQUEST_BYTES = 16 * 1024 * 1024
 FIELDS = ("turns", "turns_with_subagents", "search_text")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 READ_WORKERS = 4
+# Starts of the key ranges a full listing reads in parallel; a key equal to a bound belongs to the range before it.
+LISTING_BOUNDS = ("", "4", "8", "c")
 # Files in one-conv's state directory shared by the sync script and readers.
 SYNC_STATE = "archive-sync.json"
 SYNC_LOCK = "archive-sync.lock"
 SYNC_LOG = "archive-sync.log"
 LISTING_CACHE = "archive-listing.json"
-# A running sync refreshes its lock after every conversation; one conversation's upload
-# can take minutes on a slow link, so only a much older lock belongs to a stopped sync.
-SYNC_STALE_SECONDS = 3600
 # Python's socket timeout bounds a whole send, so upload deadlines grow with the body,
 # assuming at least 1 Mbit/s of upstream bandwidth.
 MIN_UPLOAD_BYTES_PER_SECOND = 128 * 1024
@@ -132,6 +132,12 @@ class NoRedirect(HTTPRedirectHandler):
         return None  # Never forward credentials to another endpoint.
 
 
+def _response_bytes(response):
+    """Decode negotiated HTTP compression before parsing JSON or chunk content."""
+    data = response.read()
+    return gzip.decompress(data) if response.headers.get("Content-Encoding") == "gzip" else data
+
+
 def encode(value, *, sort_keys=False):
     return json.dumps(value, ensure_ascii=False, sort_keys=sort_keys, separators=(",", ":")).encode()
 
@@ -201,28 +207,47 @@ class ArchiveClient:
         data = encode(body) if body is not None else None
         request = Request(self.url + "/v1/" + path, data=data,
                           headers={"Authorization": "Bearer " + self.token,
-                                   "Content-Type": "application/json"})
+                                   "Content-Type": "application/json",
+                                   # Chunks already contain zlib data and do not benefit from gzip.
+                                   "Accept-Encoding": "identity" if raw else "gzip"})
         timeout = self.timeout + len(data or b"") / MIN_UPLOAD_BYTES_PER_SECOND
         try:
             with build_opener(NoRedirect).open(request, timeout=timeout) as response:
-                return response.read() if raw else json.load(response)
+                content = _response_bytes(response)
+                return content if raw else json.loads(content)
         except HTTPError as error:
             try:
-                reason = json.load(error)["error"]
-            except (OSError, ValueError, KeyError, TypeError):
+                reason = json.loads(_response_bytes(error))["error"]
+            except (OSError, EOFError, zlib.error, ValueError, KeyError, TypeError):
                 reason = error.reason
             raise ArchiveError(f"Archive returned HTTP {error.code} ({reason}); no changes acknowledged.") from error
-        except (URLError, TimeoutError, OSError, ValueError) as error:
+        except (URLError, TimeoutError, OSError, EOFError, zlib.error, ValueError) as error:
             raise ArchiveError("Archive unavailable or returned an invalid response.") from error
 
     def list_conversations(self, query=None):
-        after = ""
+        """Every listed conversation in key order.
+
+        A full listing spans several pages and each page costs a round trip, so the key space is
+        read as the LISTING_BOUNDS ranges in parallel. Keys are hex digests, spread evenly over them.
+        """
+        bounds = LISTING_BOUNDS if query is None else ("",)
+        with ThreadPoolExecutor(len(bounds)) as pool:
+            ranges = pool.map(lambda index: self._list_range(bounds[index], (bounds[index + 1:] or (None,))[0], query),
+                              range(len(bounds)))
+            return [row for rows in ranges for row in rows]
+
+    def _list_range(self, after, last, query):
+        """Rows with `after` < key <= `last` (no upper bound when `last` is None)."""
+        rows = []
         while True:
             page = self.request("conversations?" + urlencode({"after": after, **({"query": query} if query is not None else {})}))
-            yield from page["items"]
+            for row in page["items"]:
+                if last is not None and row["key"] > last:
+                    return rows
+                rows.append(row)
             following = page["next"]
             if following is None:
-                break
+                return rows
             if following <= after:
                 raise ArchiveError("Archive pagination did not advance.")
             after = following
@@ -270,10 +295,56 @@ class ArchiveClient:
         return self.request("conversations", {"manifest": manifest, "expected": expected})
 
 
+# The live controller serves the archive under this path of the hub's own origin.
+HUB_ARCHIVE_PATH = "/archive"
+# A hub node name; an archive origin of this form is the NODE of that node's live addresses.
+NODE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+# A hub-derived archive is consulted on every read, so an unreachable controller must fail fast.
+HUB_TIMEOUT = 15
+
+
+def hub_archive():
+    """(url, token, node) of the archive behind this machine's live hub, or None without a usable hub.
+
+    The bridge's own hub settings carry it: the same URL, plus HUB_ARCHIVE_PATH, and the same node token.
+    """
+    try:
+        from one_conv.live import hubclient, tunnel
+    except ImportError:  # The standalone archive server ships without the live package.
+        return None
+    try:
+        hub = hubclient.configured()
+    except hubclient.HubRefused:
+        return None
+    if hub is None or not hub.node:
+        return None
+    # A tunnelled hub is trusted only while the bridge's own ssh still holds the forwarded port.
+    if hub.listener_pid is not None and not tunnel.listening(hub.listener_pid, urlsplit(hub.url).port or 0):
+        return None
+    return hub.url + HUB_ARCHIVE_PATH, hub.token, hub.node
+
+
 def configured_url():
-    return os.environ.get("ONE_CONV_ARCHIVE_URL")
+    """ONE_CONV_ARCHIVE_URL when set (empty disables the archive), else the live hub's archive."""
+    if "ONE_CONV_ARCHIVE_URL" in os.environ:
+        return os.environ["ONE_CONV_ARCHIVE_URL"] or None
+    hub = hub_archive()
+    return hub[0] if hub else None
+
+
+def configured_origin():
+    """The origin this machine's captures are uploaded under; None means a per-installation ID."""
+    if os.environ.get("ONE_CONV_ARCHIVE_ORIGIN"):
+        return os.environ["ONE_CONV_ARCHIVE_ORIGIN"]
+    if "ONE_CONV_ARCHIVE_URL" in os.environ:
+        return None
+    hub = hub_archive()
+    return hub[2] if hub else None
 
 
 def configured_client():
-    url = configured_url()
-    return ArchiveClient(url, os.environ.get("ONE_CONV_ARCHIVE_TOKEN", "")) if url else None
+    if "ONE_CONV_ARCHIVE_URL" in os.environ:
+        url = os.environ["ONE_CONV_ARCHIVE_URL"]
+        return ArchiveClient(url, os.environ.get("ONE_CONV_ARCHIVE_TOKEN", "")) if url else None
+    hub = hub_archive()
+    return ArchiveClient(hub[0], hub[1], timeout=HUB_TIMEOUT) if hub else None

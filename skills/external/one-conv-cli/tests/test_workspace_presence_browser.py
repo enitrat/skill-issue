@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Stable phone navigation and evidence-based presence use production UI assets."""
 
 import time
@@ -106,13 +127,6 @@ def test_offline_history_is_separate_from_current_reports(workspace_ui):
     assert workspace_ui[0].locator("#people .agent-name").all_text_contents() == ["@jack", "Claude · abcdefgh"]
 
 
-def test_offline_direct_history_remains_available(workspace_ui):
-    page = workspace_ui[0]
-    page.locator("#sidebar-toggle").click()
-    page.locator("#threads .conversation-row").filter(has_text="Claude").click()
-    assert page.locator("#subtitle").inner_text() == "Offline"
-
-
 @pytest.fixture
 def direct_ui(workspace_ui):
     page = workspace_ui[0]
@@ -154,7 +168,7 @@ def test_bubble_delivery_uses_only_reported_evidence(direct_ui, state, label):
 
 
 def test_unanswered_request_has_one_conversation_status(direct_ui):
-    assert direct_ui[0].locator("#conversation-response").inner_text() == "No later message from this agent yet."
+    assert direct_ui[0].locator("#conversation-response").inner_text().startswith("You wrote last and ")
 
 
 def test_unrelated_agent_message_does_not_count_as_a_return(direct_ui):
@@ -162,7 +176,7 @@ def test_unrelated_agent_message_does_not_count_as_a_return(direct_ui):
     threads[0]["messages"].append({"id": "b" * 32, "from": "laptop/claude:abcdefghij", "to": "user",
                                    "text": "An unrelated message.", "at": time.time()})
     page.reload(wait_until="networkidle")
-    assert page.locator("#conversation-response").inner_text() == "No later message from this agent yet."
+    assert page.locator("#conversation-response").inner_text().startswith("You wrote last and ")
 
 
 def test_later_return_is_activity_without_claiming_causal_reply(direct_ui):

@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-HARNESSES = ("claude", "codex", "omp", "cursor", "boat")
+HARNESSES = ("claude", "codex", "omp", "cursor")
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,8 @@ class LiveSession:
     pid: int | None = None
     delivery: str = ""
     endpoint: str = field(default="", compare=False)
+    # Which app of a harness that has several, like "cursor-cli" or "cursor-ide"; empty otherwise.
+    product: str = field(default="", compare=False)
 
     @property
     def address(self) -> str:
@@ -81,8 +83,7 @@ def envelope(text: str, sender: LiveSession | None, origin: str = "unknown", rep
     separately; these local labels are not authenticated identities.
     `origin` labels a sender that is not an agent session: "user" for an interactive
     terminal or human workspace, "unknown" otherwise. `reply="none"` ends an exchange.
-    `reply="inline"` is for a receiver the sender reads back from (a Boat sandbox), which
-    answers in its own conversation because it cannot message this machine.
+    `reply="inline"` asks the receiver to answer in its own conversation rather than message back.
     `message_id` stays the same across retries so a receiver can drop duplicates.
     """
     text = _ENVELOPE_TAG.sub(r"&lt;\1", text)
@@ -93,6 +94,9 @@ def envelope(text: str, sender: LiveSession | None, origin: str = "unknown", rep
     attrs = f'from="{_attr(address)}"'
     if human:
         attrs += ' kind="human"'
+    elif address == "system":
+        # The hub's own instruction (a spawn order): not the human, not an agent.
+        attrs += ' kind="system"'
     elif sender is not None:
         if handle:
             attrs += f' from-handle="@{_attr(handle)}"'
@@ -124,4 +128,11 @@ def envelope(text: str, sender: LiveSession | None, origin: str = "unknown", rep
     elif sender is not None and not sender.id.startswith("?"):
         footer = f'\nTo reply, call the one-conv send_message tool with to="{_attr(sender.address)}"'
         footer += f', or to="#{_attr(topic)}" to answer everyone on the topic.' if topic else "."
+    if human and reply == "expected" and message_id:
+        # The human sees who read the post; several sessions read it, so they divide the work first.
+        footer = (f'\nAck it now with the one-conv ack tool (message_id="{_attr(message_id)}"), or'
+                  f" `one-conv live ack {_attr(message_id)}`."
+                  + (f" Other sessions in #{_attr(topic)} read it too: before working, say in the channel what you"
+                     " take and leave what another session already took; anything that cannot be undone is done"
+                     " by one session, named in the channel." if topic else "") + footer)
     return f"<one-conv-message {attrs}>\n{text}\n</one-conv-message>{footer}"

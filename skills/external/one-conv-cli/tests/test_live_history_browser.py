@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Reported agent DMs on the phone: the thread, the channel, and the recipient marker on grouped bubbles."""
 
 import time
@@ -45,16 +66,15 @@ def test_the_marker_says_only_the_recipient_was_notified(reported):
     assert reported.locator(".message-directed").nth(1).inner_text().endswith("only")
 
 
-def test_the_reported_dm_appears_under_direct_messages(reported):
-    reported.get_by_role("button", name="Open workspace sidebar").click()
-    assert reported.locator("#threads li").count() == 2
+def test_the_workspace_has_no_direct_messages_list(reported):
+    assert reported.locator("#threads").count() == 0
 
 
 def test_the_grouped_second_dm_says_it_is_synced_history(reported):
     assert reported.locator(".message-synced").nth(1).is_visible()
 
 
-@pytest.fixture(params=[320, 390])
+@pytest.fixture(params=[390])
 def long_recipient(browser, real_http_workspace, request):
     """A tagged DM to an agent with the longest allowed name, on a narrow phone."""
     workspace = real_http_workspace

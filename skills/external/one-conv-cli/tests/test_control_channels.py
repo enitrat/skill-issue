@@ -1,5 +1,27 @@
-"""#general membership and channels the workspace owner creates from the phone."""
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
+"""#general and the channels the workspace owner creates from the phone; no session joins any by itself."""
 
+import sqlite3
 import time
 
 import pytest
@@ -40,18 +62,8 @@ def _texts(store, topic):
 # --- #general -----------------------------------------------------------------------------------
 
 
-def test_a_published_session_joins_general(tmp_path):
-    hub = Hub(str(tmp_path / "hub.sqlite3"), general="general")
-    hub.publish("laptop", [{"address": "claude:c1"}])
-    assert hub.topics() == [{"topic": "general", "members": ["laptop/claude:c1"], "last": None}]
-
-
-def test_republishing_does_not_undo_leaving_general(tmp_path):
-    hub = Hub(str(tmp_path / "hub.sqlite3"), general="general")
-    hub.publish("laptop", [{"address": "claude:c1"}])
-    hub.leave("laptop", "general", "claude:c1")
-    hub.publish("laptop", [{"address": "claude:c1"}])
-    assert hub.topics() == []
+def test_a_published_session_does_not_join_general(store):
+    assert "worker/omp:agent" not in _members(store, "general")
 
 
 def test_a_plain_hub_has_no_general(tmp_path):
@@ -87,9 +99,12 @@ def test_general_announcement_expects_no_reply(store, created):
     assert store.topic("general")["messages"][-1]["reply"] == "none"
 
 
-def test_general_announcement_reaches_agents_outside_the_channel(store, created):
+def test_general_announcement_reaches_the_sessions_in_general(store, created):
+    store.hub.join("worker", "general", "codex:other")
+    store.hub.send("workspace", {"id": "e" * 32, "from": "user", "to": "#general", "text": "Lunch?",
+                                 "reply": "none", "mode": "push"})
     pending = {row["to"] for row in store.hub.inbox("worker", 0) if row["topic"] == "general"}
-    assert pending == {"omp:agent", "codex:other"}
+    assert pending == {"codex:other"}
 
 
 def test_retry_with_the_same_id_finishes_the_same_channel(store, channel, created):
@@ -107,7 +122,7 @@ def test_an_existing_channel_is_not_created_again(store, channel, created):
 
 
 def test_general_cannot_be_created(store, channel):
-    with pytest.raises(HubError, match="everyone"):
+    with pytest.raises(HubError, match="already exists"):
         store.create_channel({**channel, "topic": "general"})
 
 
@@ -134,7 +149,8 @@ def test_a_channel_can_start_with_only_the_human(store, channel):
 
 
 @pytest.mark.parametrize("change", [
-    {"topic": "Bad Name"}, {"purpose": "  "}, {"members": "worker/omp:agent"},
+    {"topic": 7}, {"topic": "x" * 201}, {"purpose": "  "}, {"directory": "a\nb"}, {"directory": "d" * 513},
+    {"members": "worker/omp:agent"},
     {"members": ["worker/omp:agent", "worker/omp:agent"]}, {"members": ["workspace/user"]}, {"id": "short"},
 ])
 def test_invalid_channel_requests_are_refused(store, channel, change):
@@ -143,8 +159,68 @@ def test_invalid_channel_requests_are_refused(store, channel, change):
 
 
 def test_extra_fields_are_refused(store, channel):
-    with pytest.raises(HubError, match="only id, topic, purpose and members"):
+    with pytest.raises(HubError, match="Provide id and purpose"):
         store.create_channel({**channel, "from": "worker/omp:agent"})
+
+
+# --- name, directory and staffing from the prompt alone -------------------------------------------------
+
+
+@pytest.fixture
+def prompt_only():
+    return {"id": "f" * 32, "purpose": "Please fix the iPhone keyboard autocorrect in the workspace app."}
+
+
+@pytest.mark.parametrize("typed, name", [
+    ("Release", "release"), ("#One Conv", "one-conv"), ("  my_Topic!  ", "my-topic"), ("Équipe Café", "equipe-cafe"),
+])
+def test_a_typed_name_has_its_case_and_spacing_fixed(store, channel, typed, name):
+    assert store.create_channel({**channel, "topic": typed})["topic"] == name
+
+
+def test_an_empty_name_is_derived_from_the_prompt(store, prompt_only):
+    assert store.create_channel(prompt_only)["topic"] == "fix-iphone-keyboard-autocorrect"
+
+
+def test_a_name_made_only_of_filler_falls_back_to_the_prompt(store, prompt_only):
+    assert store.create_channel({**prompt_only, "topic": "!!"})["topic"] == "fix-iphone-keyboard-autocorrect"
+
+
+def test_a_prompt_without_words_gets_a_plain_name(store, prompt_only):
+    assert store.create_channel({**prompt_only, "purpose": "?!"})["topic"] == "channel"
+
+
+def test_a_derived_name_is_told_apart_from_an_existing_channel(store, prompt_only):
+    store.create_channel(prompt_only)
+    assert store.create_channel({**prompt_only, "id": "e" * 32})["topic"] == "fix-iphone-keyboard-autocorrect-2"
+
+
+def test_a_retried_derived_channel_keeps_its_first_name(store, prompt_only):
+    first = store.create_channel(prompt_only)["topic"]
+    assert store.create_channel(prompt_only)["topic"] == first
+
+
+def test_a_channel_without_agents_starts_one_for_its_kickoff(store, prompt_only):
+    topic = store.create_channel(prompt_only)["topic"]
+    with sqlite3.connect(store.hub.path) as db:
+        assert db.execute("SELECT p.topic FROM staffing s JOIN posts p ON s.task = p.from_node || ':' || p.id"
+                          " WHERE s.state = 'cloud'").fetchall() == [(topic,)]
+
+
+def test_the_directory_is_given_in_the_kickoff(store, prompt_only):
+    topic = store.create_channel({**prompt_only, "directory": "~/Documents/one-conv-cli"})["topic"]
+    assert _texts(store, topic)[0].endswith("\n\nDirectory: ~/Documents/one-conv-cli")
+
+
+def test_no_directory_leaves_the_kickoff_as_typed(store, prompt_only):
+    topic = store.create_channel(prompt_only)["topic"]
+    assert _texts(store, topic) == [prompt_only["purpose"]]
+
+
+def test_same_id_with_another_directory_is_refused(store, prompt_only):
+    store.create_channel(prompt_only)
+    with pytest.raises(HubError, match="different channel"):
+        store.create_channel({**prompt_only, "directory": "elsewhere"})
 
 
 # --- retries -------------------------------------------------------------------------------------------
@@ -196,19 +272,6 @@ def test_same_id_with_other_members_does_not_enlarge_the_channel(store, channel,
 # --- credential rotation --------------------------------------------------------------------------------
 
 
-def test_a_revoked_hub_node_rejoins_general_when_published_again(tmp_path):
-    hub = Hub(str(tmp_path / "hub.sqlite3"), general="general")
-    hub.publish("laptop", [{"address": "claude:c1"}])
-    hub.revoke("laptop")
-    hub.publish("laptop", [{"address": "claude:c1"}])
-    assert _members_of(hub, "general") == ["laptop/claude:c1"]
-
-
-def test_a_revoked_workspace_node_rejoins_general_when_published_again(store):
+def test_a_revoked_node_leaves_its_channels(store, created):
     store.revoke_node("worker")
-    store.hub.publish("worker", [{"address": "omp:agent"}])
-    assert "worker/omp:agent" in _members(store, "general")
-
-
-def _members_of(hub, topic):
-    return next(row["members"] for row in hub.topics() if row["topic"] == topic)
+    assert "worker/omp:agent" not in _members(store, "release")

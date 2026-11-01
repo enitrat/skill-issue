@@ -1,5 +1,41 @@
 # Optional conversation archive
 
+## The live controller's archive
+
+The cloud controller (`one-conv live control serve`) serves an archive at
+`/archive` on its public origin, authenticated with the node tokens its hub
+issues. Every node token reads every capture; a node uploads only captures whose
+origin is its own node name.
+
+A machine running `one-conv live serve` needs nothing else. The bridge runs
+`scripts/archive-sync.py` in the background for Claude Code, Codex, Oh My Pi and
+Cursor history, every 5 minutes (`ONE_CONV_ARCHIVE_SYNC_MINUTES`; `0` turns it
+off), with its hub URL and node token, and uploads under its node name. Its
+output goes to `archive-sync.log` in the bridge's state directory. Readers on
+that machine use the same settings, so `local chats`, `search`, `find`, `read`
+and `thread` include every node's sessions. `ONE_CONV_ARCHIVE_URL` set to
+another archive takes precedence; set to an empty value, it turns the archive
+off.
+
+A live address names a session on every machine:
+
+```sh
+one-conv local thread worker-1/codex:019a... --no-mark-read --json
+one-conv local thread macbook/claude:2d69d3d1-... --around 2026-10-19T14:05:00Z --context 3
+one-conv local thread macbook/claude:2d69d3d1-... --around MESSAGE_ID
+```
+
+`NODE` is this machine's node name: native history is read, and the archive
+copy is used when the native files are gone. Any other `NODE` is read from the
+archive. A bare `harness:id` names this machine. `search` and `find` JSON rows
+carry each agent session's `address`. The MCP `read_conversation` tool takes the
+address as `query`, with `around` and `context`.
+
+The controller needs `sqlalchemy` and `pydantic`, which its installer pins;
+without them it logs that the archive is disabled and serves the hub alone.
+
+## A standalone archive
+
 Copy captured history to your own service and use the existing `chats`, `find`,
 `search`, `read`, and `thread` commands. Provider filters and JSON shapes stay the
 same, and archived conversations render exactly as native ones, including `--raw`.
@@ -75,7 +111,7 @@ With an archive configured, one-conv commands start a sync in the background whe
 the last one started more than 15 minutes ago, and return without waiting. Nothing
 is installed on the machine: sync runs only while one-conv is used.
 `ONE_CONV_ARCHIVE_SYNC_MINUTES` changes the interval; `0` turns automatic sync off.
-Automatic sync covers every source except the shared corpus.
+Automatic sync covers every native source; `corpus` rows are imported copies with no native files.
 
 Each sync records its result in one-conv's state directory and appends to
 `archive-sync.log` there; these files are readable only by their owner. While the
@@ -143,10 +179,31 @@ Railway SDK, project ID or hostname belongs in the runtime. Verify the deploymen
 authenticated reads and persistence after redeployment, and configure volume backups
 before treating the service as durable storage.
 
+## Incremental metadata listing
+
+`GET /v1/conversations?since=0` lists all heads in change-sequence order. Each
+page returns `items` in the usual metadata shape, `next` (an integer cursor or
+`null`), `sequence` (the read snapshot's watermark), and `generation` (the
+database's persistent UUID). Request `since=next` until `next` is `null`, merge
+items by key, and save the final page's `sequence` for the next refresh. Repeated
+keys are replaced: a conversation can change between pages.
+
+Keep `generation` with the cached rows. If it changes on any page, discard the
+cache and restart from `since=0`; a replaced database has a new sequence space.
+Only publish the merged cache after every page succeeds. A server without these
+fields requires the legacy full listing. `since` cannot combine with `after` or
+`query`; requests without `since` retain key-based pagination and substring search.
+
+Successful head changes advance the sequence atomically; identical revisions
+and failed commits do not. Archived heads have no deletion API. Any future
+deletion API must expose tombstones or invalidate the database generation.
+Existing SQLite databases receive baseline sequences automatically on startup.
+
 ## Add a backend
 
 Implement `ConversationStore` in `archive/store.py`: paginated metadata listing
-with an optional literal substring filter over search text, manifest reads, chunk
+with an optional literal substring filter over search text, sequence-based delta
+listing with a persistent generation, manifest reads, chunk
 inventory, storage and reads, and an atomic commit that advances a conversation only
 from its expected revision. The server validates captures and derives keys,
 revisions and search text. Configure

@@ -28,10 +28,15 @@ const model = {
   searchGeneration: 0,
   authenticated: false,
   capabilities: {},
-  workers: { jobs: [], pools: [], profiles: [] },
   costs: null,
   staffing: false,
   reportReceivedAt: null,
+  // Read marks the workspace accepted from this tab, per conversation, and the saves in flight.
+  readMarks: new Map(),
+  reading: new Set(),
+  // The agent whose Stop button was tapped once and waits for a confirming second tap, and stops in flight.
+  stopArmed: null,
+  stopping: new Set(),
 };
 const harnesses = {
   claude: "Claude",
@@ -40,6 +45,16 @@ const harnesses = {
   cursor: "Cursor",
   boat: "Boat",
 };
+// A harness with several apps names the one a session runs in.
+const products = { "cursor-cli": "cursor-cli", "cursor-ide": "cursor-ide" };
+const marks = { omp: "π", boat: "B" };
+// Harness logos from @lobehub/icons-static-svg 1.95.0 (MIT); a harness without one keeps its mark.
+const logos = {
+  claude: "<svg aria-hidden=\"true\" class=\"harness-logo\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path clip-rule=\"evenodd\" d=\"M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z\" fill=\"#D97757\" fill-rule=\"evenodd\"></path></svg>",
+  codex: "<svg aria-hidden=\"true\" class=\"harness-logo\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z\" fill=\"#fff\"></path><path d=\"M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z\" fill=\"url(#lobe-icons-codex-_R_0_)\"></path><defs><linearGradient gradientUnits=\"userSpaceOnUse\" id=\"lobe-icons-codex-_R_0_\" x1=\"12\" x2=\"12\" y1=\"3\" y2=\"21\"><stop stop-color=\"#B1A7FF\"></stop><stop offset=\".5\" stop-color=\"#7A9DFF\"></stop><stop offset=\"1\" stop-color=\"#3941FF\"></stop></linearGradient></defs></svg>",
+  cursor: "<svg aria-hidden=\"true\" class=\"harness-logo\" fill=\"currentColor\" fill-rule=\"evenodd\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z\"></path></svg>",
+};
+
 const pairingFragment = new URLSearchParams(location.hash.slice(1));
 let pairingToken = pairingFragment.get("pair");
 // Invitation secrets never remain in navigation history or reach later requests.
@@ -121,21 +136,21 @@ function person(address) {
     (s) => s.address === address || (localIdentity && s.address === local),
   );
   const kind = local.split(":")[0];
+  const label = (session && products[session.product]) || harnesses[kind];
   const alias = Object.entries(model.state.names || {}).find(
     ([, bound]) => bound === address || (localIdentity && bound === local),
   );
   const boundName = (session && session.name) || (alias && alias[0]);
   const name = boundName ? "@" + String(boundName).replace(/^@/, "") :
-    (harnesses[kind] || "Agent") + " · " + (local.split(":").slice(1).join(":") || local).slice(0, 8);
+    (label || "Agent") + " · " + (local.split(":").slice(1).join(":") || local).slice(0, 8);
   return {
     address,
     name,
-    kind: harnesses[kind] || "Agent",
+    kind: label || "Agent",
     color: kind,
-    initials: alias
-      ? name.slice(0, 2).toUpperCase()
-      : { claude: "C", codex: "◈", omp: "π", cursor: "↗", boat: "B" }[kind] ||
-        name.slice(0, 2).toUpperCase(),
+    // The avatar names the harness, so a renamed agent still shows what it runs on.
+    initials: marks[kind] || (logos[kind] ? "" : name.replace(/^@/, "").slice(0, 2).toUpperCase()),
+    logo: logos[kind] || "",
     status: session && session.online !== false ? session.status : "offline",
     machine: (session && session.node) || (slash > 0 ? address.slice(0, slash) : localNode) || "This machine",
     project: session && session.cwd ? String(session.cwd).replace(/[\\/]+$/, "").split(/[\\/]/).pop() : "",
@@ -184,8 +199,12 @@ function avatar(address, size = "") {
   const node = el(
     "span",
     p.initials,
-    "avatar " + p.color + (size ? " " + size : ""),
+    "avatar " + p.color + (size ? " " + size : "") + (p.logo ? " has-logo" : ""),
   );
+  // Parsed as SVG, not HTML: the logo is one of the constant strings above, never workspace data.
+  if (p.logo)
+    node.appendChild(document.importNode(
+      new DOMParser().parseFromString(p.logo, "image/svg+xml").documentElement, true));
   node.title = p.name + " · " + p.kind;
   node.setAttribute("aria-hidden", "true");
   return node;
@@ -215,6 +234,22 @@ function members() {
   if (model.view.kind === "topic") return (currentTopic() || {}).members || [];
   if (model.view.kind === "direct") return model.view.key.split(" ");
   return model.state.sessions.map((s) => s.address);
+}
+function workingText(names) {
+  if (!names.length) return "";
+  if (names.length === 1) return names[0] + " is working…";
+  if (names.length === 2) return names[0] + " and " + names[1] + " are working…";
+  return names[0] + ", " + names[1] + " and " + (names.length - 2) + " more are working…";
+}
+function renderWorking() {
+  // Agents whose bridge reports them busy, so a channel shows it is being worked on between replies.
+  const view = model.view;
+  const names = view && ["topic", "direct"].includes(view.kind)
+    ? [...new Set(members())].filter((address) => address !== "user")
+      .map((address) => person(address)).filter((p) => presenceOf(p).state === "busy").map((p) => p.name)
+    : [];
+  $("working-text").textContent = workingText(names);
+  $("working").hidden = !names.length;
 }
 function target() {
   if (!model.view) return null;
@@ -288,7 +323,50 @@ function connected(ok) {
   node.lastElementChild.textContent = ok ? "Workspace live" : "Reconnecting";
   $("live-badge").hidden = !ok;
 }
-function rowButton(list, label, mark, active, action, count) {
+function conversationKey(view = model.view) {
+  if (!view) return null;
+  if (view.kind === "topic") return "#" + view.key;
+  return view.kind === "direct" ? view.key : null;
+}
+function unreadOf(conversation, count) {
+  // The open, visible conversation is being read: it never turns bold while its mark is saved.
+  if (!document.hidden && conversation === conversationKey()) return 0;
+  return Number(count) > 0 ? Math.floor(Number(count)) : 0;
+}
+function threadUnread(pair) {
+  const thread = model.threads.find((item) => item.pair === pair);
+  return thread ? unreadOf(pair, thread.unread) : 0;
+}
+function totalUnread() {
+  // An archived channel keeps its count on its own row but no longer adds to the title.
+  return model.state.topics.filter((topic) => !topic.archived)
+    .reduce((sum, topic) => sum + unreadOf("#" + topic.topic, topic.unread), 0) +
+    model.threads.reduce((sum, thread) => sum + unreadOf(thread.pair, thread.unread), 0);
+}
+async function markRead() {
+  const conversation = conversationKey();
+  if (!conversation || document.hidden || !model.capabilities.unread || !model.token) return;
+  const times = (model.serverRows || []).map((row) => Number(row.at)).filter(Number.isFinite);
+  const newest = times.length ? Math.max(...times) : 0;
+  if (!newest || newest <= (model.readMarks.get(conversation) || 0) || model.reading.has(conversation)) return;
+  const generation = model.generation;
+  model.reading.add(conversation);
+  try {
+    const data = await post("/api/read", { conversation, at: newest });
+    if (generation !== model.generation) return;
+    model.readMarks.set(conversation, Math.max(Number(data.at) || 0, newest));
+    for (const item of [...model.state.topics.filter((topic) => "#" + topic.topic === conversation),
+      ...model.threads.filter((thread) => thread.pair === conversation)]) item.unread = 0;
+    sidebar();
+    header();
+  } catch (_) {
+    /* The next refresh retries; another device can also clear it. */
+  } finally {
+    // A save from an ended session never releases the same conversation's save in the current one.
+    if (generation === model.generation) model.reading.delete(conversation);
+  }
+}
+function rowButton(list, label, mark, active, action, count, unread = 0) {
   const li = el("li");
   const button = el(
     "button",
@@ -299,9 +377,15 @@ function rowButton(list, label, mark, active, action, count) {
   if (active) button.setAttribute("aria-current", "page");
   if (mark) button.appendChild(mark);
   button.appendChild(el("span", label, "row-label"));
-  if (count !== undefined) {
+  if (unread > 0) {
+    button.classList.add("unread");
+    const badge = el("span", unread > 99 ? "99+" : String(unread), "row-unread");
+    badge.title = unread + " unread";
+    badge.setAttribute("aria-label", unread + " unread");
+    button.appendChild(badge);
+  } else if (count !== undefined) {
     const amount = el("span", count, "row-count");
-    amount.title = count + " members";
+    amount.title = count + " running now";
     button.appendChild(amount);
   }
   button.addEventListener("click", action);
@@ -309,20 +393,82 @@ function rowButton(list, label, mark, active, action, count) {
   list.appendChild(li);
   return button;
 }
+// A right click, or a long press on a phone, opens a row's actions; `items` is [{label, danger, confirm, action}].
+function rowMenu(button, items) {
+  const open = (x, y) => {
+    const list = items().filter(Boolean);
+    if (list.length) showRowMenu(list, x, y);
+  };
+  button.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    open(event.clientX, event.clientY);
+  });
+  let timer = null;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  button.addEventListener("touchstart", (event) => {
+    const touch = event.touches[0];
+    timer = setTimeout(() => {
+      timer = null;
+      // The click that ends this press must not also open the row.
+      button.addEventListener("click", (click) => { click.preventDefault(); click.stopImmediatePropagation(); }, { once: true, capture: true });
+      open(touch.clientX, touch.clientY);
+    }, 550);
+  }, { passive: true });
+  for (const name of ["touchend", "touchmove", "touchcancel"]) button.addEventListener(name, cancel, { passive: true });
+}
+function closeRowMenu() {
+  const menu = document.getElementById("row-menu");
+  if (menu) menu.remove();
+}
+function showRowMenu(items, x, y) {
+  closeRowMenu();
+  const menu = el("div", null, "row-menu");
+  menu.id = "row-menu";
+  menu.setAttribute("role", "menu");
+  for (const item of items) {
+    const entry = el("button", item.label, "row-menu-item" + (item.danger ? " danger" : ""));
+    entry.type = "button";
+    entry.setAttribute("role", "menuitem");
+    entry.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // A destructive entry asks for a second tap; a browser confirm dialog would block the page.
+      if (item.confirm && !entry.classList.contains("armed")) {
+        entry.classList.add("armed");
+        entry.textContent = item.confirm;
+        return;
+      }
+      closeRowMenu();
+      item.action();
+    });
+    menu.appendChild(entry);
+  }
+  document.body.appendChild(menu);
+  const box = menu.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - box.width - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - box.height - 8)) + "px";
+}
 function sidebar() {
   const topics = $("topics");
   topics.replaceChildren();
-  for (const topic of model.state.topics)
-    rowButton(
-      topics,
+  const archived = $("archived-topics");
+  archived.replaceChildren();
+  // Archived channels stay reachable, folded away from the main list.
+  for (const topic of model.state.topics) {
+    const row = rowButton(
+      topic.archived ? archived : topics,
       topic.topic,
       el("span", "#", "hash"),
       model.view &&
         model.view.kind === "topic" &&
         model.view.key === topic.topic,
       () => select("topic", topic.topic),
-      (topic.members || []).length,
+      topic.running ?? (topic.members || []).length,
+      unreadOf("#" + topic.topic, topic.unread),
     );
+    rowMenu(row, () => [
+      { label: topic.archived ? "Bring back channel" : "Archive channel", action: () => archiveChannel(topic.topic, !topic.archived) },
+    ]);
+  }
   if (!topics.children.length)
     topics.appendChild(
       el(
@@ -331,51 +477,45 @@ function sidebar() {
         "sidebar-empty",
       ),
     );
-  $("topic-count").textContent = model.state.topics.length || "";
-  const threads = $("threads");
-  threads.replaceChildren();
-  for (const thread of model.threads) {
-    const pair = thread.pair.split(" ");
-    const other = pair.find((address) => address !== "user") || pair[0];
-    const label = pair.includes("user")
-      ? person(other).name
-      : pairName(thread.pair);
-    rowButton(
-      threads,
-      label,
-      avatar(other, "tiny-avatar"),
-      model.view &&
-        model.view.kind === "direct" &&
-        model.view.key === thread.pair,
-      () => select("direct", thread.pair),
-    );
-  }
-  if (!threads.children.length)
-    threads.appendChild(
-      el("li", "A direct line to your agents.", "sidebar-empty"),
-    );
-  $("direct-count").textContent = model.threads.length || "";
+  $("topic-count").textContent = model.state.topics.filter((topic) => !topic.archived).length || "";
+  $("archived-count").textContent = archived.children.length || "";
+  $("archived-section").hidden = !archived.children.length;
+  renderRoutines();
+  // A conversation with a session opens from its row among the running sessions, with its unread count.
   const people = $("people");
   people.replaceChildren();
-  const offlinePeople = $("offline-people");
-  offlinePeople.replaceChildren();
-  for (const session of model.state.sessions) {
+  // Sessions come and go: only the running ones are listed; past ones live on in their channels.
+  // An ended session stays listed while its direct messages are unread, so every unread count is reachable.
+  const listed = model.state.sessions.map((session) => session.address);
+  const kept = (pair) => threadUnread(pair) > 0 || (model.view?.kind === "direct" && model.view.key === pair);
+  const ended = model.threads.filter((thread) => thread.pair.split(" ").includes("user") && kept(thread.pair))
+    .map((thread) => thread.pair.split(" ").find((address) => address !== "user"))
+    .filter((address) => address && !listed.includes(address)).map((address) => ({ address }));
+  for (const session of [...model.state.sessions, ...ended]) {
     const p = person(session.address);
     const state = presenceOf(p);
+    if (state.state === "offline" && !kept(pairOf(session.address))) continue;
     const button = rowButton(
-      state.state === "offline" ? offlinePeople : people,
+      people,
       p.name,
       avatar(session.address, "tiny-avatar"),
-      false,
+      model.view &&
+        model.view.kind === "direct" &&
+        model.view.key === pairOf(session.address),
       () => select("direct", pairOf(session.address)),
+      undefined,
+      threadUnread(pairOf(session.address)),
     );
     const label = button.querySelector(".row-label");
     label.classList.add("agent-label");
+    // A session without an @name goes by its own name (Claude Code's session name, a thread or chat title);
+    // the harness and short id it would otherwise show move to the context line.
+    const named = !p.name.startsWith("@") && session.title;
     label.replaceChildren(
-      el("span", p.name, "agent-name"),
-      el("small", personContext(p), "agent-context"),
+      el("span", named ? session.title : p.name, "agent-name"),
+      el("small", named ? [p.name, p.machine, p.project].filter(Boolean).join(" · ") : personContext(p), "agent-context"),
     );
-    if (session.title) label.appendChild(el("small", "Context: " + session.title, "agent-context agent-session-context"));
+    if (session.title && !named) label.appendChild(el("small", "Context: " + session.title, "agent-context agent-session-context"));
     label.appendChild(el("small", presenceText(p), "agent-context agent-state"));
     const presence = el(
       "span",
@@ -385,14 +525,18 @@ function sidebar() {
     presence.title = state.label;
     button.appendChild(presence);
     button.title = p.name + " · " + personContext(p) + " · " + presenceText(p) + "\n" + state.detail;
+    rowMenu(button, () => [
+      model.capabilities.stop && presenceOf(person(session.address)).can_message && {
+        label: "Kill " + p.name, danger: true, confirm: "Tap again to kill " + p.name,
+        action: () => stopAgent(session.address, p.name),
+      },
+    ]);
   }
   if (!people.children.length)
     people.appendChild(
-      el("li", "No current agent connections are reported.", "sidebar-empty"),
+      el("li", "No session is running right now.", "sidebar-empty"),
     );
   $("agent-count").textContent = model.state.sessions.filter((s) => presenceOf(person(s.address)).state !== "offline").length || "";
-  $("offline-count").textContent = offlinePeople.children.length || "";
-  $("offline-section").hidden = !offlinePeople.children.length;
   $("all-activity").classList.toggle(
     "active",
     model.view && model.view.kind === "activity",
@@ -442,7 +586,19 @@ function header() {
   );
   $("member-count").textContent = current.length || "";
   $("members-toggle").hidden = !current.length;
-  document.title = (view.kind === "topic" ? "# " : "") + title + " · OneConv";
+  // In the header, so a long channel can be archived without scrolling back to its start.
+  const archive = $("archive-toggle");
+  archive.hidden = view.kind !== "topic";
+  const archived = Boolean(view.kind === "topic" && (currentTopic() || {}).archived);
+  archive.classList.toggle("archived", archived);
+  archive.setAttribute("aria-label", archived ? "Bring back channel" : "Archive channel");
+  archive.title = archived ? "Show this channel in your list again" : "Hide this channel from your list; agents can still read it";
+  const waiting = totalUnread();
+  // On a phone the sidebar is closed, so its menu button carries the unread mark.
+  $("sidebar-toggle").classList.toggle("has-unread", waiting > 0);
+  $("sidebar-toggle").title = waiting ? waiting + " unread" : "";
+  document.title = (waiting ? "(" + waiting + ") " : "") + (view.kind === "topic" ? "# " : "") + title + " · OneConv";
+  renderWorking();
   if (model.details) renderDetails();
   updateComposer();
 }
@@ -489,9 +645,12 @@ function intro() {
   if (view.kind === "topic") {
     const chips = el("div", null, "intro-chips");
     const chip = el("span", null, "intro-chip");
+    const topic = currentTopic() || {};
     chip.append(
       icon("people"),
-      document.createTextNode(members().length + " members"),
+      document.createTextNode(
+        (topic.running ?? members().length) + " running · " + (topic.participants || []).length + " took part",
+      ),
     );
     const live = el("span", null, "intro-chip");
     live.append(icon("bolt"), document.createTextNode("Live conversation"));
@@ -500,74 +659,225 @@ function intro() {
   }
 }
 function inline(parent, text) {
-  const pattern = /(`[^`\n]+`|\*\*[^*]+\*\*|\*[^*\n]+\*|https?:\/\/[^\s<>]+)/g;
+  // Inline markdown as agents write it: code, links, bold, strikethrough, emphasis and bare URLs.
+  const pattern = /(`[^`\n]+`|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\*[^*\n]+\*|(?<![A-Za-z0-9])_[^_\n]+_(?![A-Za-z0-9])|https?:\/\/[^\s<>]+)/g;
   let start = 0;
   for (const match of text.matchAll(pattern)) {
     parent.appendChild(document.createTextNode(text.slice(start, match.index)));
     const value = match[0];
-    if (value.startsWith("`"))
-      parent.appendChild(el("code", value.slice(1, -1)));
-    else if (value.startsWith("**"))
-      parent.appendChild(el("strong", value.slice(2, -2)));
-    else if (value.startsWith("*"))
-      parent.appendChild(el("em", value.slice(1, -1)));
-    else {
-      const link = el("a", value);
-      link.href = value;
+    if (value.startsWith("`")) parent.appendChild(el("code", value.slice(1, -1)));
+    else if (value.startsWith("[")) {
+      const close = value.indexOf("](");
+      const link = el("a", value.slice(1, close));
+      link.href = value.slice(close + 2, -1);
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       parent.appendChild(link);
+    } else if (value.startsWith("**") || value.startsWith("__")) inline(parent.appendChild(el("strong")), value.slice(2, -2));
+    else if (value.startsWith("~~")) inline(parent.appendChild(el("s")), value.slice(2, -2));
+    else if (value.startsWith("*") || value.startsWith("_")) inline(parent.appendChild(el("em")), value.slice(1, -1));
+    else {
+      // Sentence punctuation after a bare URL, and a ")" it never opened, belong to the text, not the link.
+      let url = value;
+      while (/[.,;:!?'"*_]$/.test(url) || (url.endsWith(")") && url.split(")").length > url.split("(").length))
+        url = url.slice(0, -1);
+      const link = el("a", url);
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      parent.appendChild(link);
+      parent.appendChild(document.createTextNode(value.slice(url.length)));
     }
     start = match.index + value.length;
   }
   parent.appendChild(document.createTextNode(text.slice(start)));
 }
+const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+function tableCells(line) {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+// A Claude Code question forwarded by the AskUserQuestion hook ends with one marker line naming its options.
+const ASK_MARKER = /\n?<!-- one-conv-ask (\{.*\}) -->\s*$/;
+function askOf(text) {
+  const match = text.match(ASK_MARKER);
+  if (!match) return [text, null];
+  try {
+    const ask = JSON.parse(match[1]);
+    // The form shows the questions and options, so only the message's opening line stays as text.
+    return Array.isArray(ask.questions) ? [text.slice(0, match.index).split("\n\n")[0], ask.questions] : [text, null];
+  } catch {
+    return [text, null];
+  }
+}
+// Choices survive the thread being drawn again while the person is still filling the form.
+const askState = new Map();
+function askOptions(questions, agent, key, closed = false) {
+  // One fieldset per question, as in the terminal: its options as radio buttons (checkboxes when
+  // several answers are allowed), each with its description, plus "Other" for a typed answer. The
+  // answer goes to the asking agent as an ordinary reply, which its hook reads as `Header: answer`
+  // lines (or the bare answer for a single question).
+  const form = el("form", null, "ask-options");
+  const state = askState.get(key) || { checked: {}, typed: {}, sent: false };
+  askState.set(key, state);
+  const name = "ask-" + key;
+  const submit = el("button", "Send answer", "primary-button ask-send");
+  submit.type = "submit";
+  const groups = questions.map((question, index) => {
+    const group = form.appendChild(el("fieldset", null, "ask-question"));
+    group.appendChild(el("legend", question.header || "Question", "ask-header"));
+    group.appendChild(el("p", question.question || "", "ask-text"));
+    const type = question.multiSelect ? "checkbox" : "radio";
+    const choice = (label, description) => {
+      const row = group.appendChild(el("label", null, "ask-option"));
+      const input = row.appendChild(el("input"));
+      input.type = type;
+      input.name = name + "-" + index;
+      input.value = label;
+      const words = row.appendChild(el("span", null, "ask-choice"));
+      words.appendChild(el("strong", label));
+      if (description) words.appendChild(el("span", description, "ask-description"));
+      return input;
+    };
+    for (const option of question.options || []) {
+      const label = typeof option === "string" ? option : option.label;
+      choice(label, typeof option === "string" ? "" : option.description);
+    }
+    const other = choice("Other", "");
+    const typed = other.closest("label").appendChild(el("input", null, "ask-other"));
+    typed.type = "text";
+    typed.value = state.typed[index] || "";
+    for (const input of group.querySelectorAll("input[type=radio], input[type=checkbox]"))
+      input.checked = (state.checked[index] || []).includes(input.value);
+    typed.placeholder = "Your own answer";
+    typed.setAttribute("aria-label", "Your own answer to " + (question.header || "this question"));
+    typed.addEventListener("input", () => { other.checked = Boolean(typed.value.trim()) || other.checked; ready(); });
+    return { question, group, typed };
+  });
+  const answerOf = ({ group, typed }) => [...group.querySelectorAll("input:checked")]
+    .map((input) => input.value === "Other" ? typed.value.trim() : input.value).filter(Boolean).join(", ");
+  function ready() {
+    groups.forEach(({ group, typed }, index) => {
+      state.checked[index] = [...group.querySelectorAll("input:checked")].map((input) => input.value);
+      state.typed[index] = typed.value;
+    });
+    submit.disabled = state.sent || groups.some((entry) => !answerOf(entry));
+  }
+  form.addEventListener("change", ready);
+  form.appendChild(submit);
+  ready();
+  if (state.sent || closed) for (const control of form.elements) control.disabled = true;
+  if (closed && !state.sent) {
+    submit.textContent = "Question closed";
+    form.classList.add("closed");
+  }
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const answers = groups.map(answerOf);
+    if (answers.some((answer) => !answer)) return;
+    const text = groups.length === 1 ? answers[0]
+      : groups.map((entry, index) => (entry.question.header || entry.question.question) + ": " + answers[index]).join("\n");
+    // Sending draws the thread again at once, so the form is marked sent before it goes.
+    state.sent = true;
+    if (answerAsk(agent, text) === false) {
+      state.sent = false;
+      return;
+    }
+    for (const control of form.elements) control.disabled = true;
+  });
+  return form;
+}
+function answerAsk(agent, text) {
+  // The reply goes through the composer, so it is queued, retried and shown like any message.
+  if (target() !== agent) {
+    feedback("Open the conversation with this agent to answer.", "error");
+    return false;
+  }
+  $("message-input").value = text;
+  $("composer").requestSubmit();
+  return true;
+}
 function messageText(container, text) {
+  // Block markdown as agents write it: paragraphs, headings, bulleted and numbered lists (one level of
+  // nesting), quotes, rules, tables and fenced code. Anything else stays as written.
   container.replaceChildren();
-  let paragraph = [],
-    bullets = [],
-    code = null;
+  const lines = String(text).split("\n");
+  let paragraph = [], quote = [], list = null, code = null;
   function flush() {
     if (paragraph.length) {
-      const p = el("p");
-      inline(p, paragraph.join("\n"));
-      container.appendChild(p);
+      inline(container.appendChild(el("p")), paragraph.join("\n"));
       paragraph = [];
     }
-    if (bullets.length) {
-      const ul = el("ul");
-      for (const value of bullets) {
-        const li = el("li");
-        inline(li, value);
-        ul.appendChild(li);
-      }
-      container.appendChild(ul);
-      bullets = [];
+    if (quote.length) {
+      inline(container.appendChild(el("blockquote")).appendChild(el("p")), quote.join("\n"));
+      quote = [];
     }
+    list = null;
   }
-  for (const line of String(text).split("\n")) {
+  function item(ordered, indent, value) {
+    if (list && indent > list.indent && list.last) {
+      // One nested level under the previous item, whichever kind of list either one is.
+      if (!list.sub) list.sub = list.last.appendChild(el(ordered ? "ol" : "ul"));
+      inline(list.sub.appendChild(el("li")), value);
+      return;
+    }
+    if (!list || list.ordered !== ordered || indent < list.indent) {
+      flush();
+      list = { ordered, indent, node: container.appendChild(el(ordered ? "ol" : "ul")), last: null, sub: null };
+    }
+    list.last = list.node.appendChild(el("li"));
+    list.sub = null;
+    inline(list.last, value);
+  }
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     if (line.trim().startsWith("```")) {
       if (code !== null) {
-        container
-          .appendChild(el("pre"))
-          .appendChild(el("code", code.join("\n")));
+        container.appendChild(el("pre")).appendChild(el("code", code.join("\n")));
         code = null;
       } else {
         flush();
         code = [];
       }
-    } else if (code !== null) code.push(line);
-    else if (!line.trim()) flush();
-    else if (/^\s*[-*] /.test(line)) {
-      if (paragraph.length) flush();
-      bullets.push(line.replace(/^\s*[-*] /, ""));
+      continue;
+    }
+    if (code !== null) { code.push(line); continue; }
+    if (!line.trim()) { flush(); continue; }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    const bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line);
+    const numbered = /^(\s*)\d+[.)]\s+(.*)$/.exec(line);
+    if (heading) {
+      flush();
+      // Messages are small: every heading level is a bold line, stepping down from h3.
+      inline(container.appendChild(el("h" + Math.min(6, heading[1].length + 2))), heading[2].trim());
+    } else if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      flush();
+      container.appendChild(el("hr"));
+    } else if (/^\s*>/.test(line)) {
+      if (paragraph.length || list) flush();
+      quote.push(line.replace(/^\s*>\s?/, ""));
+    } else if (bullet || numbered) {
+      if (paragraph.length || quote.length) flush();
+      const match = bullet || numbered;
+      item(Boolean(numbered), match[1].length, match[2]);
+    } else if (/\|/.test(line) && index + 1 < lines.length && TABLE_RULE.test(lines[index + 1])) {
+      flush();
+      const table = container.appendChild(el("table"));
+      const head = table.appendChild(el("thead")).appendChild(el("tr"));
+      for (const cell of tableCells(line)) inline(head.appendChild(el("th")), cell);
+      const body = table.appendChild(el("tbody"));
+      index += 1;
+      while (index + 1 < lines.length && /\|/.test(lines[index + 1]) && lines[index + 1].trim()) {
+        index += 1;
+        const row = body.appendChild(el("tr"));
+        for (const cell of tableCells(lines[index])) inline(row.appendChild(el("td")), cell);
+      }
     } else {
-      if (bullets.length) flush();
+      if (list || quote.length) flush();
       paragraph.push(line);
     }
   }
-  if (code !== null)
-    container.appendChild(el("pre")).appendChild(el("code", code.join("\n")));
+  if (code !== null) container.appendChild(el("pre")).appendChild(el("code", code.join("\n")));
   flush();
 }
 const LOCAL_DELIVERY = {
@@ -582,6 +892,7 @@ function localRow(entry) {
   const [label, detail] = LOCAL_DELIVERY[entry.state];
   return {
     id: entry.id, from: "user", to: entry.target, text: entry.text, at: entry.at, local: entry,
+    attachments: entry.attachments || [],
     delivery: { state: entry.state, label: entry.state === "refused" && entry.error ? "Refused · " + entry.error : label, detail },
   };
 }
@@ -606,6 +917,31 @@ function withOutbox(rows) {
   const local = [...model.outbox.values()].filter((entry) => entry.target === destination).map(localRow);
   return local.length ? [...rows, ...local] : rows;
 }
+function staffingLabel(staffing) {
+  // Who the hub is starting for a post no running session could read.
+  if (!staffing) return "";
+  const where = String(staffing.route || "").split("/")[0];
+  switch (staffing.state) {
+    case "node": return "Starting a session on " + where + "…";
+    case "cloud": return "Waiting for a machine to start a session…";
+    default: return "";
+  }
+}
+function ackLine(row) {
+  // Who read the post: one check mark per session that acked it.
+  const acks = Array.isArray(row.acks) ? row.acks : [];
+  if (!acks.length) {
+    const starting = staffingLabel(row.staffing);
+    if (!starting) return null;
+    const line = el("small", starting, "message-acks starting");
+    if (row.staffing && row.staffing.detail) line.title = row.staffing.detail;
+    return line;
+  }
+  const line = el("small", null, "message-acks");
+  line.title = "Read by " + acks.map((who) => person(who).name).join(", ");
+  for (const who of acks) line.appendChild(el("span", "✓ " + person(who).name, "message-ack"));
+  return line;
+}
 function renderRows(rows, force = false) {
   model.serverRows = rows;
   rows = withOutbox(rows);
@@ -624,7 +960,7 @@ function renderRows(rows, force = false) {
   list.replaceChildren();
   let lastDay = null,
     previous = null;
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     const day = dayKey(row.at);
     if (day !== lastDay) {
       const divider = el("li", null, "day-divider");
@@ -673,7 +1009,7 @@ function renderRows(rows, force = false) {
       content.appendChild(meta);
     }
     const body = el("div", null, "message-body");
-    const text = String(row.text || "");
+    const [text, ask] = askOf(String(row.text || ""));
     const key = row.id || [row.from, row.at, text.slice(0, 20)].join(":");
     const long = text.length > 800;
     function fill() {
@@ -697,10 +1033,32 @@ function renderRows(rows, force = false) {
         });
         body.appendChild(more);
       }
+      // The asking agent waits on its question, so any later message from it or from the human means
+      // the question was answered or dropped; its form then only shows what was asked.
+      const closed = rows.slice(index + 1).some((later) => later.from === row.from || isHuman(later.from));
+      if (ask && row.from !== "user") body.appendChild(askOptions(ask, row.from, key, closed));
     }
     fill();
+    if (Array.isArray(row.attachments) && row.attachments.length) {
+      const images = el("div", null, "message-images");
+      for (const attachment of row.attachments) {
+        if (!attachment || typeof attachment.id !== "string" || !/^[0-9a-f]{32}$/.test(attachment.id)) continue;
+        const link = el("a", null, "message-image-link");
+        link.href = "/api/attachments/" + attachment.id;
+        link.target = "_blank";
+        link.rel = "noopener";
+        const image = el("img", null, "message-image");
+        image.src = link.href;
+        image.alt = "Attached image";
+        image.loading = "lazy";
+        link.appendChild(image);
+        images.appendChild(link);
+      }
+      body.appendChild(images);
+    }
     content.appendChild(body);
-    if (row.reported === true) {
+    // A turn mirrored from the session's terminal is the conversation itself, not a synced copy.
+    if (row.reported === true && row.mirrored !== true) {
       // Shown on every bubble, grouped or not: this copy is the sending machine's record.
       const synced = el("span", "Synced history", "message-note message-synced");
       synced.title = "From the sending machine's local message log; nobody was notified again.";
@@ -724,7 +1082,7 @@ function renderRows(rows, force = false) {
       const source = el("div", row.source, "message-source");
       content.appendChild(source);
     }
-    if (isHuman(row.from)) {
+    if (isHuman(row.from) && row.mirrored !== true) {
       const delivery = row.delivery && typeof row.delivery === "object" ? row.delivery : null;
       // Channel rollups carry their own counted label; direct messages keep the short forms.
       const label = delivery && (Array.isArray(delivery.recipients) ? delivery.label :
@@ -739,6 +1097,8 @@ function renderRows(rows, force = false) {
         status.append(" ", retry);
       }
       content.appendChild(status);
+      const acks = ackLine(row);
+      if (acks) content.appendChild(acks);
     }
     item.appendChild(content);
     list.appendChild(item);
@@ -772,8 +1132,10 @@ function conversationResponse(rows) {
   const request = pairRows.filter((row) => row.from === "user").at(-1);
   if (!request) return;
   const later = pairRows.filter((row) => row.from === peer && Number(row.at) > Number(request.at)).at(-1);
+  // The nearest thing to a receipt: whether the agent has said anything since the human's last message.
   node.textContent = later ? "Latest message from " + person(peer).name + " · " + freshness(later.at) +
-    ". Messages have no read or reply-to receipts." : "No later message from this agent yet.";
+    ". Messages have no read or reply-to receipts." : "You wrote last and " + person(peer).name +
+    " has not answered since. Messages have no read receipts.";
   node.hidden = false;
 }
 async function refreshView(force = false) {
@@ -804,6 +1166,7 @@ async function refreshView(force = false) {
     }
     if (!current()) return;
     renderRows(rows, force);
+    markRead();
   } catch (error) {
     if (current() && !(error instanceof StaleSession)) notice(error.message, true);
   }
@@ -846,9 +1209,7 @@ function select(kind, key = "", updateHash = true) {
   $(
     kind === "activity"
       ? "nav-activity"
-      : kind === "direct"
-        ? "nav-direct"
-        : "nav-home",
+      : "nav-home",
   ).classList.add("selected");
   if (kind === "activity") activity();
   else if (kind === "home") renderRows([]);
@@ -915,17 +1276,19 @@ function updateComposer() {
     model.view && model.view.kind === "direct"
       ? "This is an agent-to-agent conversation."
       : "Pick a conversation to write to your team.";
-  $("message-input").placeholder = destination
-    ? "Message " +
-      (destination.startsWith("#") ? destination : person(destination).name)
+  // Written only when they change: iOS drops suggestions and autocorrect for a field rewritten as it is typed in.
+  const input = $("message-input");
+  const placeholder = destination
+    ? "Message " + (destination.startsWith("#") ? destination : person(destination).name)
     : "Message your team";
-  $("message-input").disabled = model.sending;
+  if (input.placeholder !== placeholder) input.placeholder = placeholder;
+  if (input.disabled !== model.sending) input.disabled = model.sending;
   $("send-message").disabled =
     !destination ||
     !model.token ||
     unavailable ||
     model.sending ||
-    !$("message-input").value.trim();
+    (!$("message-input").value.trim() && !model.attachments.some((a) => a.id));
   $("send-message").title = unavailable ? "This agent is offline. Your draft stays here until it reconnects." : "Send message as a human";
 }
 const DEFAULT_FEEDBACK =
@@ -946,9 +1309,11 @@ async function session() {
     authentication(data.authenticated !== false);
     $("staff-team").hidden = !model.capabilities.workers;
     $("new-channel").hidden = !model.capabilities.channels;
+    $("routines-section").hidden = !model.capabilities.routines;
     $("show-costs").hidden = !model.capabilities.accounting;
     $("logout-device").hidden = !data.authenticated;
     $("generate-invitation").hidden = !model.capabilities.pairing;
+    $("sign-out-others").hidden = !model.capabilities.sign_out_others;
     $("device-connect").hidden = !model.capabilities.pairing;
     updateComposer();
     return model.authenticated;
@@ -973,11 +1338,14 @@ function authentication(accepted) {
     if (model.feedAbort) model.feedAbort.abort();
     model.outbox.clear();
     model.pending.clear();
+    model.readMarks.clear();
+    model.reading.clear();
     for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
   }
 }
 
 async function post(path, body, login = false) {
+  const generation = model.generation;
   let response, data;
   try {
     response = await fetch(path, {
@@ -990,8 +1358,11 @@ async function post(path, body, login = false) {
     });
     data = await response.json();
   } catch (_) {
+    if (generation !== model.generation) throw new StaleSession("stale session");
     throw new Error("The connection ended before a receipt arrived. Retry the same request to check its outcome.");
   }
+  // An answer meant for an ended session never changes the current one, not even to sign it out.
+  if (generation !== model.generation) throw new StaleSession("stale session");
   if (response.status === 401) authentication(false);
   if (!response.ok) throw new Error(data.error || "The workspace could not complete that request.");
   return data;
@@ -1025,10 +1396,8 @@ async function disconnectDevice() {
     navigation = {};
     try { localStorage.removeItem("oneconv:navigation"); } catch (_) { /* Storage can be unavailable. */ }
     model.costs = null;
-    model.workers = { jobs: [], pools: [], profiles: [] };
     $("messages").replaceChildren();
     $("costs-content").replaceChildren();
-    $("worker-jobs").replaceChildren();
     $("message-input").value = "";
     sidebar();
     authentication(false);
@@ -1037,6 +1406,21 @@ async function disconnectDevice() {
   } catch (error) { toast(error.message); }
 }
 
+async function signOutOthers() {
+  // Keeps only this device: every other browser and any unused invitation stops working.
+  $("sign-out-others").disabled = true;
+  $("sign-out-feedback").textContent = "Signing out other devices…";
+  try {
+    const result = await post("/api/devices/sign-out-others", {});
+    clearInvitation();
+    $("sign-out-feedback").textContent = result.signed_out === 1 ? "1 other device was signed out. Only this one stays connected."
+      : result.signed_out + " other devices were signed out. Only this one stays connected.";
+  } catch (error) {
+    $("sign-out-feedback").textContent = error.message;
+  } finally {
+    $("sign-out-others").disabled = false;
+  }
+}
 function clearInvitation() {
   invitationGeneration += 1;
   deviceInvitation = null;
@@ -1093,169 +1477,13 @@ async function shareInvitation() {
   catch (_) { /* Cancelling the share sheet leaves the invitation available. */ }
 }
 
-const jobLabels = {
-  queued: "Getting started", provisioning: "Preparing workspace", bootstrapping: "Setting up tools",
-  starting: "Starting teammate", registering: "Joining the team", ready: "Online",
-  auth_needed: "Provider needs attention", authentication_required: "Provider needs attention", failed: "Needs attention",
-  unknown: "Outcome needs checking", unconfirmed: "Outcome needs checking", stopped: "Stopped",
-  unverified: "Connection not verified",
-};
-
-function renderJobs() {
-  const container = $("worker-jobs");
-  container.replaceChildren();
-  for (const job of (model.workers.jobs || []).slice(0, 12)) {
-    const item = el("article", null, "worker-job");
-    const spec = job.spec || job;
-    const pool = (model.workers.pools || []).find((candidate) => candidate.id === job.pool_id);
-    // Resuming compute does not verify that its stopped teammate has reconnected.
-    const restartable = job.status === "stopped" && job.phase === "pool-stopped" && pool?.status === "available";
-    const allocationBlocked = job.status === "unconfirmed" && job.phase === "allocation-blocked";
-    const blockedPool = (model.workers.pools || []).find((candidate) => candidate.id === job.blocked_by_pool);
-    const blockedOwner = blockedPool && (model.workers.jobs || []).find(
-      (owner) => owner.pool_id === blockedPool.id && owner.status !== "stopped");
-    // An existing owner keeps reconciliation authority until its reservation is orphaned.
-    const orphanedAllocation = allocationBlocked && !job.box_id && blockedPool && !blockedPool.box_id && blockedPool.status !== "retired" &&
-      spec.profile && blockedPool.profile === spec.profile && !blockedOwner;
-    item.append(el("span", (spec.name || "A").slice(0, 2).toUpperCase(), "avatar codex"));
-    const text = el("div");
-    const jobPresence = presenceOf(person(job.address));
-    const online = job.status === "ready" && jobPresence.can_message;
-    text.append(el("strong", spec.name || "Teammate"), el("small", allocationBlocked ? "Waiting for box recovery" :
-      job.status === "ready" && !online ? "Offline · check the connection" :
-        job.status === "ready" && jobPresence.state === "unverified" ? "Connection unverified" : jobLabels[job.status] || job.status || "Preparing"));
-    if (job.error || job.detail) text.append(el("p", job.error || job.detail, "job-detail"));
-    if (job.status === "stopped" && job.phase === "pool-stopped") {
-      text.append(el("p", restartable ? "The box is available. Choose Check again to reconnect this teammate." :
-        "Resume its box, then choose Check again to reconnect this teammate.", "job-detail"));
-    }
-    if (allocationBlocked && !orphanedAllocation) {
-      const recovery = blockedPool?.box_id || blockedPool?.status === "retired" ? "Choose Check again to retry this request." :
-        (blockedOwner?.spec?.name ? `Recover the box from the ${blockedOwner.spec.name} request first, then choose Check again.` :
-          "Resolve the earlier box creation first, then choose Check again.");
-      text.append(el("p", recovery + " Cancelling this request leaves the earlier request unchanged.", "quiet-copy"));
-    }
-    if (["auth_needed", "authentication_required"].includes(job.status)) {
-      const help = el("p", "Check the provider’s login, model access or quota in ", "job-detail");
-      const link = el("a", "Boat’s agent settings");
-      link.href = "https://boat.dev/dashboard?tab=agents"; link.target = "_blank"; link.rel = "noopener noreferrer";
-      help.append(link, document.createTextNode(", then choose Check again. Your existing box is kept."));
-      text.append(help);
-    }
-    item.append(text);
-    if (online && job.address) {
-      const button = el("button", "Message", "secondary-button");
-      button.type = "button";
-      button.addEventListener("click", () => {
-        $("staff-dialog").close(); select("direct", pairOf(job.address));
-      });
-      item.append(button);
-    }
-    if (["ready", "unverified", "auth_needed", "failed"].includes(job.status) ||
-        (job.status === "unconfirmed" && job.box_id) || restartable || allocationBlocked) {
-      const actions = el("div", null, "job-actions");
-      if (["auth_needed", "unverified", "failed"].includes(job.status) ||
-          (job.status === "unconfirmed" && job.phase === "bootstrapping") || (job.status === "ready" && !online) ||
-          restartable || allocationBlocked) {
-        const check = el("button", "Check again", "secondary-button");
-        check.type = "button";
-        check.addEventListener("click", () => workerAction("recheck", job.id));
-        actions.append(check);
-      }
-      if (!restartable) {
-        const stop = el("button", allocationBlocked ? "Cancel request" : "Stop teammate", "secondary-button");
-        stop.type = "button";
-        stop.addEventListener("click", () => workerAction("stop", job.id));
-        actions.append(stop);
-      }
-      item.append(actions);
-    }
-    if ((job.status === "unconfirmed" && job.phase === "creating" && !job.box_id) || orphanedAllocation) {
-      const form = el("form", null, "quote-form"), label = el("label", "Existing box ID from Boat");
-      const input = document.createElement("input"); input.placeholder = "bx_…"; input.required = true;
-      input.setAttribute("aria-label", "Reconcile box for " + (spec.name || "teammate")); label.append(input);
-      const button = el("button", "Use this existing box", "secondary-button"); button.type = "submit";
-      form.append(label, button, el("p", "Check Boat before continuing. This attaches a box already created; it does not create another.", "quiet-copy"));
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault(); button.disabled = true;
-        try { await post("/api/providers/workers", { action: "reconcile", id: job.id, box_id: input.value.trim() }); await refreshWorkers(); }
-        catch (error) { $("staff-feedback").textContent = error.message; button.disabled = false; }
-      });
-      item.append(form);
-    }
-    container.append(item);
-  }
-  for (const pool of model.workers.pools || []) {
-    if (pool.status === "retired") continue;
-    const item = el("article", null, "worker-job pool-job");
-    const detail = el("div");
-    detail.append(el("strong", pool.name || "Shared worker box"),
-      el("small", !pool.box_id ? "Box creation needs checking" : pool.status === "stopped" ? "Stopped · files preserved" : "Shared compute"));
-    item.append(detail);
-    if (pool.box_id) {
-      const action = pool.status === "stopped" ? "resume_pool" : "stop_pool";
-      const button = el("button", action === "resume_pool" ? "Resume box" : "Stop box", "secondary-button");
-      button.type = "button";
-      button.addEventListener("click", () => workerAction(action, pool.id));
-      item.append(button);
-    }
-    container.append(item);
-  }
-}
-
-async function workerAction(action, id) {
-  try {
-    await post("/api/providers/workers", { action, id });
-    await refreshWorkers();
-  } catch (error) { $("staff-feedback").textContent = error.message; }
-}
-
-function staffingProfiles() {
-  return Array.isArray(model.workers.profiles) ? model.workers.profiles :
-    Object.entries(model.workers.profiles || {}).map(([id, profile]) => ({ ...profile, id }));
-}
-
-function renderStaffingDisclosure() {
-  const profile = staffingProfiles().find((item) => (item.id || item.name) === $("staff-profile").value);
-  const harness = $("staff-harness").value, args = profile?.harness_args?.[harness];
-  const bypass = { claude: "--dangerously-skip-permissions", codex: "--dangerously-bypass-approvals-and-sandbox", omp: "--approval-mode=yolo" };
-  // Only explicit bypass settings establish unattended permissions for a selected harness.
-  const unattended = Array.isArray(args) && (args.includes(bypass[harness]) || (harness === "omp" &&
-    args.some((value, index) => value === "--approval-mode" && args[index + 1] === "yolo")));
-  const disclosure = unattended ? "This teammate runs unattended with this profile’s repository access and credentials." :
-    "This teammate uses this profile’s repository access, credentials and approval settings.";
-  const content = $("staff-access-disclosure");
-  if (content.textContent !== disclosure) content.textContent = disclosure;
-}
-
-async function refreshWorkers() {
-  if (!model.capabilities.workers || !model.authenticated) return;
-  try {
-    model.workers = await get("/api/providers/workers");
-    renderJobs();
-    const picker = $("staff-profile"), selected = picker.value;
-    picker.replaceChildren();
-    const profiles = staffingProfiles();
-    for (const profile of profiles) {
-      const option = el("option", profile.label || profile.name || profile.id);
-      option.value = profile.id || profile.name;
-      picker.append(option);
-    }
-    if (!picker.children.length) {
-      const option = el("option", "Default"); option.value = "default"; picker.append(option);
-    }
-    if ([...picker.options].some((option) => option.value === selected)) picker.value = selected;
-    renderStaffingDisclosure();
-  } catch (error) { $("staff-feedback").textContent = error.message; }
-}
-
 async function staffingIdentity(spec) {
   const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(spec))))]
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
   let pending;
   try { pending = JSON.parse(sessionStorage.getItem("oneconv:staffing")); } catch (_) { /* Storage can be unavailable. */ }
   if (!pending || pending.digest !== digest) pending = { digest, id: crypto.randomUUID().replaceAll("-", "") };
-  try { sessionStorage.setItem("oneconv:staffing", JSON.stringify(pending)); } catch (_) { /* The server also rejects duplicate active names. */ }
+  try { sessionStorage.setItem("oneconv:staffing", JSON.stringify(pending)); } catch (_) { /* Without it a retry is a new request. */ }
   return pending.id;
 }
 
@@ -1263,53 +1491,174 @@ async function staffTeammate(event) {
   event.preventDefault();
   if (model.staffing || !model.token) return;
   const spec = {
-    name: $("staff-name").value.trim(), harness: $("staff-harness").value,
-    model: $("staff-model").value.trim() || null, topic: $("staff-topic").value.trim().replace(/^#/, ""),
-    profile: $("staff-profile").value, prompt: $("staff-prompt").value.trim(),
+    name: $("staff-name").value.trim(), topic: $("staff-topic").value.trim().replace(/^#/, ""),
+    prompt: $("staff-prompt").value.trim(),
   };
   model.staffing = true; $("staff-submit").disabled = true;
-  $("staff-feedback").textContent = "Your teammate’s workspace is being prepared…";
+  $("staff-feedback").textContent = "Asking a connected machine to start your teammate…";
   try {
     const id = await staffingIdentity(spec);
     const data = await post("/api/providers/workers", { action: "spawn", id, spec });
     if (data.id !== id || typeof data.status !== "string") throw new Error("The request is not confirmed yet. Retry to check the same request.");
-    $("staff-feedback").textContent = "We’re on it. You can close this window; preparation continues in the cloud.";
-    await refreshWorkers();
+    const where = String(data.route || "").split("/")[0];
+    $("staff-feedback").textContent = where ? "Starting on " + where + ". You can close this window; they will join #" + spec.topic + "."
+      : "Waiting for a machine to connect. You can close this window; they will join #" + spec.topic + " once one does.";
   } catch (error) { $("staff-feedback").textContent = error.message; }
   finally { model.staffing = false; $("staff-submit").disabled = false; }
 }
 
-function openChannelDialog() {
-  const list = $("channel-members");
+// --- routines: prompts the workspace posts in a channel on a schedule --------------------------
+function untilText(seconds) {
+  const left = Math.max(0, Number(seconds) - Date.now() / 1000);
+  return left < 60 ? "in under a minute" : left < 3600 ? "in " + Math.round(left / 60) + " min" :
+    left < 86400 ? "in " + Math.round(left / 3600) + " h" : "in " + Math.round(left / 86400) + " d";
+}
+function routineLine(routine) {
+  if (!routine.enabled) return "Paused · #" + routine.topic;
+  return routine.schedule + " · #" + routine.topic + (routine.next_at ? " · next " + untilText(routine.next_at) : "");
+}
+function renderRoutines() {
+  const list = $("routines");
   list.replaceChildren();
-  const online = model.state.sessions.filter(
-    (s) => !s.history_only && (!s.presence || s.presence.state !== "offline"),
-  );
-  for (const s of online) {
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.value = s.address;
-    const p = person(s.address);
-    const label = el("label");
-    label.append(box, el("span", p.name + " · " + (s.title || s.cwd || s.address)));
-    list.appendChild(label);
+  const routines = model.state.routines || [];
+  for (const routine of routines) {
+    const button = rowButton(list, routine.name, icon("clock"), false, () => openRoutineDialog(routine));
+    button.classList.toggle("paused", !routine.enabled);
+    const label = button.querySelector(".row-label");
+    label.classList.add("agent-label");
+    label.replaceChildren(el("span", routine.name, "agent-name"),
+      el("small", routineLine(routine), "agent-context" + (routine.last_error ? " routine-error" : "")));
   }
-  if (!online.length) list.appendChild(el("p", "No agent is connected; you can still create the channel and invite them later.", "quiet-copy"));
+  if (!routines.length) list.appendChild(el("li", "Schedule work: + adds a routine.", "sidebar-empty"));
+  $("routine-count").textContent = routines.length || "";
+}
+function browserZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (_) { return "UTC"; }
+}
+function routineCron() {
+  const when = $("routine-when").value;
+  const [hour, minute] = ($("routine-time").value || "09:00").split(":").map(Number);
+  if (when === "custom") return $("routine-cron").value.trim();
+  if (when === "hourly") return Math.min(59, Math.max(0, Number($("routine-minute").value) || 0)) + " * * * *";
+  const days = { daily: "*", weekdays: "1-5", weekly: $("routine-day").value }[when];
+  return minute + " " + hour + " * * " + days;
+}
+function showRoutineFields() {
+  const when = $("routine-when").value;
+  $("routine-time-field").hidden = ["hourly", "custom"].includes(when);
+  $("routine-minute-field").hidden = when !== "hourly";
+  $("routine-day-field").hidden = when !== "weekly";
+  $("routine-cron-field").hidden = when !== "custom";
+}
+function fillRoutineSchedule(cron) {
+  // A schedule the presets can express opens in them; any other stays as its cron line.
+  const parts = (cron || "0 9 * * *").split(" ");
+  const [minute, hour, day, month, weekday] = parts;
+  const pad = (value) => String(value).padStart(2, "0");
+  const simple = parts.length === 5 && /^\d+$/.test(minute) && day === "*" && month === "*";
+  let when = "custom";
+  if (simple && hour === "*" && weekday === "*") when = "hourly";
+  else if (simple && /^\d+$/.test(hour)) when = weekday === "*" ? "daily" : weekday === "1-5" ? "weekdays" : /^[0-7]$/.test(weekday) ? "weekly" : "custom";
+  $("routine-when").value = when;
+  $("routine-cron").value = cron || "";
+  if (/^\d+$/.test(minute)) $("routine-minute").value = minute;
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour)) $("routine-time").value = pad(hour) + ":" + pad(minute);
+  if (when === "weekly") $("routine-day").value = String(Number(weekday) % 7);
+  showRoutineFields();
+}
+function openRoutineDialog(routine = null) {
+  model.routine = routine;
+  model.routineDelete = false;
+  $("routine-form").reset();
+  $("routine-topics").replaceChildren(...model.state.topics.map((topic) => { const option = document.createElement("option"); option.value = topic.topic; return option; }));
+  $("routine-heading").textContent = routine ? routine.name : "Work that comes round.";
+  $("routine-name").value = routine ? routine.name : "";
+  $("routine-topic").value = routine ? routine.topic : (model.view && model.view.kind === "topic" ? model.view.key : "");
+  $("routine-prompt").value = routine ? routine.prompt : "";
+  fillRoutineSchedule(routine ? routine.cron : "0 9 * * *");
+  const zone = routine ? routine.tz : browserZone();
+  $("routine-zone").textContent = "Times are in " + zone + ".";
+  $("routine-actions").hidden = !routine;
+  $("routine-status").hidden = !routine;
+  if (routine) {
+    $("routine-toggle").textContent = routine.enabled ? "Pause" : "Resume";
+    $("routine-delete").textContent = "Delete";
+    $("routine-status").textContent = [routine.enabled ? "Next run " + untilText(routine.next_at) : "Paused",
+      routine.last_at ? "last run " + freshness(routine.last_at) : "never run yet",
+      routine.last_error ? "last attempt failed: " + routine.last_error : ""].filter(Boolean).join(" · ");
+  }
+  $("routine-feedback").textContent = "";
+  $("routine-dialog").showModal();
+  if (!routine) $("routine-name").focus();
+}
+async function saveRoutine(event) {
+  event.preventDefault();
+  if (model.savingRoutine || !model.token) return;
+  const current = model.routine;
+  const routine = {
+    id: current ? current.id : crypto.randomUUID().replaceAll("-", ""),
+    name: $("routine-name").value.trim(),
+    topic: $("routine-topic").value.trim().replace(/^#/, "").toLowerCase(),
+    prompt: $("routine-prompt").value,
+    cron: routineCron(),
+    tz: current ? current.tz : browserZone(),
+    enabled: current ? current.enabled : true,
+  };
+  model.savingRoutine = true; $("routine-submit").disabled = true;
+  $("routine-feedback").textContent = "Saving…";
+  try {
+    // Keeping the id across a retry replaces the same routine rather than adding a second one.
+    if (!current) model.routine = { ...routine };
+    const saved = await post("/api/routines", routine);
+    model.routine = saved;
+    $("routine-dialog").close();
+    toast(saved.name + ": " + (saved.enabled ? saved.schedule.toLowerCase() + " in #" + saved.topic : "saved, paused"));
+    model.signature = "";
+    await refreshState();
+  } catch (error) { $("routine-feedback").textContent = error.message; }
+  finally { model.savingRoutine = false; $("routine-submit").disabled = false; }
+}
+async function routineAction(action) {
+  const routine = model.routine;
+  if (!routine || !routine.created) return;
+  if (action === "delete" && !model.routineDelete) {
+    model.routineDelete = true;
+    $("routine-delete").textContent = "Tap again to delete";
+    return;
+  }
+  $("routine-feedback").textContent = { run: "Posting…", pause: "Pausing…", resume: "Resuming…", delete: "Deleting…" }[action];
+  try {
+    const result = await post("/api/routines/action", { id: routine.id, action });
+    if (action === "run") {
+      $("routine-dialog").close();
+      select("topic", routine.topic);
+      toast("Posted " + routine.name + " in #" + routine.topic + ".");
+    } else if (action === "delete") {
+      $("routine-dialog").close();
+      toast(routine.name + " deleted.");
+    } else openRoutineDialog(result);
+    model.signature = "";
+    await refreshState();
+  } catch (error) { $("routine-feedback").textContent = error.message; }
+}
+
+function openChannelDialog() {
   $("channel-feedback").textContent = "";
   $("channel-dialog").showModal();
-  $("channel-name").focus();
+  $("channel-purpose").focus();
 }
 
 async function createChannel(event) {
   event.preventDefault();
   if (model.creatingChannel || !model.token) return;
+  // The workspace fixes the name's case and spacing, or derives it from the prompt when left empty.
   const spec = {
-    topic: $("channel-name").value.trim().replace(/^#/, "").toLowerCase(),
+    topic: $("channel-name").value.trim(),
     purpose: $("channel-purpose").value.trim(),
-    members: [...$("channel-members").querySelectorAll("input:checked")].map((box) => box.value),
+    directory: $("channel-directory").value.trim(),
   };
   model.creatingChannel = true; $("channel-submit").disabled = true;
-  $("channel-feedback").textContent = "Creating #" + spec.topic + "…";
+  $("channel-feedback").textContent = "Creating the channel…";
   try {
     // The same form contents keep the same request ID, so a retry finishes the same channel.
     const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(spec))))]
@@ -1407,8 +1756,9 @@ async function showCosts() {
 async function send(event) {
   event.preventDefault();
   const destination = target(),
-    text = $("message-input").value.trim();
-  if (!destination || !text || !model.token) return;
+    text = $("message-input").value.trim(),
+    attachments = model.attachments.filter((a) => a.id);
+  if (!destination || (!text && !attachments.length) || !model.token) return;
   if (!destination.startsWith("#") && !presenceOf(person(destination)).can_message) {
     feedback("This agent is offline. Your draft stays here until it reconnects.", "error");
     return;
@@ -1418,15 +1768,18 @@ async function send(event) {
     feedback("Offline — not sent. Your draft is kept.", "error");
     return;
   }
-  const draftKey = JSON.stringify([destination, text]);
+  const ids = attachments.map((a) => a.id);
+  const draftKey = JSON.stringify([destination, text, ids]);
   if (!model.pending.has(draftKey))
     model.pending.set(draftKey, { id: crypto.randomUUID().replaceAll("-", ""), target: destination, text });
   const { id } = model.pending.get(draftKey);
-  const entry = model.outbox.get(id) || { id, target: destination, text, draftKey, at: Date.now() / 1000 };
+  const entry = model.outbox.get(id) || { id, target: destination, text, draftKey, at: Date.now() / 1000,
+    attachments: attachments.map((a) => ({ id: a.id, media_type: a.media_type, size: a.size })) };
   entry.state = "sending";
   model.outbox.set(id, entry);
   model.drafts.delete(destination);
   $("message-input").value = "";
+  clearAttachments();
   $("message-input").style.height = "auto";
   model.first = true;
   renderRows(model.serverRows || [], true);
@@ -1456,7 +1809,8 @@ async function transmit(entry) {
     response = await fetch("/api/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-One-Conv-Token": model.token || "" },
-      body: JSON.stringify({ id: entry.id, target: entry.target, text: entry.text }),
+      body: JSON.stringify({ id: entry.id, target: entry.target, text: entry.text,
+        ...(entry.attachments && entry.attachments.length ? { attachments: entry.attachments.map((a) => a.id) } : {}) }),
     });
     data = await response.json().catch(() => ({}));
   } catch (_) {
@@ -1524,6 +1878,16 @@ function format(kind) {
     input.setSelectionRange(start + before.length, start + before.length);
   updateComposer();
 }
+async function archiveChannel(topic, archived) {
+  try {
+    await post("/api/channels/archive", { topic, archived });
+    toast(archived ? "#" + topic + " archived. Find it under Archived." : "#" + topic + " is back in your channels.");
+  } catch (error) {
+    toast(error.message);
+  }
+  model.signature = "";
+  await refreshState();
+}
 function renderDetails() {
   const content = $("details-content");
   content.replaceChildren();
@@ -1555,7 +1919,9 @@ function renderDetails() {
       el("strong", p.name),
       el(
         "small",
-        isHuman(address) ? "Human" : personContext(p),
+        isHuman(address) ? "Human"
+          : (model.view && model.view.kind === "topic" && !((currentTopic() || {}).working || []).includes(address)
+            ? "Watching · " : "Working here · ") + personContext(p),
       ),
     );
     if (!isHuman(address)) {
@@ -1579,11 +1945,56 @@ function renderDetails() {
         toggleDetails(false);
       });
     content.appendChild(button);
+    if (!isHuman(address) && model.capabilities.stop && presenceOf(p).can_message) content.appendChild(stopButton(address, p));
   }
   if (!addresses.length)
     content.appendChild(
       el("p", "Agents will appear here when they join.", "sidebar-empty"),
     );
+}
+function stopButton(address, p) {
+  const armed = model.stopArmed && model.stopArmed.address === address && model.stopArmed.until > Date.now();
+  const busy = model.stopping.has(address);
+  const button = el("button", busy ? "Stopping…" : armed ? "Tap again to stop " + p.name : "Stop agent",
+    "secondary-button stop-agent" + (armed ? " armed" : ""));
+  button.type = "button";
+  button.disabled = busy;
+  button.addEventListener("click", () => {
+    // A second tap within a few seconds confirms; a browser confirm dialog would block the page.
+    if (!armed) {
+      model.stopArmed = { address, until: Date.now() + 5000 };
+      renderDetails();
+      setTimeout(() => {
+        if (model.stopArmed && model.stopArmed.address === address && model.stopArmed.until <= Date.now()) {
+          model.stopArmed = null;
+          if (model.details) renderDetails();
+        }
+      }, 5100);
+      return;
+    }
+    model.stopArmed = null;
+    stopAgent(address, p.name);
+  });
+  return button;
+}
+async function stopAgent(address, name) {
+  model.stopping.add(address);
+  if (model.details) renderDetails();
+  try {
+    const result = await post("/api/sessions/stop", { address });
+    toast({
+      stopped: name + " stopped.",
+      refused: name + " was not stopped: its machine could not end it (Codex and Cursor chats share their app's process). Close it in its app.",
+      unconfirmed: name + "'s machine could not confirm the stop. Check again in a moment.",
+    }[result.status] || "Stop sent; " + name + "'s machine has not answered yet.");
+  } catch (error) {
+    if (!(error instanceof StaleSession)) toast(error.message);
+  } finally {
+    model.stopping.delete(address);
+  }
+  model.signature = "";
+  await refreshState();
+  if (model.details) renderDetails();
 }
 function toggleDetails(open = !model.details) {
   model.details = open;
@@ -1740,15 +2151,159 @@ function theme(value) {
 }
 
 $("composer").addEventListener("submit", send);
+
+// --- the compact composer -----------------------------------------------------------------------
+// On a phone the composer rests as one input line and shows its toolbar and controls while it is
+// being used: focused, holding text, or carrying an image.
+function fitComposer() {
+  const composer = $("composer");
+  const busy = composer.contains(document.activeElement) || Boolean($("message-input").value)
+    || (model.attachments || []).length > 0;
+  composer.classList.toggle("compact", !busy);
+}
+$("composer").addEventListener("focusin", fitComposer);
+// On blur the next focused element is not known yet; a toolbar tap must keep the composer open.
+$("composer").addEventListener("focusout", () => setTimeout(fitComposer, 0));
+$("message-input").addEventListener("input", fitComposer);
+fitComposer();
+
+// --- images attached to a message ---------------------------------------------------------
+// An image is uploaded as soon as it is pasted, dropped or picked, so sending only names its id.
+model.attachments = [];
+function renderAttachments() {
+  if (typeof fitComposer === "function") setTimeout(fitComposer, 0);
+  const strip = $("attachments");
+  strip.replaceChildren();
+  strip.hidden = !model.attachments.length;
+  for (const attachment of model.attachments) {
+    const chip = el("div", null, "attachment-chip" + (attachment.id ? "" : attachment.error ? " failed" : " uploading"));
+    const image = el("img", null, "attachment-thumb");
+    image.src = attachment.url;
+    image.alt = attachment.name || "Attached image";
+    chip.appendChild(image);
+    chip.appendChild(el("span", attachment.error || (attachment.id ? "" : "Uploading…"), "attachment-state"));
+    const remove = el("button", null, "attachment-remove");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "Remove " + (attachment.name || "image"));
+    remove.appendChild(icon("close"));
+    remove.addEventListener("click", () => {
+      model.attachments = model.attachments.filter((a) => a !== attachment);
+      URL.revokeObjectURL(attachment.url);
+      renderAttachments();
+      updateComposer();
+    });
+    chip.appendChild(remove);
+    strip.appendChild(chip);
+  }
+}
+function clearAttachments() {
+  for (const attachment of model.attachments) URL.revokeObjectURL(attachment.url);
+  model.attachments = [];
+  renderAttachments();
+}
+async function attach(file) {
+  if (!file || !/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+    feedback("Only PNG, JPEG, GIF and WebP images can be attached.", "error");
+    return;
+  }
+  if (model.attachments.length >= 4) {
+    feedback("A message carries at most four images.", "error");
+    return;
+  }
+  const attachment = { url: URL.createObjectURL(file), name: file.name, media_type: file.type, size: file.size, id: null, error: "" };
+  model.attachments.push(attachment);
+  renderAttachments();
+  try {
+    const response = await fetch("/api/attachments", {
+      method: "POST", headers: { "Content-Type": file.type, "X-One-Conv-Token": model.token || "" }, body: file,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || typeof data.id !== "string") throw new Error(data.error || "The image was not stored.");
+    attachment.id = data.id;
+  } catch (error) {
+    attachment.error = error.message || "Upload failed";
+  }
+  renderAttachments();
+  updateComposer();
+}
+function attachFiles(files) {
+  for (const file of files || []) attach(file);
+}
+$("attach-toggle").addEventListener("click", () => $("attach-input").click());
+$("attach-input").addEventListener("change", (event) => {
+  attachFiles(event.target.files);
+  event.target.value = "";
+});
+$("message-input").addEventListener("paste", (event) => {
+  const files = [...(event.clipboardData ? event.clipboardData.items : [])]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/")).map((item) => item.getAsFile());
+  if (!files.length) return;
+  event.preventDefault();
+  attachFiles(files);
+});
+for (const type of ["dragover", "drop"]) {
+  $("composer").addEventListener(type, (event) => {
+    if (!event.dataTransfer || ![...event.dataTransfer.types].includes("Files")) return;
+    event.preventDefault();
+    if (type === "drop") attachFiles(event.dataTransfer.files);
+  });
+}
+
+// --- the phone's viewport ------------------------------------------------------------------
+// iOS scrolls the page to bring a focused composer above its keyboard and may leave it shifted, with
+// the top bar cut off and the frame showing under the composer. The app follows the visual viewport
+// instead and never lets the page itself scroll.
+const fullViewport = { width: 0, height: 0 };
+function fitViewport() {
+  const viewport = window.visualViewport;
+  if (!viewport) return;
+  const root = document.documentElement.style;
+  root.setProperty("--viewport-height", Math.round(viewport.height) + "px");
+  root.setProperty("--viewport-top", Math.round(viewport.offsetTop) + "px");
+  // What the keyboard takes is the layout viewport less the visual one. A keyboard is never under
+  // 120px; a smaller difference is a bar the two viewports disagree about, and takes nothing.
+  const taken = Math.round(window.innerHeight - viewport.height - viewport.offsetTop);
+  root.setProperty("--keyboard-height", (taken >= 120 ? taken : 0) + "px");
+  // iOS may pan the visual viewport over the page instead of shrinking it, so an open keyboard pins
+  // the app to the visible area wherever that is (see .keyboard-open in the phone rules). The installed
+  // app can shrink the window with the keyboard, hiding that difference, so the visible area's own
+  // full height (the tallest seen at this width) tells an open keyboard apart too.
+  if (Math.round(viewport.width) !== fullViewport.width) Object.assign(fullViewport, { width: Math.round(viewport.width), height: 0 });
+  fullViewport.height = Math.max(fullViewport.height, viewport.height);
+  const keyboard = Math.max(window.innerHeight, fullViewport.height) - viewport.height;
+  document.documentElement.classList.toggle("keyboard-open", keyboard >= 120);
+  if (window.scrollY || window.scrollX || viewport.offsetTop) window.scrollTo(0, 0);
+  const report = document.getElementById("layout-report");
+  if (report) {
+    const inset = (side) => getComputedStyle(document.documentElement).getPropertyValue("--inset-" + side).trim() || "?";
+    report.textContent = "Layout: screen " + screen.width + "×" + screen.height + " · window " + window.innerWidth + "×"
+      + window.innerHeight + " · viewport " + Math.round(viewport.width) + "×" + Math.round(viewport.height)
+      + (viewport.offsetTop ? " at " + Math.round(viewport.offsetTop) : "") + " · insets " + inset("top") + "/" + inset("bottom")
+      + " · " + (matchMedia("(display-mode: standalone)").matches ? "installed" : "in the browser");
+  }
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", fitViewport);
+  window.visualViewport.addEventListener("scroll", fitViewport);
+  window.addEventListener("focusout", () => setTimeout(fitViewport, 50));
+  fitViewport();
+}
 $("message-input").addEventListener("input", () => {
   // Editing a conversation's composer makes its draft the person's own, for that conversation only.
   const destination = target();
   for (const entry of model.outbox.values()) if (entry.target === destination) entry.restored = false;
 });
-$("message-input").addEventListener("input", () => {
+$("message-input").addEventListener("input", (event) => {
+  // The box grows when the text overflows and is measured again only when text goes away, so a
+  // keystroke that fits leaves it untouched and iOS keeps its suggestions and autocorrect.
   const input = $("message-input");
-  input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 180) + "px";
+  const shrinking = !input.value || !event.inputType || event.inputType.startsWith("delete");
+  if (shrinking || input.scrollHeight > input.clientHeight) {
+    const before = input.style.height;
+    if (shrinking) input.style.height = "auto";
+    const height = Math.min(input.scrollHeight, 180) + "px";
+    if (height !== before || shrinking) input.style.height = height;
+  }
   updateComposer();
 });
 $("message-input").addEventListener("keydown", (event) => {
@@ -1775,6 +2330,7 @@ $("pair-device").addEventListener("click", connectDevice);
 $("logout-device").addEventListener("click", disconnectDevice);
 $("device-menu").addEventListener("click", () => $("device-dialog").showModal());
 $("generate-invitation").addEventListener("click", generateInvitation);
+$("sign-out-others").addEventListener("click", signOutOthers);
 $("copy-invitation").addEventListener("click", copyInvitation);
 $("share-invitation").addEventListener("click", shareInvitation);
 $("device-dialog").addEventListener("close", clearInvitation);
@@ -1782,13 +2338,17 @@ $("device-dialog").addEventListener("cancel", clearInvitation);
 $("staff-team").addEventListener("click", () => {
   $("staff-dialog").showModal();
   if (model.view && model.view.kind === "topic") $("staff-topic").value = model.view.key;
-  refreshWorkers();
 });
 $("staff-form").addEventListener("submit", staffTeammate);
 $("new-channel").addEventListener("click", openChannelDialog);
+$("new-routine").addEventListener("click", () => openRoutineDialog());
+$("routine-form").addEventListener("submit", saveRoutine);
+$("routine-when").addEventListener("change", showRoutineFields);
+$("routine-run").addEventListener("click", () => routineAction("run"));
+$("routine-toggle").addEventListener("click", () => routineAction(model.routine && model.routine.enabled ? "pause" : "resume"));
+$("routine-delete").addEventListener("click", () => routineAction("delete"));
+$("routine-open").addEventListener("click", () => { $("routine-dialog").close(); select("topic", model.routine.topic); });
 $("channel-form").addEventListener("submit", createChannel);
-$("staff-profile").addEventListener("change", renderStaffingDisclosure);
-$("staff-harness").addEventListener("change", renderStaffingDisclosure);
 $("show-costs").addEventListener("click", showCosts);
 for (const button of document.querySelectorAll("[data-close]")) {
   button.addEventListener("click", () => {
@@ -1824,6 +2384,9 @@ $("message-dialog").addEventListener("click", (event) => {
 });
 $("members-toggle").addEventListener("click", () => toggleDetails());
 $("details-toggle").addEventListener("click", () => toggleDetails());
+$("archive-toggle").addEventListener("click", () => {
+  if (model.view?.kind === "topic") archiveChannel(model.view.key, !(currentTopic() || {}).archived);
+});
 $("details-close").addEventListener("click", () => toggleDetails(false));
 $("nav-people").addEventListener("click", () => toggleDetails());
 $("nav-home").addEventListener("click", () => {
@@ -1836,12 +2399,6 @@ $("workspace-home").addEventListener("click", (event) => {
   event.preventDefault();
   $("nav-home").click();
 });
-$("nav-direct").addEventListener("click", () => {
-  const previous = savedRoute("direct");
-  if (previous) select(previous.kind, previous.key);
-  else if (model.threads.length) select("direct", model.threads[0].pair);
-  else newMessage();
-});
 $("nav-activity").addEventListener("click", () => select("activity"));
 $("all-activity").addEventListener("click", () => select("activity"));
 $("search-form").addEventListener("submit", search);
@@ -1850,11 +2407,21 @@ $("sidebar-toggle").addEventListener("click", () => {
   $("sidebar-toggle").setAttribute("aria-expanded", String(open));
 });
 $("sidebar-overlay").addEventListener("click", closeSidebar);
+// Whether the reader is at the end of the conversation, as of their last scroll.
+let pinnedToEnd = true;
 $("message-scroll").addEventListener("scroll", () => {
   const box = $("message-scroll");
+  pinnedToEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 110;
   if (box.scrollHeight - box.scrollTop - box.clientHeight < 100)
     $("new-messages").hidden = true;
 });
+// The composer growing as it is typed in, or the keyboard opening, shortens the message list
+// without scrolling it: a reader at the end stays at the end.
+if (window.ResizeObserver)
+  new ResizeObserver(() => {
+    const box = $("message-scroll");
+    if (pinnedToEnd && box.scrollHeight - box.scrollTop - box.clientHeight >= 1) box.scrollTop = box.scrollHeight;
+  }).observe($("message-scroll"));
 $("new-messages").addEventListener("click", () => {
   $("message-scroll").scrollTop = $("message-scroll").scrollHeight;
   $("new-messages").hidden = true;
@@ -1881,6 +2448,10 @@ for (const emoji of ["👋", "👍", "✨", "🎉", "💡", "✅", "❤️"]) {
   });
   $("emoji-picker").appendChild(button);
 }
+document.addEventListener("click", (event) => {
+  if (!event.target.closest || !event.target.closest("#row-menu")) closeRowMenu();
+});
+window.addEventListener("blur", closeRowMenu);
 document.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
@@ -1888,6 +2459,7 @@ document.addEventListener("keydown", (event) => {
     $("search").select();
   }
   if (event.key === "Escape") {
+    closeRowMenu();
     closeSidebar();
     toggleDetails(false);
     $("emoji-picker").hidden = true;
@@ -1913,6 +2485,35 @@ function visible() {
     if (!document.hidden) { document.removeEventListener("visibilitychange", wake); resolve(); }
   })) : Promise.resolve();
 }
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !model.authenticated) return;
+  // Returning to the tab reads the open conversation; until then its new messages stay unread.
+  sidebar();
+  header();
+  markRead();
+});
+// --- updates ------------------------------------------------------------------------------------
+// A deploy changes the version the change feed reports. The app then reloads itself, but only while
+// nothing is in progress: no draft, no image waiting, no field in use, no question half answered.
+function noteVersion(version) {
+  if (typeof version !== "string" || !version) return;
+  if (!model.version) model.version = version;
+  else if (version !== model.version) {
+    model.updateReady = true;
+    reloadWhenIdle();
+  }
+}
+function reloadWhenIdle() {
+  if (!model.updateReady || document.hidden) return;
+  const active = document.activeElement;
+  const busy = $("message-input").value.trim() || model.attachments.length
+    || (active && active.matches("input, textarea, select, [contenteditable]"))
+    || [...askState.values()].some((state) => !state.sent
+      && (Object.values(state.checked).some((list) => list.length) || Object.values(state.typed).some(Boolean)));
+  if (!busy) location.reload();
+}
+document.addEventListener("focusout", () => setTimeout(reloadWhenIdle, 300));
+document.addEventListener("visibilitychange", reloadWhenIdle);
 async function changeFeed() {
   // One loop per session: it waits for the server to report a change, then refreshes once.
   const generation = model.generation;
@@ -1940,6 +2541,7 @@ async function changeFeed() {
         // after it, and wait from that fingerprint so anything during the read is detected next.
         const first = fingerprint === "";
         fingerprint = data.fp;
+        noteVersion(data.version);
         if (data.changed || first) await refreshState();
         delay = 1000;
       } catch (_) {
@@ -1966,4 +2568,3 @@ setInterval(() => {
   if (!model.capabilities.changes && model.authenticated && model.view && model.refreshing !== model.generation)
     refreshView();
 }, 3000);
-setInterval(() => { if ($("staff-dialog").open) refreshWorkers(); }, 4000);

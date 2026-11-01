@@ -6,6 +6,7 @@ A JSON line `{"type": "user", "message": {...}}` written to the session's
 
 import json
 import os
+import re
 import socket
 import uuid
 from pathlib import Path
@@ -25,15 +26,64 @@ def _record(path: Path) -> dict | None:
     return data if isinstance(data, dict) and data.get("sessionId") else None
 
 
+# Per transcript: bytes already scanned, and the latest /rename and generated titles seen in them.
+_titles: dict[Path, tuple[int, str, str]] = {}
+
+
+def transcript(session_id: str, cwd: str) -> Path:
+    """Claude Code names a project folder after its cwd with every other character turned into a dash."""
+    return claude_home() / "projects" / re.sub(r"[^A-Za-z0-9]", "-", cwd) / f"{session_id}.jsonl"
+
+
+def session_title(session_id: str, cwd: str) -> str:
+    """The name Claude Code shows for a session: its /rename title, else the title it generated.
+
+    Transcripts grow to megabytes and are read at every publication, so only the bytes
+    appended since the last read are scanned.
+    """
+    path = transcript(session_id, cwd)
+    offset, custom, generated = _titles.get(path, (0, "", ""))
+    try:
+        with path.open("rb") as handle:
+            if handle.seek(0, os.SEEK_END) < offset:
+                offset, custom, generated = 0, "", ""
+            handle.seek(offset)
+            chunk = handle.read()
+    except OSError:
+        return ""
+    # A line still being written waits for the next read.
+    complete = chunk[:chunk.rfind(b"\n") + 1]
+    for line in complete.splitlines():
+        if b'"custom-title"' not in line and b'"ai-title"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("type") == "custom-title" and isinstance(entry.get("customTitle"), str):
+            custom = entry["customTitle"].strip()
+        elif entry.get("type") == "ai-title" and isinstance(entry.get("aiTitle"), str):
+            generated = entry["aiTitle"].strip()
+    _titles[path] = (offset + len(complete), custom, generated)
+    return custom or generated
+
+
 def list_sessions() -> list[LiveSession]:
-    sessions = []
+    """One entry per session id: two processes resuming the same session are one address, the latest active."""
+    records: dict[str, dict] = {}
     for path in sorted((claude_home() / "sessions").glob("*.json")):
         data = _record(path)
         if not data or not pid_alive(data.get("pid")):
             continue
+        kept = records.get(data["sessionId"])
+        if kept is None or (data.get("updatedAt") or 0) > (kept.get("updatedAt") or 0):
+            records[data["sessionId"]] = data
+    sessions = []
+    for data in records.values():
         socket_path = data.get("messagingSocketPath") or ""
         sessions.append(LiveSession(
-            "claude", data["sessionId"], data.get("cwd", ""), data.get("name", ""),
+            "claude", data["sessionId"], data.get("cwd", ""),
+            session_title(data["sessionId"], data.get("cwd", "")) or data.get("name", ""),
             data.get("status", ""), data.get("pid"),
             "socket" if socket_path and Path(socket_path).exists() else "none", socket_path))
     return sessions

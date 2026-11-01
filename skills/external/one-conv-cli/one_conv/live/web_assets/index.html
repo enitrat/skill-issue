@@ -103,6 +103,12 @@
         <symbol id="i-bolt" viewBox="0 0 24 24">
           <path d="m13 2-9 12h7l-1 8 10-12h-7Z" />
         </symbol>
+        <symbol id="i-archive" viewBox="0 0 24 24">
+          <path d="M3 4h18v4H3zM5 8v12h14V8M10 12h4" />
+        </symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
+        </symbol>
         <symbol id="i-list" viewBox="0 0 24 24">
           <path d="M9 6h12M9 12h12M9 18h12M3 6h.01M3 12h.01M3 18h.01" />
         </symbol>
@@ -148,12 +154,6 @@
               ><svg class="icon" aria-hidden="true">
                 <use href="#i-home" /></svg></span
             ><span>Home</span>
-          </button>
-          <button id="nav-direct" class="rail-item" type="button">
-            <span class="rail-icon"
-              ><svg class="icon" aria-hidden="true">
-                <use href="#i-chat" /></svg></span
-            ><span>DMs</span>
           </button>
           <button id="nav-activity" class="rail-item" type="button">
             <span class="rail-icon"
@@ -229,19 +229,18 @@
             <button id="new-channel" class="section-add" type="button" aria-label="Create a channel" title="Create a channel" hidden>+</button>
             <ul id="topics" class="conversation-list"></ul>
           </section>
-          <section class="sidebar-section">
-            <button
-              class="section-heading"
-              data-section="threads"
-              type="button"
-              aria-expanded="true"
-            >
-              <svg class="icon tiny" aria-hidden="true">
-                <use href="#i-chevron" /></svg
-              ><span>Direct messages</span
-              ><span id="direct-count" class="section-count"></span>
+          <section id="routines-section" class="sidebar-section" hidden>
+            <button class="section-heading" data-section="routines" type="button" aria-expanded="true">
+              <svg class="icon tiny" aria-hidden="true"><use href="#i-chevron" /></svg><span>Routines</span><span id="routine-count" class="section-count"></span>
             </button>
-            <ul id="threads" class="conversation-list"></ul>
+            <button id="new-routine" class="section-add" type="button" aria-label="Add a routine" title="Add a routine">+</button>
+            <ul id="routines" class="conversation-list"></ul>
+          </section>
+          <section id="archived-section" class="sidebar-section" hidden>
+            <button class="section-heading" data-section="archived-topics" type="button" aria-expanded="false">
+              <svg class="icon tiny" aria-hidden="true"><use href="#i-chevron" /></svg><span>Archived</span><span id="archived-count" class="section-count"></span>
+            </button>
+            <ul id="archived-topics" class="conversation-list" hidden></ul>
           </section>
           <section class="sidebar-section">
             <button
@@ -256,12 +255,6 @@
               ><span id="agent-count" class="section-count"></span>
             </button>
             <ul id="people" class="conversation-list"></ul>
-          </section>
-          <section id="offline-section" class="sidebar-section" hidden>
-            <button class="section-heading" data-section="offline-people" type="button" aria-expanded="false">
-              <svg class="icon tiny" aria-hidden="true"><use href="#i-chevron" /></svg><span>Offline history</span><span id="offline-count" class="section-count"></span>
-            </button>
-            <ul id="offline-people" class="conversation-list" hidden></ul>
           </section>
         </div>
         <div class="sidebar-footer">
@@ -309,6 +302,14 @@
               <span id="member-avatars" class="avatar-stack"></span
               ><span id="member-count"></span></button
             ><button
+              id="archive-toggle"
+              class="icon-button archive-channel"
+              type="button"
+              aria-label="Archive channel"
+              hidden
+            >
+              <svg class="icon" aria-hidden="true"><use href="#i-archive" /></svg></button
+            ><button
               id="details-toggle"
               class="icon-button"
               type="button"
@@ -333,6 +334,10 @@
           New messages <span aria-hidden="true">↓</span>
         </button>
         <section class="composer-area" aria-label="Write a message">
+          <div id="working" class="working" role="status" aria-live="polite" hidden>
+            <span class="working-dots" aria-hidden="true"><span></span><span></span><span></span></span
+            ><span id="working-text"></span>
+          </div>
           <div id="observer-note" class="observer-note" hidden>
             <span>This is an agent-to-agent conversation.</span
             ><button id="start-human-message" type="button">
@@ -386,7 +391,12 @@
               maxlength="32000"
               placeholder="Message your team"
               aria-label="Message text"
+              autocorrect="on"
+              autocapitalize="sentences"
+              spellcheck="true"
             ></textarea>
+            <div id="attachments" class="attachment-strip" aria-label="Attached images" hidden></div>
+            <input id="attach-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
             <div class="composer-bottom">
               <div class="composer-identity">
                 <button
@@ -398,6 +408,16 @@
                 >
                   <svg class="icon" aria-hidden="true">
                     <use href="#i-smile" />
+                  </svg></button
+                ><button
+                  id="attach-toggle"
+                  class="format-button"
+                  type="button"
+                  aria-label="Attach an image"
+                  title="Attach an image (or paste one)"
+                >
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.5 1.5 0 0 1-2.1-2.1l8.3-8.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
                   </svg></button
                 ><span class="composer-divider"></span
                 ><span class="mini-human">Y</span
@@ -480,32 +500,63 @@
     <dialog id="staff-dialog" class="message-dialog staff-dialog">
       <form id="staff-form">
         <div class="dialog-heading"><div><span class="eyebrow">BRING SOMEONE IN</span><h2>Good work is a team sport.</h2></div><button class="icon-button" type="button" data-close="staff-dialog" aria-label="Close add teammate">×</button></div>
-        <p class="dialog-description">Give your teammate a name and a place to start. We’ll get their workspace ready.</p>
+        <p class="dialog-description">Give your teammate a name and a place to start. A connected machine starts them: yours first, the cloud box otherwise.</p>
         <div class="field-grid">
           <label>Name<input id="staff-name" name="name" required maxlength="32" pattern="[a-z0-9][a-z0-9-]*" placeholder="e.g. jack" autocomplete="off" /></label>
-          <label>Harness<select id="staff-harness" name="harness"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="omp">Oh My Pi</option></select></label>
-          <label class="full-field">Model<input id="staff-model" name="model" maxlength="160" placeholder="Your configured default" autocomplete="off" /></label>
           <label>Channel<input id="staff-topic" name="topic" required maxlength="32" pattern="[a-z0-9][a-z0-9-]*" placeholder="e.g. product" autocomplete="off" /></label>
-          <label>Workspace profile<select id="staff-profile" name="profile"><option value="default">Default</option></select></label>
           <label class="full-field">First task<textarea id="staff-prompt" name="prompt" required maxlength="16000" rows="3" placeholder="What would you like them to work on?"></textarea></label>
         </div>
-        <p id="staff-feedback" class="quiet-copy" role="status">Agents share a box when capacity is available, with a separate worktree each.</p>
-        <p id="staff-access-disclosure" class="quiet-copy" aria-live="polite">This teammate uses this profile’s repository access, credentials and approval settings.</p>
-        <button id="staff-submit" class="primary-button" type="submit" aria-describedby="staff-access-disclosure">Bring teammate online <span aria-hidden="true">↗</span></button>
+        <p id="staff-feedback" class="quiet-copy" role="status">The request shows in the channel, and the new teammate joins it there.</p>
+        <button id="staff-submit" class="primary-button" type="submit">Bring teammate online <span aria-hidden="true">↗</span></button>
       </form>
-      <div id="worker-jobs" class="worker-jobs" aria-live="polite"></div>
     </dialog>
     <dialog id="channel-dialog" class="message-dialog staff-dialog">
       <form id="channel-form">
         <div class="dialog-heading"><div><span class="eyebrow">NEW CHANNEL</span><h2>Give the work a home.</h2></div><button class="icon-button" type="button" data-close="channel-dialog" aria-label="Close new channel">×</button></div>
-        <p class="dialog-description">The members you pick join right away and get the kickoff message. #general hears that the channel exists, so anyone else can join.</p>
+        <p class="dialog-description">Say what the work is. An agent picks it up in the new channel; #general hears that it exists.</p>
         <div class="field-grid">
-          <label class="full-field">Name<input id="channel-name" name="topic" required maxlength="64" pattern="[a-z0-9][a-z0-9-]*" placeholder="e.g. one-conv" autocomplete="off" /></label>
-          <label class="full-field">Kickoff<textarea id="channel-purpose" name="purpose" required maxlength="32000" rows="3" placeholder="What is this channel for, and what should happen first?"></textarea></label>
-          <fieldset class="full-field channel-members"><legend>Members</legend><div id="channel-members"></div></fieldset>
+          <label class="full-field">What should happen?<textarea id="channel-purpose" name="purpose" required maxlength="32000" rows="5" placeholder="What is this channel for, and what should happen first?"></textarea></label>
+          <label><span>Name <span class="optional">· optional</span></span><input id="channel-name" name="topic" maxlength="64" placeholder="auto" autocomplete="off" autocapitalize="off" spellcheck="false" /></label>
+          <label><span>Directory <span class="optional">· optional</span></span><input id="channel-directory" name="directory" maxlength="512" placeholder="auto" autocomplete="off" autocapitalize="off" spellcheck="false" /></label>
         </div>
         <p id="channel-feedback" class="quiet-copy" role="status"></p>
         <button id="channel-submit" class="primary-button" type="submit">Create channel</button>
+      </form>
+    </dialog>
+    <dialog id="routine-dialog" class="message-dialog staff-dialog">
+      <form id="routine-form">
+        <div class="dialog-heading"><div><span class="eyebrow">ROUTINE</span><h2 id="routine-heading">Work that comes round.</h2></div><button class="icon-button" type="button" data-close="routine-dialog" aria-label="Close routine">×</button></div>
+        <p class="dialog-description">At each time the workspace posts the prompt in the channel as you. Agents working there pick it up; if nobody is there, a session starts.</p>
+        <div class="field-grid">
+          <label class="full-field">Name<input id="routine-name" required maxlength="80" placeholder="e.g. Daily review" autocomplete="off" /></label>
+          <label class="full-field">Channel<input id="routine-topic" required maxlength="64" pattern="#?[a-z0-9][a-z0-9-]*" placeholder="e.g. reviews" list="routine-topics" autocomplete="off" autocapitalize="off" /></label>
+          <datalist id="routine-topics"></datalist>
+          <label>When<select id="routine-when">
+            <option value="daily">Every day</option>
+            <option value="weekdays">Weekdays</option>
+            <option value="weekly">Every week</option>
+            <option value="hourly">Every hour</option>
+            <option value="custom">Custom (cron)</option>
+          </select></label>
+          <label id="routine-time-field">Time<input id="routine-time" type="time" value="09:00" required /></label>
+          <label id="routine-minute-field" hidden>Minute past the hour<input id="routine-minute" type="number" min="0" max="59" value="0" /></label>
+          <label id="routine-day-field" hidden>Day<select id="routine-day">
+            <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option>
+            <option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option>
+          </select></label>
+          <label id="routine-cron-field" class="full-field" hidden>Cron (minute hour day month weekday)<input id="routine-cron" placeholder="0 21 * * *" autocomplete="off" autocapitalize="off" spellcheck="false" /></label>
+          <label class="full-field">Prompt<textarea id="routine-prompt" required maxlength="32000" rows="4" placeholder="What should happen each time?"></textarea></label>
+        </div>
+        <p id="routine-zone" class="quiet-copy"></p>
+        <p id="routine-status" class="quiet-copy" hidden></p>
+        <div id="routine-actions" class="routine-actions" hidden>
+          <button id="routine-run" class="secondary-button" type="button">Run now</button>
+          <button id="routine-toggle" class="secondary-button" type="button">Pause</button>
+          <button id="routine-open" class="secondary-button" type="button">Open channel</button>
+          <button id="routine-delete" class="secondary-button" type="button">Delete</button>
+        </div>
+        <p id="routine-feedback" class="quiet-copy" role="status"></p>
+        <button id="routine-submit" class="primary-button" type="submit">Save routine</button>
       </form>
     </dialog>
     <dialog id="costs-dialog" class="message-dialog costs-dialog">
@@ -529,8 +580,11 @@
         </div>
         <p id="invitation-feedback" class="quiet-copy" role="status"></p>
       </section>
+      <button id="sign-out-others" class="secondary-button" type="button" hidden>Sign out all other devices</button>
+      <p id="sign-out-feedback" class="quiet-copy" role="status"></p>
       <button id="logout-device" class="secondary-button" type="button" hidden>Disconnect this device</button>
       <p class="quiet-copy">Disconnecting removes this device’s access. It doesn’t stop your teammates.</p>
+      <p id="layout-report" class="quiet-copy" role="status"></p>
     </dialog>
     <div id="toast" class="toast" role="status" hidden></div>
     <script src="/app.js"></script>

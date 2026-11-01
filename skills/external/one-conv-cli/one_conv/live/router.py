@@ -11,7 +11,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import boat, claude, codex, cursor, hubclient, omp, team
+from . import claude, codex, cursor, hubclient, omp, team
 from .model import LiveSession, envelope, is_session_id, live_home, parse_address
 
 try:
@@ -20,9 +20,7 @@ except ImportError:  # Windows has no flock; the rate log is then updated unlock
     fcntl = None
 
 logger = logging.getLogger(__name__)
-ADAPTERS = {"claude": claude, "codex": codex, "omp": omp, "cursor": cursor, "boat": boat}
-# Listing Boat calls a remote API per sandbox, so it runs only when Boat is asked for by name.
-ON_REQUEST = {"boat"}
+ADAPTERS = {"claude": claude, "codex": codex, "omp": omp, "cursor": cursor}
 # Two agents told to reply to each other would otherwise relay forever.
 RATE_LIMIT = 10
 RATE_WINDOW_SECONDS = 300
@@ -52,7 +50,7 @@ class LiveError(Exception):
 def list_all(harness: str | None = None) -> list[LiveSession]:
     sessions = []
     for name, adapter in ADAPTERS.items():
-        if (harness and harness != name) or (not harness and name in ON_REQUEST):
+        if harness and harness != name:
             continue
         try:
             sessions += adapter.list_sessions()
@@ -295,6 +293,20 @@ def _logged(receipt: dict, text: str, topic: str | None, fyi: bool, reply: str) 
     return receipt
 
 
+def ack(message_id: str, address: str) -> dict:
+    """Record on the hub that this session read a message delivered to it; the human sees the check mark."""
+    try:
+        hub = hubclient.configured()
+    except hubclient.HubRefused as error:
+        raise LiveError(str(error)) from error
+    if hub is None:
+        raise LiveError("acks are kept by a live hub, and this machine has none; just reply instead")
+    try:
+        return hub.request("POST", "/v1/acknowledgments", {"actor": address, "id": message_id})
+    except (hubclient.HubRefused, hubclient.HubUnavailable) as error:
+        raise LiveError(str(error)) from error
+
+
 def send(target: str, text: str, sender: LiveSession | None, origin: str = "unknown",
          fyi: bool = False, reply: str = "expected", topic: str | None = None,
          message_id: str | None = None) -> dict:
@@ -306,7 +318,8 @@ def send(target: str, text: str, sender: LiveSession | None, origin: str = "unkn
     named = topic_of(target)
     try:
         if named is not None:
-            return _logged(_send_topic(named, text, sender, origin, fyi, reply, message_id), text, None, fyi, reply)
+            return _logged(_send_topic(named, text, sender, origin, fyi, reply, message_id), text, None,
+                           fyi, reply)
         if topic is not None:
             topic = team._check("topic", topic)
     except team.TeamError as error:
@@ -324,7 +337,9 @@ def send(target: str, text: str, sender: LiveSession | None, origin: str = "unkn
         target = local  # This machine's own NODE/ prefix: deliver here.
     receipt = _send_one(target, text, sender, origin, fyi, reply, topic, message_id)
     if topic is not None:
-        team.record(topic, message_id, receipt["from"], text)
+        request = team.record(topic, message_id, receipt["from"], text)
+        if request:
+            receipt["summarize"] = request
     return _logged(receipt, text, topic, fyi, reply)
 
 
@@ -333,7 +348,7 @@ NODE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 
 
 def remote_address(target: str) -> tuple[str | None, str]:
-    """Split a remote agent or human route, keeping Boat's sandbox route local."""
+    """Split a NODE/address route to an agent or human on another machine; anything else stays local."""
     node, sep, local = target.partition("/")
     if sep and NODE_NAME.fullmatch(node) and (local == "user" or parse_address(local)[0] is not None):
         return node, local
@@ -358,7 +373,8 @@ def _post_remote(hub, target: str, text: str, sender: str, fyi: bool, reply: str
                 "status": "queued for the hub: no receipt yet, the bridge will resend it under the same id"}
     row = (receipt.get("recipients") or [{}])[0]
     return {"to": row.get("to", target), "id": message_id, "from": sender, "via": "hub", "delivery": "hub",
-            "status": "stored on the hub" if row.get("status") == "stored" else row.get("status", "stored")}
+            "status": "stored on the hub" if row.get("status") == "stored" else row.get("status", "stored"),
+            **({"summarize": receipt["summarize"]} if receipt.get("summarize") else {})}
 
 
 def _send_topic(topic: str, text: str, sender: LiveSession | None, origin: str, fyi: bool,
@@ -373,9 +389,10 @@ def _send_topic(topic: str, text: str, sender: LiveSession | None, origin: str, 
     if hub is not None:
         return _post_topic(hub, topic, text, sender_label, "none" if fyi else reply, message_id,
                            "fyi" if fyi else "push")
-    team.record(topic, message_id, sender_label, text)
+    members = team.members(topic)
+    request = team.record(topic, message_id, sender_label, text)
     deliveries = []
-    for member in team.members(topic):
+    for member in members:
         if member == sender_label:
             continue
         try:
@@ -383,7 +400,14 @@ def _send_topic(topic: str, text: str, sender: LiveSession | None, origin: str, 
         except (LiveError, RuntimeError, OSError, ValueError) as error:
             # A member that cannot be reached now still finds the message when it catches up.
             deliveries.append({"to": member, "status": f"not delivered: {error}"})
-    return {"topic": topic, "id": message_id, "from": sender_label, "deliveries": deliveries}
+    receipt = {"topic": topic, "id": message_id, "from": sender_label, "deliveries": deliveries}
+    if request:
+        receipt["summarize"] = request
+    return receipt
+
+
+def team_topics_of(address: str) -> list[str]:
+    return [row["topic"] for row in team.topics() if address in row.get("members", [])]
 
 
 def _post_topic(hub, topic: str, text: str, sender: str, reply: str, message_id: str,
@@ -409,7 +433,8 @@ def _post_topic(hub, topic: str, text: str, sender: str, reply: str, message_id:
                 "deliveries": [{"to": f"#{topic}", "status": "queued for the hub: no receipt yet, the bridge "
                                                              "will resend it under the same id"}]}
     return {"topic": topic, "id": message_id, "from": sender, "via": "hub",
-            "deliveries": [{"to": row["to"], "status": row["status"]} for row in receipt.get("recipients", [])]}
+            "deliveries": [{"to": row["to"], "status": row["status"]} for row in receipt.get("recipients", [])],
+            **({"summarize": receipt["summarize"]} if receipt.get("summarize") else {})}
 
 
 def _send_one(target: str, text: str, sender: LiveSession | None, origin: str, fyi: bool,
@@ -422,11 +447,6 @@ def _send_one(target: str, text: str, sender: LiveSession | None, origin: str, f
     if sender is not None and session.address == sender.address:
         raise LiveError(f"{session.address} is the sending session itself.")
     sender_label = sender.address if sender else origin
-    if fyi and session.harness == "boat":
-        raise LiveError("--fyi cannot reach a Boat conversation: a sandbox has no inbox on this "
-                        "machine's feed. Push it once the conversation is idle, or skip it.")
-    if session.harness == "boat" and reply == "expected":
-        reply = "inline"
     handle = team.name_for(sender.address) if sender is not None else None
     wrapped = envelope(text, sender, origin, "none" if fyi else reply, message_id, topic, handle)
     with _rate_slot(sender_label, session.address):

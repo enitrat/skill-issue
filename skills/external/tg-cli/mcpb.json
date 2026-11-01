@@ -1,0 +1,25 @@
+{
+  "display_name": "Telegram",
+  "description": "Read, search and send your own Telegram chats from Claude.",
+  "long_description": "Connects to your Telegram account as a linked device, like Telegram Desktop.\n\nSetup:\n1. Go to https://my.telegram.org, log in with your phone number, open API development tools and create an app (any name). Copy its App api_id and App api_hash into this extension's settings.\n2. In Claude, ask: \"link my Telegram\". A page with a QR code opens in your browser. On your phone: Telegram → Settings → Devices → Link Desktop Device, and scan it.\n\nYour session stays on this Mac. You can disconnect it any time from Telegram → Settings → Devices.",
+  "platforms": ["darwin", "linux"],
+  "env": {
+    "TG_API_ID": "${user_config.api_id}",
+    "TG_API_HASH": "${user_config.api_hash}"
+  },
+  "user_config": {
+    "api_id": {
+      "type": "string",
+      "title": "App api_id",
+      "description": "From my.telegram.org → API development tools.",
+      "required": true
+    },
+    "api_hash": {
+      "type": "string",
+      "title": "App api_hash",
+      "description": "From my.telegram.org → API development tools.",
+      "sensitive": true,
+      "required": true
+    }
+  }
+}

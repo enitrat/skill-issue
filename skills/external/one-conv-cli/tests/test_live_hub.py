@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """The live hub over real HTTP: node tokens, publishing, routing, dedup, topics and outcomes."""
 
 import http.client
@@ -21,7 +42,7 @@ from one_conv.live.hub import MAX_BODY, Hub, HubError, application
 def serve(app):
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False, timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     while not server.started:
@@ -96,6 +117,58 @@ def test_a_name_given_to_two_sessions_is_refused(two_nodes):
     _, url, mac, _ = two_nodes
     sessions = [{"address": "claude:aaa", "name": "lead"}, {"address": "claude:ccc", "name": "lead"}]
     assert call(url, "/v1/sessions", mac, "PUT", {"sessions": sessions})[0] == 409
+
+
+def test_an_address_listed_twice_is_refused(two_nodes):
+    _, url, mac, _ = two_nodes
+    sessions = [{"address": "claude:aaa", "status": "idle"}, {"address": "claude:aaa", "status": "busy"}]
+    assert call(url, "/v1/sessions", mac, "PUT", {"sessions": sessions})[0] == 400
+
+
+def test_a_published_git_identity_is_kept(tmp_path):
+    hub = Hub(str(tmp_path / "hub.db"))
+    hub.publish("mac", [], spawn="claude", priority=10, git_user={"name": "Ada", "email": "ada@example.test"})
+    assert hub.git_identity(exclude="box") == {"name": "Ada", "email": "ada@example.test"}
+
+
+def test_a_publication_without_identity_keeps_the_last_one(tmp_path):
+    hub = Hub(str(tmp_path / "hub.db"))
+    hub.publish("mac", [], git_user={"name": "Ada", "email": "ada@example.test"})
+    hub.publish("mac", [])
+    assert hub.git_identity(exclude="box") == {"name": "Ada", "email": "ada@example.test"}
+
+
+def test_a_bad_git_identity_is_refused(two_nodes):
+    _, url, mac, _ = two_nodes
+    assert call(url, "/v1/sessions", mac, "PUT", {"sessions": [], "git_user": {"name": "Ada"}})[0] == 400
+
+
+def test_the_directory_carries_a_published_product(two_nodes):
+    _, url, mac, _ = two_nodes
+    call(url, "/v1/sessions", mac, "PUT", {"sessions": [{"address": "cursor:k1", "product": "cursor-cli"}]})
+    sessions = call(url, "/v1/sessions", mac)[1]["sessions"]
+    assert next(s for s in sessions if s["address"] == "mac/cursor:k1")["product"] == "cursor-cli"
+
+
+def test_a_session_without_a_product_lists_an_empty_one(two_nodes):
+    _, url, mac, _ = two_nodes
+    sessions = call(url, "/v1/sessions", mac)[1]["sessions"]
+    assert next(s for s in sessions if s["address"] == "mac/claude:aaa")["product"] == ""
+
+
+def test_an_unknown_product_is_refused(two_nodes):
+    _, url, mac, _ = two_nodes
+    sessions = [{"address": "cursor:k1", "product": "cursor-web"}]
+    assert call(url, "/v1/sessions", mac, "PUT", {"sessions": sessions})[0] == 400
+
+
+def test_a_hub_from_before_products_gains_the_column(tmp_path):
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE sessions (node TEXT NOT NULL, address TEXT NOT NULL, name TEXT, title TEXT, cwd TEXT,"
+                   " status TEXT, updated REAL NOT NULL, PRIMARY KEY (node, address))")
+        db.execute("INSERT INTO sessions VALUES ('mac', 'claude:aaa', NULL, '', '', '', 1.0)")
+    assert Hub(str(path)).directory()[0]["product"] == ""
 
 
 def test_two_unnamed_sessions_publish(two_nodes):
@@ -455,3 +528,21 @@ def test_a_cursor_past_any_sqlite_integer_returns_an_empty_page(topic):
     _, url, mac, box = topic
     call(url, "/v1/messages", mac, "POST", message("#release"))
     assert call(url, "/v1/topics/release/messages?after=9223372036854775808", box) == (200, {"messages": []})
+
+
+def test_a_published_checkout_revision_is_kept(tmp_path):
+    hub = Hub(str(tmp_path / "hub.db"))
+    hub.publish("box", [], revision="c" * 40)
+    assert hub.node_revision("box")[0] == "c" * 40
+
+
+def test_a_publication_without_a_revision_forgets_the_old_one(tmp_path):
+    hub = Hub(str(tmp_path / "hub.db"))
+    hub.publish("box", [], revision="c" * 40)
+    hub.publish("box", [])
+    assert hub.node_revision("box") == (None, None)
+
+
+def test_a_malformed_revision_is_refused(tmp_path):
+    with pytest.raises(HubError):
+        Hub(str(tmp_path / "hub.db")).publish("box", [], revision="main")

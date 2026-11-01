@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Real cloud HTTP ingest preserves large Unicode accounting batches and retry identities."""
 
 import socket
@@ -35,7 +56,7 @@ def workspace(tmp_path):
         if scope.get("path") == "/v1/accounting/events":
             sizes.append(size)
 
-    server = uvicorn.Server(uvicorn.Config(measured, log_level="error", access_log=False))
+    server = uvicorn.Server(uvicorn.Config(measured, log_level="error", access_log=False, timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     try:

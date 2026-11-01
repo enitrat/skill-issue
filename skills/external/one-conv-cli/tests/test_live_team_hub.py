@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Topics shared through a real local hub: membership, fan-out, dedup, catch-up, outbox, redirects."""
 
 import json
@@ -21,7 +42,7 @@ BOX_SESSION = "claude:b1"
 def serve(app):
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False, timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     while not server.started:
@@ -77,9 +98,17 @@ def test_join_registers_the_member_on_the_hub(hub):
     assert state.topics()[0]["members"] == ["mac/claude:c1"]
 
 
-def test_join_of_an_unpublished_session_points_to_live_serve(hub):
+def test_join_of_an_unpublished_session_points_to_live_serve(hub, monkeypatch):
+    monkeypatch.setattr(team, "PUBLISH_WAIT_SECONDS", 0.0)
     with pytest.raises(team.TeamError, match="live serve"):
         team.join("release", "claude:not-published")
+
+
+def test_join_waits_for_the_bridge_to_publish_a_new_session(hub):
+    state, _, _ = hub
+    threading.Timer(1.5, lambda: state.publish("mac", [{"address": MAC_SESSION}, {"address": "claude:new"}])).start()
+    team.join("release", "claude:new")
+    assert state.topics()[0]["members"] == ["mac/claude:new"]
 
 
 def test_topic_send_reaches_members_on_every_node(hub):

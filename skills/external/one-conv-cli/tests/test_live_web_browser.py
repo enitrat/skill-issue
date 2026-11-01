@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Exercise human conversations and workspace navigation in a real isolated browser."""
 
 import json
@@ -54,7 +75,7 @@ def workspace(tmp_path, monkeypatch):
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(web.application(port), log_level="error", access_log=False))
+    server = uvicorn.Server(uvicorn.Config(web.application(port), log_level="error", access_log=False, timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10
@@ -126,11 +147,6 @@ def test_channel_composer_reaches_its_member(page, workspace):
     assert response.value.json()["receipt"]["topic"] == "design-review"
 
 
-def test_agent_conversation_does_not_offer_an_impersonating_composer(page):
-    page.locator("#threads .conversation-row").first.click()
-    assert page.locator("#composer").is_hidden()
-
-
 def test_search_finds_real_message_content(page):
     page.locator("#search").fill("ready for your review")
     page.locator("#search").press("Enter")
@@ -150,6 +166,18 @@ def test_channel_draft_is_preserved_when_opening_a_direct_message(page):
     page.locator(".recipient-option").filter(has_text="builder").click()
     page.locator("#topics .conversation-row").first.click()
     assert page.locator("#message-input").input_value() == "A draft for the channel, not a DM."
+
+
+def test_open_session_row_stays_marked_in_the_sidebar(page):
+    page.locator("#people .conversation-row").filter(has_text="builder").click()
+    page.mouse.move(900, 450)  # Off the sidebar: the mark must not depend on the pointer resting on the row.
+    assert page.locator("#people .conversation-row").filter(has_text="builder").get_attribute("aria-current") == "page"
+
+
+def test_opening_a_channel_unmarks_the_session_row(page):
+    page.locator("#people .conversation-row").filter(has_text="builder").click()
+    page.locator("#topics .conversation-row").first.click()
+    assert page.locator("#people .conversation-row").filter(has_text="builder").get_attribute("aria-current") is None
 
 
 def test_lost_response_retry_keeps_its_id_after_sending_another_conversation(page, workspace):

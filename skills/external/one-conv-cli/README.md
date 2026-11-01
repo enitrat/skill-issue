@@ -1,16 +1,24 @@
 # one-conv
 
+**Visibility: public.**
+
+**Claude Desktop extension:** download
+[one-conv-cli.mcpb](https://github.com/ClementWalter/one-conv-cli/releases/latest/download/one-conv-cli.mcpb),
+double-click it and click Install. It serves the `cloud` commands only
+(ChatGPT, Claude Chat, Codex cloud, Cowork), and ships the credential helper
+prebuilt so `connect` needs no developer tools.
+
 Read and search your AI conversations from one CLI. Pull cloud conversations
 into a local history, or read sessions already saved by your coding tools.
 
 Work with live teammates from a Slack-style workspace, including human messages
 and a paired iPhone app. See [the mobile workspace guide](MOBILE_WORKSPACE.md)
-for cloud hosting, shared worker boxes and team accounting.
+for cloud hosting, the cloud spawner box and team accounting.
 
 | Namespace | Sources |
 | --- | --- |
 | `cloud` | ChatGPT, Claude Chat, Codex cloud, Cowork cloud |
-| `local` | Claude Code, Codex CLI, Cursor (IDE and CLI), Oh My Pi, shared corpus files |
+| `local` | Claude Code, Codex CLI, Cursor (IDE and CLI), Oh My Pi, on this machine and every machine syncing to the archive |
 | `live` | Agent messaging, topics, spawning, hub and mobile workspace |
 | `hr` | Shared or local rate cards, usage evidence and expected ask costs |
 
@@ -19,12 +27,14 @@ by the project where the agent ran.
 
 ## Install
 
-You need Python 3.11+ and [uv](https://docs.astral.sh/uv/). The launcher declares
+You need Python 3.12+ and [uv](https://docs.astral.sh/uv/). The launcher declares
 its dependencies inline; uv resolves them on first use.
 
-Clone this repository and run `./bin/one-conv --help`. The executable is
-[`bin/one-conv`](bin/one-conv). Add the checkout's `bin` directory to your `PATH`
-to use the shorter `one-conv` command shown below.
+Clone this repository and run `./bin/one-conv --help`. The CLI is
+[`one_conv_cli.py`](one_conv_cli.py); `bin/one-conv` and `bin/agent-conv` are
+symlinks to it, and `bin/one-conv.cmd` launches it on Windows. Add the
+checkout's `bin` directory to your `PATH` to use the shorter `one-conv` command
+shown below.
 
 The repository also includes an [agent skill](SKILL.md). Install the checkout
 as a skill in your agent runtime to give it the same launcher and usage guide.
@@ -178,22 +188,25 @@ The reusable entrypoints are `sync_mapping(mapping_path, sink)` and
 
 ## Connect a cloud account
 
-Sign in to the provider in Chrome, Arc, Brave, Edge, or Chromium. For example,
-open Claude's sign-in page with:
+one-conv reads the provider logins of your everyday browser (Chrome, Arc,
+Brave, Edge, or Chromium). To add any other account, sign in to it with:
 
 ```bash
-one-conv cloud claude connect --login --browser chrome
+one-conv cloud claude connect --login
 ```
 
-Finish signing in in the browser. Opening the page does not verify the login.
+This opens a browser window on a profile only one-conv uses (`browser-profiles/`
+in the one-conv state folder, private to you), so each account you add this way
+has a login of its own. Sign in to as many accounts as you like, one window
+each, and sign in and out freely in your everyday browser: signing out there
+never disconnects them. When one of these logins expires, `accounts` names it;
+renew it with `connect --login --profile claude-1`. Opening the page does not
+verify the login.
 
-Every session one-conv verifies is saved in a private session vault
-(`sessions/` in the one-conv state folder under `~/.config`, files readable only by you). To add a
-second account, sign in to it in the same browser and run `accounts` again:
-the first account stays available from the vault until its session expires,
-even though the browser now shows the other one. Signing out on claude.ai
-revokes that session for good, so add a second Claude account from another
-browser or browser profile instead of signing out of the first.
+Every session one-conv verifies is also saved in a private session vault
+(`sessions/` in the one-conv state folder), so an everyday-browser account stays
+available after you switch that browser to another account, until its session
+expires or you sign out of it on the provider's site.
 
 Authorize one-conv to read that browser's session, then verify account access:
 
@@ -319,12 +332,35 @@ one-conv local chats
 one-conv local read PROJECT
 one-conv local thread PROJECT
 one-conv local search TEXT
+one-conv local search 'bridge reconnect' --ranked
+one-conv local search 'agent dies when the websocket drops' --semantic
 ```
+
+`local search` matches TEXT as one exact substring, newest first. `--ranked` matches
+turns holding every word of TEXT in any order, each as a word or the start of one,
+and orders them by BM25 relevance. It reads a full-text index kept in the state
+directory (`$ONE_CONV_SEARCH_INDEX` overrides its path). Each search re-indexes
+only the sessions that changed, so the first ranked search indexes all history
+once and later ones skip parsing. Archived conversations join the index the
+first time the hub lists them for a query.
+
+`--semantic` also finds turns that share no word with TEXT. Each turn gets an
+embedding from [potion-retrieval-32M](https://huggingface.co/minishlab/potion-retrieval-32M),
+a static model run locally on the CPU with no GPU or ML framework: the CLI downloads
+it once into the state directory (about 130 MB, pinned by revision and checksum;
+`$ONE_CONV_SEMANTIC_MODEL` points to another copy). Turns rank by reciprocal rank
+fusion of their similarity to TEXT and BM25 over turns holding any word of TEXT.
+The first semantic search embeds every indexed turn, a few thousand per second;
+later ones embed only new turns. Archived conversations join when the hub lists
+them for any word of TEXT, and stay searchable once indexed.
 
 Replace `PROJECT` with a name from the listing. `local read` lists its sessions;
 `local thread` reads the newest one. Choose another with `--session ID` or
 `--nth 2`, or use `local read PROJECT --expand` to read all of them.
-`--source claude|codex|cursor|cursor-cli|omp|corpus` narrows the source. Local readers never
+`--source claude|codex|cursor|cursor-cli|omp|corpus` narrows the source: `cursor` (or
+`cursor-ide`) is the Cursor IDE's chats, `cursor-cli` those of Cursor's terminal agent, the
+`agent` command, which keeps them under `~/.cursor/chats`. `corpus` is sessions imported
+into the archive from the retired shared corpus. Local readers never
 discover cloud accounts.
 
 For agent workflows, `local fork` starts a new Claude Code thread from an
@@ -334,9 +370,7 @@ seeds a new Claude Code or Codex session from another conversation. These
 commands default to dry-run and require `--yes` to launch an agent. Execution
 can modify files or use tools.
 
-`local export` writes normalized transcripts to a corpus, `local append` writes
-a turn to the shared log, and `local skill-usage` reports recorded Claude Code
-skill invocations. Each command's `--help` describes its options.
+`local skill-usage` reports recorded Claude Code skill invocations. Each command's `--help` describes its options.
 
 ## Storage and coverage
 
@@ -395,8 +429,7 @@ One `live send` reaches any of these, and defaults to a dry run until `--yes`:
 | Target | Reaches |
 | --- | --- |
 | `claude:<id>`, `codex:<id>`, `omp:<id>`, `cursor:<id>` | a session on this machine; a unique id prefix or a substring of its title or folder works too |
-| `boat:<sandbox>/<conversation>` | an agent in a Boat sandbox |
-| `NODE/claude:<full id>` (also `codex`, `omp`, `cursor`) | a session on another machine, through a hub (see [Working across machines](#working-across-machines)); the id must be complete, and Boat conversations keep their own route |
+| `NODE/claude:<full id>` (also `codex`, `omp`, `cursor`) | a session on another machine, through a hub (see [Working across machines](#working-across-machines)); the id must be complete |
 | `@name` | the agent on this machine that chose that name |
 | `#topic` | every member of the topic but you |
 
@@ -423,7 +456,9 @@ one-conv live send @reviewer 'fyi: CI is green' --fyi --yes   # lands in its fee
 Sessions started before the install are reachable only for Claude Code and
 Codex. Cursor's stop hook runs in the IDE and in interactive `cursor-agent`, not
 in `cursor-agent -p`. A Cursor IDE chat cannot be identified as a sender, so its
-messages carry `from="cursor:?unknown"` and cannot be answered.
+messages carry `from="cursor:?unknown"` and cannot be answered. Both share the
+`cursor:<id>` address; `live ls` and the workspace label each session `cursor-cli`
+(a chat the `agent` command stored under `~/.cursor/chats`) or `cursor-ide`.
 
 ### Names and topics
 
@@ -433,6 +468,8 @@ one-conv live join release-4-2            # subscribe, and catch up on what was 
 one-conv live send '#release-4-2' "migration merged" --yes   # every member gets it
 one-conv live topics                      # topics, members, last activity
 one-conv live topic release-4-2           # what you have not seen on it yet
+one-conv live summarize release-4-2       # which block of posts waits for its one-line summary
+one-conv live topic release-4-2 --open 0-63   # open a summarized block into its halves
 ```
 
 - A name is an alias: messages route and reply by address, so renaming never
@@ -444,10 +481,62 @@ one-conv live topic release-4-2           # what you have not seen on it yet
   Sending makes you a member, locally and through a hub. `--topic` files a direct
   message under a topic too.
 - Each member keeps a read position, so `join` and `topic` show what is new to
-  that reader, at most 20 messages, labelled as history rather than new requests.
-  A topic keeps its last 500 messages.
-- The MCP tools `set_name`, `join_topic` and `list_topics` do the same from inside
-  an agent, and `send_message` accepts `@name` and `#topic`.
+  that reader, labelled as history rather than new requests, in about 20 lines:
+  the newest posts whole, older ones as one-line summaries of aligned blocks of
+  16, 32, 64... posts, so a long channel still reads as a page. `--open BLOCK`
+  descends into a block, down to the posts. A topic keeps its last 500 posts;
+  positions and summaries outlive that.
+- Agents write the summaries as they go: the post that completes a block comes
+  back with the request to summarize it (the posts for a block of 16, the two
+  halves' summaries above that), and `live summarize TOPIC BLOCK "<line>"`
+  records it. The first line recorded for a block stays.
+- The MCP tools `set_name`, `join_topic`, `list_topics`, `summarize` and
+  `open_block` do the same from inside an agent, and `send_message` accepts
+  `@name` and `#topic`.
+
+### Human posts: ack and sync
+
+A human post wakes every session running in its channel. Each session acks it,
+and the workspace shows a check mark per session that read it. The sessions then
+agree in the channel who does what.
+
+```bash
+one-conv live ack 0c43b732d61146d1a376ea74a702ce99      # the id the message arrived with
+one-conv live send '#release' "I take the changelog" --yes
+one-conv live spawner --harness claude --cwd ~/work --yes # let the hub start sessions here
+one-conv live spawner --harness claude --cwd ~/work --env-file /run/secrets/env.sh --yes # credentials read at each start
+```
+
+- A session works in one channel and watches the others: the first channel it
+  joins is its work channel (`live join TOPIC --work` moves it, `--watch` only
+  watches). A post wakes the sessions working in its channel and reaches watchers
+  as an FYI, so a session busy in one channel is not pulled into another.
+- The human can archive a channel: it leaves the channel list for a folded
+  "Archived" section, agents still list and read it, and a new human post there
+  brings it back.
+- A session acks a message it received, or any post of a channel it joined.
+  Acking again changes nothing. The MCP tool `ack` does the same from an agent.
+- Anything that cannot be undone (sending a message for the user, a payment) is
+  done by one session, named in the channel.
+- A human post in a channel with nobody running starts a session at once: on a
+  machine whose bridge offers to (`live spawner`), the preferred one first; one
+  that refuses, or whose session does not ack within 90 s, passes it to the next.
+  The post shows "Starting a session…" until a session acks it.
+- The cloud spawner is a Boat box the controller builds and runs itself. Its
+  worker config takes `"spawner": {"node": "<hub node>"}`, plus optionally `box`
+  (an existing box to adopt), `profile`, `harness`, `args`, `priority` and
+  `env_file` (default `/run/ascii-secrets/env.sh`, where Boat writes the agent
+  credentials). The box commits with the git identity the highest-priority other
+  spawner (the user's own machine) reports from its `git config --global`; until
+  one has, the box is not set up.
+  With no box, or once Boat no longer knows it, the controller creates one
+  (auto-stop off). Whenever the controller's revision or these settings change,
+  it provisions the box from nothing: clones, GitHub login, git identity, hub
+  settings, `live install`, `live spawner`, and the bridge's systemd unit
+  (`live serve --install`). It sleeps the box after 30 idle minutes and wakes it
+  when a post waits.
+- Limits: the hub authenticates machines, not each process, so a session on a
+  machine is trusted as that machine's agent.
 
 ### Work with agents in a browser
 
@@ -506,6 +595,7 @@ An agent can start teammates from any harness without anyone opening a terminal:
 ```bash
 one-conv live spawn codex 'review the diff on this branch' --yes
 one-conv live spawn claude 'write the tests' --model sonnet --cwd ../repo --trust-folder --yes
+one-conv live spawn cursor-cli 'review the diff' --trust-folder --arg=--force --arg=--approve-mcps --yes
 one-conv live spawned                     # running spawned agents
 one-conv live stop codex:01a1…            # end one
 ```
@@ -517,8 +607,10 @@ receiving `live send` messages after its first answer, unlike `codex exec` or
 teammates. Watch one with `tmux attach -t NAME`. It runs with your usual permission
 settings for that harness, so an unattended agent can stop at a prompt: pass that
 harness's own flags with `--arg`. Claude Code asks whether to trust a folder it has not
-seen; `spawn` stops and says so unless `--trust-folder` answers yes. Oh My Pi needs the
-live extension from `live install`. A stopped Codex thread stays loaded in Codex's
+seen; `spawn` stops and says so unless `--trust-folder` answers yes. `cursor-cli` (or
+`agent`, or `cursor`) starts Cursor's terminal agent, the `agent` command; `--trust-folder` passes its `--trust`, and a
+message to it is typed into its tmux pane, since an idle Cursor chat runs no hook to read its
+inbox. Oh My Pi needs the live extension from `live install`. A stopped Codex thread stays loaded in Codex's
 app-server for a few minutes, but `live ls` no longer lists it.
 
 ### Working across machines
@@ -541,9 +633,15 @@ On each machine, with the token issued to it:
 one-conv live serve --hub ssh://me@hub-box --node laptop --token-stdin < laptop.token
 one-conv live serve --hub https://hub.example.com --node ci-runner --token-stdin < ci-runner.token
 one-conv live serve --status
+one-conv live serve --install --yes   # launchd or systemd: start on its own, restart after a crash
 one-conv live send ci-runner/codex:019a0c5e-7b1d-7f30-9c4e-2d8a5b6f1e03 'rerun the flaky test' --yes
 ```
 
+- `--install --yes` hands the bridge to launchd on a Mac, or to a systemd user
+  unit (`one-conv-bridge.service`) on Linux, once its settings are saved: it starts
+  at every login (at boot on Linux when lingering is on) and restarts after a crash,
+  while a clean stop (`--stop`) keeps it stopped. Sessions it started in tmux keep
+  running when it restarts. `--uninstall --yes` removes it.
 - `ssh://` opens `ssh -N -L` to the hub's port, non-interactively and only to a
   host whose key is already known; `https://` verifies the certificate; plain
   `http://` is accepted only to a loopback address (127.0.0.1, ::1). The token travels only in a request
@@ -570,44 +668,6 @@ one-conv live send ci-runner/codex:019a0c5e-7b1d-7f30-9c4e-2d8a5b6f1e03 'rerun t
   published with each session and shown on received messages, but `@name`
   resolves only on the sender's machine for now: address a remote agent as
   `NODE/harness:id`, which is also what its messages give as the reply address.
-
-### Agents in Boat sandboxes
-
-`boat:<sandbox>/<conversation>` addresses a coding agent running in a
-[Boat](https://boat.dev) sandbox, through the `box` CLI and your Boat account.
-The conversation id is Boat's, not the agent's own session id.
-
-```bash
-one-conv live ls --harness boat            # running sandboxes' conversations, idle or busy
-one-conv live send boat:bx_ab12/2ab1… "run the tests" --yes
-one-conv live pull boat:bx_ab12/2ab1…      # read the agent's answers back
-```
-
-- An idle conversation gets `box prompt --resume`; a busy one gets `box steer`.
-  Boat wraps a steered text as a message from you and may stop the command the
-  agent was running, so the envelope inside it is what names the real sender. If
-  the turn ends just before the steer, the message is prompted instead.
-- The remote agent cannot message this machine, so the envelope asks it to answer
-  in its own conversation, and `live pull` reads that back with `box events`.
-- If Boat has not confirmed a prompt within 45 seconds, the send reports
-  `pending` with an operation id instead of failing, because the prompt may still
-  arrive. The same applies when `box prompt` exits without Boat accepting or
-  refusing (`unconfirmed`): only an explicit refusal from Boat means it was not
-  delivered. Do not resend: `one-conv live status OP` shows the outcome, and
-  another send to that conversation is refused until it is accepted, refused, or
-  checked with `live pull` and marked `live status OP --resolve`.
-- `--fyi` cannot reach a sandbox. Boat is listed only when asked for by name
-  (`--harness boat` or a `boat:` address), since listing calls Boat's API.
-
-Tested against real sandboxes, with the agent logins stored in the tester's Boat
-account:
-
-| Boat provider | Status |
-| --- | --- |
-| Claude Code | Verified: idle push and pull through one-conv; a busy conversation took `box steer` byte for byte when run by hand |
-| pi | Verified: idle push and pull; the first reply took about four minutes |
-| Codex | Not verified: not configured on the tested account (`provider_not_configured`) |
-| Cursor | Not supported: Boat has no Cursor provider |
 
 ### Keeping multi-agent exchanges readable
 
@@ -813,3 +873,18 @@ from root help. Their project-based behavior differs from the cloud namespace.
 [LEGACY_COMMANDS.md](LEGACY_COMMANDS.md) documents that interface, including the
 older ChatGPT sync and asset-download workflow. Use `cloud` and `local` for new
 integrations.
+
+## Privacy Policy
+
+The Claude Desktop extension built from this repository keeps your data on your
+Mac and talks only to the service it connects to. Full policy:
+<https://clementwalter.github.io/claude-extensions/privacy/>
+
+## Tests
+
+Each test file is a PEP 723 script with the same exact pins. Run the offline
+suite in parallel:
+
+```sh
+uv run --no-project --with-requirements tests/conftest.py python -m pytest -n auto tests
+```

@@ -1,0 +1,18 @@
+# Claude Desktop extension: a v* tag publishes tg-cli.mcpb on its GitHub release.
+name: extension
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    permissions:
+      contents: write
+    uses: ClementWalter/mcp-bridge/.github/workflows/extension.yml@f860ac165eb9e4214ac43a6be75a18086fd06617
+    with:
+      launcher: bin/tg
+      bridge-ref: f860ac165eb9e4214ac43a6be75a18086fd06617

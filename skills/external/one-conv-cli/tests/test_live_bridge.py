@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """The bridge against a real loopback hub: ingress at most once, fyi never wakes, outbox, remote sends, ssh forward.
 
 Most tests record adapter calls; human ingress writes to a disposable OMP inbox.
@@ -31,7 +52,7 @@ SESSION = LiveSession("omp", "worker-1", "/work", "worker")
 def serve_app(app):
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False, timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     while not server.started:
@@ -209,7 +230,7 @@ def test_a_session_not_live_here_is_refused(hub, box, monkeypatch):
 
 
 def test_an_adapter_that_cannot_confirm_is_unconfirmed(hub, box, monkeypatch):
-    unknown = "unconfirmed: box prompt exited 1 without Boat accepting or refusing it. Do not resend"
+    unknown = "unconfirmed: the harness neither accepted nor refused it. Do not resend"
     monkeypatch.setitem(router.ADAPTERS, "omp", SimpleNamespace(deliver=lambda s, text: unknown))
     message = post(hub)
     box.step(wait=0)
@@ -227,6 +248,36 @@ def test_an_adapter_failure_is_unconfirmed(hub, box, monkeypatch):
 
 def test_publishing_lists_this_machines_sessions_on_the_hub(hub, box):
     assert "box/omp:worker-1" in box.directory
+
+
+def test_publishing_reports_this_machines_git_identity(hub, delivered, monkeypatch):
+    monkeypatch.setattr(bridge, "git_identity", lambda: {"name": "Ada", "email": "ada@example.test"})
+    bridge.Bridge(hubclient.HubClient(hub.url, hub.box_token, "box"), "box",
+                  bridge.Ingress(bridge.bridge_dir() / "ingress.db")).publish()
+    assert hub.state.git_identity(exclude="mac") == {"name": "Ada", "email": "ada@example.test"}
+
+
+def test_publishing_reports_this_checkouts_revision(hub, delivered, monkeypatch):
+    monkeypatch.setattr(bridge, "checkout_revision", lambda: "d" * 40)
+    bridge.Bridge(hubclient.HubClient(hub.url, hub.box_token, "box"), "box",
+                  bridge.Ingress(bridge.bridge_dir() / "ingress.db")).publish()
+    assert hub.state.node_revision("box")[0] == "d" * 40
+
+
+def test_checkout_revision_is_this_repositorys_head():
+    assert len(bridge.checkout_revision()) == 40
+
+
+def test_git_identity_reads_the_global_git_config(tmp_path, monkeypatch):
+    (tmp_path / "gitconfig").write_text("[user]\n\tname = Ada\n\temail = ada@example.test\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    assert bridge.git_identity() == {"name": "Ada", "email": "ada@example.test"}
+
+
+def test_git_identity_needs_both_name_and_email(tmp_path, monkeypatch):
+    (tmp_path / "gitconfig").write_text("[user]\n\tname = Ada\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    assert bridge.git_identity() is None
 
 
 def queued(text="queued while offline"):
@@ -511,7 +562,6 @@ def test_a_send_to_another_machine_without_a_hub_is_refused(delivered):
 
 @pytest.mark.parametrize("target, node", [
     ("mac/claude:aaa", "mac"),
-    ("boat:sandbox/conversation", None),
     ("mac/nothing", None),
     ("Mac/claude:aaa", None),
     ("claude:aaa", None),

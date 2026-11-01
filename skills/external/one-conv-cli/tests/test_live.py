@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Live relay: session discovery, sender identity, target resolution and per-harness delivery."""
 
 import json
@@ -20,7 +41,7 @@ from one_conv.live.cli import build_live_group
 from one_conv.live.model import LiveSession, envelope, is_session_id, parse_address
 
 THREAD = "01a13c8f-049a-71b1-b4e6-e0798600ccaa"
-CLI = Path(__file__).resolve().parents[1] / "bin" / "one-conv"
+CLI = Path(__file__).resolve().parents[1] / "one_conv_cli.py"
 
 
 @pytest.fixture
@@ -166,6 +187,47 @@ def test_claude_lists_running_session(homes):
     assert [s.address for s in claude.list_sessions()] == ["claude:c1"]
 
 
+def test_claude_lists_a_session_resumed_twice_once(homes):
+    _claude_record(homes, os.getpid(), updatedAt=2)
+    _claude_record(homes, os.getppid(), updatedAt=1)
+    assert [s.pid for s in claude.list_sessions()] == [os.getpid()]
+
+
+def _transcript(homes, *entries):
+    """Session c1's transcript under /work/app, as Claude Code names its project folder."""
+    folder = homes / "claude" / "projects" / "-work-app"
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / "c1.jsonl").open("a") as handle:
+        for entry in entries:
+            handle.write(json.dumps({**entry, "sessionId": "c1"}) + "\n")
+
+
+def test_claude_session_without_titles_keeps_its_name(homes):
+    _claude_record(homes, os.getpid())
+    assert claude.list_sessions()[0].title == "app-01"
+
+
+def test_claude_session_takes_the_title_claude_code_generated(homes):
+    _claude_record(homes, os.getpid())
+    _transcript(homes, {"type": "ai-title", "aiTitle": "Slack channel archiving"})
+    assert claude.list_sessions()[0].title == "Slack channel archiving"
+
+
+def test_claude_session_prefers_its_rename_over_the_generated_title(homes):
+    _claude_record(homes, os.getpid())
+    _transcript(homes, {"type": "custom-title", "customTitle": "archive-ui"},
+                {"type": "ai-title", "aiTitle": "Slack channel archiving"})
+    assert claude.list_sessions()[0].title == "archive-ui"
+
+
+def test_claude_session_picks_up_a_rename_made_after_the_last_read(homes):
+    _claude_record(homes, os.getpid())
+    _transcript(homes, {"type": "custom-title", "customTitle": "first"})
+    claude.list_sessions()
+    _transcript(homes, {"type": "custom-title", "customTitle": "second"})
+    assert claude.list_sessions()[0].title == "second"
+
+
 def test_claude_skips_exited_session(homes, dead_pid):
     _claude_record(homes, dead_pid)
     assert claude.list_sessions() == []
@@ -269,9 +331,88 @@ def test_cursor_stop_hook_hands_each_message_over_once(homes):
     assert _hook() == {}
 
 
+@pytest.fixture
+def spawned_cursor(homes, monkeypatch):
+    """Chat k1 runs in a spawned tmux session; tmux records what is typed into it."""
+    from one_conv.live import spawn
+    (homes / "live" / "spawned.json").write_text(json.dumps({"oneconv-cursor-1": {"address": "cursor:k1"}}))
+    monkeypatch.setattr(spawn, "_alive", lambda name: True)
+    typed = []
+    monkeypatch.setattr(spawn, "type_into", lambda name, text: typed.append((name, text)))
+    monkeypatch.setattr(spawn, "screen", lambda name: "→ Add a follow-up")
+    _hook()
+    return typed
+
+
+@pytest.fixture
+def busy_cursor(spawned_cursor, monkeypatch):
+    """The spawned chat is mid-turn: its footer offers ctrl+c."""
+    from one_conv.live import spawn
+    monkeypatch.setattr(spawn, "screen", lambda name: f"→ Add a follow-up  {cursor.BUSY_MARK}")
+    return spawned_cursor
+
+
+@pytest.fixture
+def turn_ends_while_queueing(spawned_cursor, monkeypatch):
+    """The chat looks busy at the first look and idle at the next, as when its turn ends meanwhile."""
+    from one_conv.live import spawn
+    screens = iter([cursor.BUSY_MARK, ""])
+    monkeypatch.setattr(spawn, "screen", lambda name: next(screens))
+    return spawned_cursor
+
+
+def test_cursor_delivery_to_a_spawned_chat_types_into_its_pane(spawned_cursor):
+    cursor.deliver(cursor.list_sessions()[0], "one")
+    assert spawned_cursor == [("oneconv-cursor-1", "one")]
+
+
+def test_cursor_delivery_to_a_spawned_chat_leaves_the_inbox_empty(spawned_cursor):
+    cursor.deliver(cursor.list_sessions()[0], "one")
+    assert _hook() == {}
+
+
+def test_cursor_delivery_to_a_busy_spawned_chat_types_nothing(busy_cursor):
+    cursor.deliver(cursor.list_sessions()[0], "one")
+    assert busy_cursor == []
+
+
+def test_cursor_delivery_to_a_busy_spawned_chat_waits_for_the_stop_hook(busy_cursor):
+    cursor.deliver(cursor.list_sessions()[0], "one")
+    assert _hook() == {"followup_message": "one"}
+
+
+def test_cursor_delivery_types_when_the_turn_ends_while_queueing(turn_ends_while_queueing):
+    cursor.deliver(cursor.list_sessions()[0], "one")
+    assert turn_ends_while_queueing == [("oneconv-cursor-1", "one")]
+
+
+def test_cursor_delivery_withdraws_the_queued_copy_it_typed(turn_ends_while_queueing):
+    cursor.deliver(cursor.list_sessions()[0], "one")
+    assert _hook() == {}
+
+
 def test_cursor_stop_hook_registers_chat(homes):
     _hook()
     assert [(s.address, s.cwd) for s in cursor.list_sessions()] == [("cursor:k1", "/work/ui")]
+
+
+def test_a_chat_stored_by_the_agent_cli_is_labelled_cursor_cli(homes):
+    (homes / "cursor" / "chats" / "0921f6eb" / "k1").mkdir(parents=True)
+    _hook()
+    assert cursor.list_sessions()[0].product == "cursor-cli"
+
+
+def test_an_agent_cli_chat_publishes_its_stored_title(homes):
+    chat = homes / "cursor" / "chats" / "0921f6eb" / "k1"
+    chat.mkdir(parents=True)
+    (chat / "meta.json").write_text(json.dumps({"title": "Debate Audit Issue"}))
+    _hook()
+    assert cursor.list_sessions()[0].title == "Debate Audit Issue"
+
+
+def test_a_chat_the_agent_cli_never_stored_is_labelled_cursor_ide(homes):
+    _hook()
+    assert cursor.list_sessions()[0].product == "cursor-ide"
 
 
 def _inbox_with_bad_file(homes):
@@ -540,7 +681,7 @@ def test_router_imports_without_fcntl():
               "        if name == 'fcntl': raise ImportError(name)\n"
               "sys.meta_path.insert(0, Block())\nimport one_conv.live.router")
     result = subprocess.run([sys.executable, "-c", script], check=False, capture_output=True, text=True,
-                            cwd=CLI.parents[1])
+                            cwd=CLI.parent)
     assert result.returncode == 0, result.stderr
 
 

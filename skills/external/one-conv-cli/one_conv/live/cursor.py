@@ -1,8 +1,11 @@
 """Cursor: the `stop` hook registers each chat and hands it queued messages as a follow-up.
 
 A chat only picks a message up when one of its turns ends, so delivery into an idle chat
-waits for the user's next prompt. When Cursor's Desktop Bridge is enabled (a discovery
-file under `~/.cursor/desktop-bridge/`), `cursor desktop send` delivers immediately instead.
+waits for the user's next prompt. A spawned chat's pane takes the text at once while it is
+idle; while a turn runs the message waits for the stop hook, because cursor-agent parks text
+pasted mid-turn as a follow-up it only sends on another Enter. When Cursor's Desktop Bridge is
+enabled (a discovery file under `~/.cursor/desktop-bridge/`), `cursor desktop send` delivers
+immediately instead.
 """
 
 import json
@@ -16,6 +19,9 @@ from .model import LiveSession, is_session_id, live_home
 
 # Chats whose last turn ended longer ago than this are treated as closed.
 RECENT_SECONDS = 12 * 3600
+
+# cursor-agent's footer shows this only while a turn runs.
+BUSY_MARK = "ctrl+c to stop"
 
 
 def cursor_home() -> Path:
@@ -44,7 +50,7 @@ def _bridge_threads() -> list[LiveSession]:
         return []
     rows = rows.get("threads", rows) if isinstance(rows, dict) else rows
     return [LiveSession("cursor", row["id"], "", row.get("title", ""), row.get("status", ""), None,
-                        "desktop bridge")
+                        "desktop bridge", product="cursor-ide")
             for row in rows if isinstance(row, dict) and row.get("id") and row.get("source") != "draft"]
 
 
@@ -58,9 +64,27 @@ def _hook_chats() -> list[LiveSession]:
             continue
         if now - data.get("updatedAt", 0) > RECENT_SECONDS:
             continue
-        sessions.append(LiveSession("cursor", data["conversationId"], data.get("cwd", ""), "",
-                                    "turn ended", None, "stop hook", str(inbox(data["conversationId"]))))
+        sessions.append(LiveSession("cursor", data["conversationId"], data.get("cwd", ""), title(data["conversationId"]),
+                                    "turn ended", None, "stop hook", str(inbox(data["conversationId"])),
+                                    product=product(data["conversationId"])))
     return sessions
+
+
+def title(conversation_id: str) -> str:
+    """The title the `agent` CLI stored in the chat's meta.json; the IDE's chats have none here."""
+    for path in (cursor_home() / "chats").glob(f"*/{conversation_id}/meta.json"):
+        try:
+            value = json.loads(path.read_text()).get("title")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def product(conversation_id: str) -> str:
+    """The `agent` CLI keeps each chat under `~/.cursor/chats/<workspace hash>/<id>`; the IDE keeps its own elsewhere."""
+    return "cursor-cli" if any((cursor_home() / "chats").glob(f"*/{conversation_id}")) else "cursor-ide"
 
 
 def list_sessions() -> list[LiveSession]:
@@ -78,13 +102,41 @@ def deliver(session: LiveSession, text: str) -> str:
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or f"cursor desktop send exited {result.returncode}")
         return result.stdout.strip() or "delivered"
-    target = inbox(session.id)
+    from . import spawn  # spawn imports this module
+    # An idle CLI chat runs no hook, so the inbox would wait; a spawned one's pane takes the text now.
+    pane = spawn.pane_for(session.address)
+    if pane and not _busy(spawn, pane):
+        spawn.type_into(pane, text)
+        return f"typed into tmux session {pane}"
+    queued = _queue(session.id, text)
+    # The turn may have ended, and its hook run, before the file landed: take it back and type it.
+    if pane and not _busy(spawn, pane) and _unqueue(queued):
+        spawn.type_into(pane, text)
+        return f"typed into tmux session {pane}"
+    return "queued until this chat's current turn ends"
+
+
+def _busy(spawn, pane: str) -> bool:
+    return BUSY_MARK in spawn.screen(pane)
+
+
+def _queue(conversation_id: str, text: str) -> Path:
+    target = inbox(conversation_id)
     target.mkdir(parents=True, exist_ok=True)
     name = f"{time.time_ns()}-{uuid.uuid4().hex}.json"
     partial = target / f".{name}.tmp"
     partial.write_text(json.dumps({"text": text}))
     partial.rename(target / name)
-    return "queued until this chat's current turn ends"
+    return target / name
+
+
+def _unqueue(path: Path) -> bool:
+    """Withdraw a queued message the stop hook has not claimed yet."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def chat_for_pid(pid: int) -> str | None:

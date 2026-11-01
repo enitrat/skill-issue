@@ -1,5 +1,9 @@
 # slack-user-cli
 
+**Visibility: public.**
+
+**Extension: not shipped** as a Claude Desktop extension: Claude already has an official Slack connector; this CLI stays a terminal tool for agents.
+
 Terminal access to Slack using browser session credentials (`xoxc-` token + `d`
 cookie). No Slack app registration, no OAuth flow — it reuses the credentials
 already on your machine from the Slack desktop app or browser session.
@@ -66,14 +70,14 @@ ln -sfn /path/to/slack-user-cli/bin/slack-user ~/.local/bin/slack-user
 Credentials are stored in `~/.config/slack-user-cli/config.json`.
 
 ```bash
-# Auto-extract from the Slack desktop app (close Slack first; macOS Keychain prompt)
-slack_user_cli login --auto
+# Auto-extract from the Slack desktop app (Slack can stay open; macOS Keychain prompt)
+slack-user login auto
 
 # Import all workspaces from the browser via clipboard
-slack_user_cli login --browser
+slack-user login browser
 
 # Add a single workspace manually
-slack_user_cli login --manual
+slack-user login manual
 ```
 
 ## Usage
@@ -116,6 +120,8 @@ slack_user_cli download <channel> <message_ts> --list
 slack_user_cli send <channel> "message text"
 slack_user_cli send <channel> "reply" --thread <message_ts>
 slack_user_cli dm <user> "message text"
+slack_user_cli draft <channel> "reply" --thread <message_ts>   # unsent, finish it in Slack
+slack_user_cli drafts
 slack_user_cli upload <channel> /path/to/file.png --message "caption"
 ```
 
@@ -137,8 +143,20 @@ new channels or when lookups return IDs instead of names.
 The test suite is a self-contained `uv` script, same as the CLI itself:
 
 ```bash
-uv run tests/test_slack_user_cli.py
+for f in tests/test_*.py; do uv run --script "$f"; done
 ```
 
 WebClient and `slacktokens` are mocked throughout, so this never touches a
 real Slack workspace or the local Slack desktop app.
+
+
+## Credentials from the 1Password vault
+
+When `~/.config/slack-user-cli/config.json` is absent, the CLI reads the same file from the
+1Password vault `Claudine` (Document "slack-user-cli config.json") through the
+`claudine-secret` helper of the claudine repo. The helper authenticates with a
+read-only service account (token in the macOS Keychain, or
+`OP_SERVICE_ACCOUNT_TOKEN` on a server) and caches the value in the Keychain for
+a day, so no token sits in cleartext on disk and 1Password never prompts. After
+rotating the token in the vault, run `claudine-secret purge`. The interactive
+login still works and writes the local file, which then takes precedence.

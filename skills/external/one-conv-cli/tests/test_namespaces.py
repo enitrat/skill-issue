@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Namespace dispatch isolates history sources and preserves existing automation."""
 
 import importlib.machinery
@@ -17,7 +38,7 @@ from one_conv import cloud_cli, namespaces, native_auth
 
 @pytest.fixture
 def app(monkeypatch):
-    loader = importlib.machinery.SourceFileLoader("namespace_cli", str(Path(__file__).parents[1] / "bin/one-conv"))
+    loader = importlib.machinery.SourceFileLoader("namespace_cli", str(Path(__file__).parents[1] / "one_conv_cli.py"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, loader.name, module)
@@ -109,7 +130,7 @@ def test_claude_does_not_inherit_openai_account_label(app, saved_conversations, 
 
 
 def test_cloud_chats_process_lists_individual_conversations(saved_conversations):
-    result = subprocess.run([sys.executable, "-O", str(Path(__file__).parents[1] / "bin/one-conv"),
+    result = subprocess.run([sys.executable, "-O", str(Path(__file__).parents[1] / "one_conv_cli.py"),
                              "cloud", "claude", "chats", "--json"],
                             capture_output=True, text=True, check=True, timeout=10)
     assert [row["uuid"] for row in json.loads(result.stdout)] == ["second", "first"]
@@ -137,7 +158,7 @@ def test_cloud_read_refresh_is_available(app):
 
 
 def test_cloud_read_process_resolves_id(saved_conversations):
-    result = subprocess.run([sys.executable, "-O", str(Path(__file__).parents[1] / "bin/one-conv"),
+    result = subprocess.run([sys.executable, "-O", str(Path(__file__).parents[1] / "one_conv_cli.py"),
                              "cloud", "read", "sec", "--json", "--no-mark-read"],
                             capture_output=True, text=True, check=True, timeout=10)
     assert json.loads(result.stdout)["session"] == "second"
@@ -180,7 +201,7 @@ def test_cloud_list_counts_visible_turns(app, cloud_tool_history):
 
 def test_short_help_survives_legacy_help_cache(app):
     CliRunner().invoke(cloud_cli.cloud_group, ["--help"])
-    namespaces.install(app.cli, lambda: iter(()), lambda: iter(()))
+    namespaces.install(app.cli, lambda: iter(()), lambda: iter(()), app.LOGIN_PROFILES_DIR)
     assert CliRunner().invoke(app.cli, ["cloud", "-h"]).exit_code == 0
 
 
@@ -281,13 +302,71 @@ def test_global_refresh_with_no_accounts_fails(app, saved_conversations, monkeyp
     assert result.exit_code == 1
 
 
-def test_login_opens_selected_browser_without_keychain(app, monkeypatch):
+@pytest.fixture
+def opened(monkeypatch):
     calls = []
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: calls.append(command))
+    return calls
+
+
+def test_login_never_prompts_for_keychain(app, opened, monkeypatch):
     monkeypatch.setattr(native_auth, "read_secret", lambda *args, **kwargs: pytest.fail("Login cannot prompt for Keychain"))
+    result = CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--login"])
+    assert result.exit_code == 0
+
+
+def test_login_opens_a_profile_only_one_conv_uses(app, opened):
     CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--login", "--browser", "chrome"])
-    assert calls == [["open", "-a", "Google Chrome", "https://claude.ai/login"]]
+    assert opened == [["open", "-na", "Google Chrome", "--args",
+                       f"--user-data-dir={app.LOGIN_PROFILES_DIR / 'chrome' / 'claude-1'}",
+                       "--no-first-run", "--no-default-browser-check", "https://claude.ai/login"]]
+
+
+def test_login_profile_is_private(app, opened):
+    CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--login"])
+    assert (app.LOGIN_PROFILES_DIR / "chrome" / "claude-1").stat().st_mode & 0o777 == 0o700
+
+
+def test_another_login_gets_its_own_profile(app, opened):
+    (app.LOGIN_PROFILES_DIR / "chrome" / "claude-1").mkdir(parents=True)
+    CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--login"])
+    assert f"--user-data-dir={app.LOGIN_PROFILES_DIR / 'chrome' / 'claude-2'}" in opened[0]
+
+
+@pytest.mark.parametrize(("product", "login", "url"), [
+    ("claude", "claude-1", "https://claude.ai/login"),
+    ("cowork", "claude-1", "https://claude.ai/login"),
+    ("chatgpt", "chatgpt-1", "https://chatgpt.com/auth/login"),
+    ("codex", "chatgpt-1", "https://chatgpt.com/auth/login"),
+])
+def test_login_profile_follows_provider_site(app, opened, product, login, url):
+    CliRunner().invoke(app.cli, ["cloud", product, "connect", "--login"])
+    assert opened[0][4:] == [f"--user-data-dir={app.LOGIN_PROFILES_DIR / 'chrome' / login}",
+                             "--no-first-run", "--no-default-browser-check", url]
+
+
+def test_login_reopens_named_profile(app, opened):
+    (app.LOGIN_PROFILES_DIR / "chrome" / "claude-1").mkdir(parents=True)
+    (app.LOGIN_PROFILES_DIR / "chrome" / "claude-2").mkdir()
+    CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--login", "--profile", "claude-1"])
+    assert f"--user-data-dir={app.LOGIN_PROFILES_DIR / 'chrome' / 'claude-1'}" in opened[0]
+
+
+def test_login_rejects_unknown_profile(app, opened):
+    result = CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--login", "--profile", "claude-9"])
+    assert "No one-conv login named claude-9" in result.output
+
+
+def test_profile_requires_login(app, monkeypatch):
+    monkeypatch.setattr(native_auth, "read_secret", lambda *args, **kwargs: pytest.fail("A usage error cannot prompt"))
+    result = CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--profile", "claude-1"])
+    assert result.exit_code == 2
+
+
+def test_login_refuses_browser_without_separate_profiles(app, opened):
+    result = CliRunner().invoke(app.cli, ["cloud", "claude", "connect", "--login", "--browser", "arc"])
+    assert "use --browser chrome" in result.output
 
 
 def test_local_rejects_cloud_source(app):
@@ -340,6 +419,25 @@ def test_pull_reports_inaccessible_browser_instead_of_managed_file(app, monkeypa
     assert "No browser session is accessible without prompting" in result.output
 
 
+def test_pull_without_session_names_the_connect_step(app, monkeypatch):
+    monkeypatch.delenv("ONE_CONV_SESSION_FILE", raising=False)
+    monkeypatch.setattr(app, "_claude_accounts", lambda: iter(()))
+    result = CliRunner().invoke(app.cli, ["cloud", "claude", "pull"])
+    assert "Sign in to claude.ai in Chrome, then run `one-conv cloud claude connect`" in result.output
+
+
+def test_accounts_json_stays_parseable_without_session(app, monkeypatch):
+    monkeypatch.setattr(app, "_claude_accounts", lambda: iter(()))
+    result = CliRunner().invoke(app.cli, ["cloud", "claude", "accounts", "--json"])
+    assert json.loads(result.stdout) == []
+
+
+def test_accounts_without_session_names_the_connect_step(app, monkeypatch):
+    monkeypatch.setattr(app, "_claude_accounts", lambda: iter(()))
+    result = CliRunner().invoke(app.cli, ["cloud", "claude", "accounts", "--json"])
+    assert "Sign in to claude.ai in Chrome" in result.stderr
+
+
 def test_public_process_reads_saved_claude_messages(tmp_path):
     account = tmp_path / "account"
     account.mkdir()
@@ -348,7 +446,7 @@ def test_public_process_reads_saved_claude_messages(tmp_path):
         "title": "Namespace example", "last": "2026-01-01T00:00:00Z",
         "turns": [{"role": "user", "text": "namespace-marker", "ts": "2026-01-01T00:00:00Z"}],
     }))
-    result = subprocess.run([sys.executable, "-O", str(Path(__file__).parents[1] / "bin/one-conv"),
+    result = subprocess.run([sys.executable, "-O", str(Path(__file__).parents[1] / "one_conv_cli.py"),
                              "cloud", "claude", "search", "namespace-marker", "--json"],
                             env={**os.environ, "ONE_CONV_CLOUD_CACHE": str(tmp_path)},
                             capture_output=True, text=True, check=True, timeout=10)
@@ -374,6 +472,19 @@ def test_browser_discovery_keeps_provider_cookies_separate(app, monkeypatch, tmp
     assert list(app._chatgpt_cookie_jars(domain, cookie))[0][1] == {cookie: value}
 
 
+def test_browser_discovery_reads_one_conv_login_profiles(app, monkeypatch):
+    store = app.LOGIN_PROFILES_DIR / "synthetic" / "claude-1" / "Default" / "Cookies"
+    store.parent.mkdir(parents=True)
+    with sqlite3.connect(store) as connection:
+        connection.execute("CREATE TABLE cookies(host_key TEXT, name TEXT, encrypted_value BLOB)")
+        connection.execute("INSERT INTO cookies VALUES(?, ?, ?)", (".claude.ai", "sessionKey", b"login-session"))
+    monkeypatch.setattr(app, "CHATGPT_COOKIE_SOURCES", [("synthetic", str(store.parent / "absent"), "synthetic-service")])
+    monkeypatch.setattr(app, "_chatgpt_keychain_key", lambda service: b"synthetic-key")
+    monkeypatch.setattr(app, "_chatgpt_decrypt_cookie", lambda encrypted, key: encrypted.decode())
+    assert list(app._chatgpt_cookie_jars("claude.ai", "sessionKey")) == [
+        ("synthetic/one-conv/claude-1", {"sessionKey": "login-session"})]
+
+
 def test_connect_authorizes_only_selected_browser(app, monkeypatch):
     requests = []
     monkeypatch.setattr(native_auth, "read_secret", lambda service, **kwargs: requests.append((service, kwargs)) or b"synthetic")
@@ -394,3 +505,20 @@ def test_denied_connect_does_not_discover_accounts(app, monkeypatch):
     monkeypatch.setattr(app, "_claude_accounts", lambda: pytest.fail("Denied connect cannot discover sessions"))
     result = CliRunner().invoke(app.cli, ["cloud", "claude", "connect"])
     assert "Browser credential access was not authorized" in result.output
+
+
+def test_bridge_sync_failure_names_the_bridge_log(app, caplog):
+    from one_conv.archive import sync_record
+    app._archive_sync_health(sync_record({"failed": 1, "failures": ["cursor/x: ArchiveError: boom"], "finished": 1}), 5)
+    assert str(Path(os.environ["ONE_CONV_LIVE_DIR"]) / "bridge" / "archive-sync.log") in caplog.text
+
+
+def test_command_sync_failure_names_the_state_log(app, caplog, monkeypatch):
+    from one_conv.archive import sync_record
+    monkeypatch.setenv("ONE_CONV_ARCHIVE_URL", "https://archive.example.test")
+    app._archive_sync_health(sync_record({"failed": 1, "failures": ["cursor/x: ArchiveError: boom"], "finished": 1}), 5)
+    assert str(app.STATE_DIR / "archive-sync.log") in caplog.text
+
+
+def test_cursor_ide_names_the_cursor_ide_source():
+    assert namespaces.SourceChoice(namespaces.LOCAL_SOURCES).convert("cursor-ide", None, None) == "cursor"

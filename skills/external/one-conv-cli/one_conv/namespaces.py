@@ -12,6 +12,17 @@ READ_COMMANDS = ("chats", "read", "thread", "search", "find", "unread")
 HELP_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
+class SourceChoice(click.Choice):
+    """A --source choice that also takes `cursor-ide`, the Cursor IDE's name beside `cursor-cli`."""
+
+    def __init__(self, choices):
+        super().__init__((*choices, "cursor-ide") if "cursor" in choices else choices)
+
+    def convert(self, value, param, ctx):
+        value = super().convert(value, param, ctx)
+        return "cursor" if value == "cursor-ide" else value
+
+
 class NamespaceRoot(click.Group):
     """Keep legacy names callable without mixing them into the primary help."""
 
@@ -28,6 +39,22 @@ def selected_sources(source, defaults):
     return (source,) if source else scope
 
 
+# Placeholders in capitals stand for what discovery returns; the rest runs as written.
+READER_EXAMPLES = {
+    "chats": ("--limit 10", "--json"),
+    "read": ("PROJECT --json", "PROJECT --expand --limit 2"),
+    "thread": ("PROJECT --no-mark-read --json", "PROJECT --around 2026-10-27T10:00:00Z --context 3"),
+    "search": ("'rate limit' --json", "'bridge reconnect' --ranked --limit 10", "'agent dies when the websocket drops' --semantic"),
+    "find": ("QUERY --json",),
+    "unread": ("--json", "--limit 10"),
+    "fork": ("PROJECT", "PROJECT --nth 2 --yes"),
+    "port": ("PROJECT --into codex", "PROJECT --into claude --limit 20 --print --yes"),
+    "send": ("PROJECT 'summarize the open TODOs'", "PROJECT 'run the tests' --fork --yes"),
+    "skill-usage": ("--since-days 30 --json",),
+    "feed": ("--follow ADDRESS", "--peek --json"),
+}
+
+
 def _reader(command, sources, path):
     """Clone options so scoped help cannot mutate compatibility commands."""
     result = copy(command)
@@ -36,7 +63,7 @@ def _reader(command, sources, path):
     result.hidden = False
     for parameter in result.params:
         if parameter.name == "source_filter":
-            parameter.type = click.Choice(sources)
+            parameter.type = SourceChoice(sources)
             parameter.help = "Restrict to one source in this namespace."
     if command.name == "search":
         # Namespace readers inspect saved history; provider pulls own authentication.
@@ -61,8 +88,9 @@ def _reader(command, sources, path):
                 parameter.type = click.IntRange(min=0)
                 parameter.help = "Number of conversations to list (0 = all)."
                 parameter.show_default = True
-    example_args = " QUERY" if command.name in ("read", "thread", "search", "find", "fork", "port", "send") else ""
-    result.epilog = f"\b\nExamples:\n  {path} {command.name}{example_args} --help"
+    examples = READER_EXAMPLES.get(command.name)
+    if examples:
+        result.epilog = "\b\nExamples:\n" + "\n".join(f"  {path} {command.name} {args}" for args in examples)
     if command.name in READ_COMMANDS and set(sources).issubset(CLOUD_PRODUCTS.values()):
         callback = result.callback
 
@@ -139,7 +167,7 @@ def _scope_callback(sources, accounts=None):
     return configure
 
 
-def install(root, browser_accounts, claude_accounts):
+def install(root, browser_accounts, claude_accounts, login_profiles):
     """Mount product readers and pulls while leaving old invocations intact."""
     from .cloud_cli import cloud_group, sync
 
@@ -147,7 +175,7 @@ def install(root, browser_accounts, claude_accounts):
                         help="Read local agent history and run local agent tools.",
                         epilog="\b\nExamples:\n  one-conv local chats\n  one-conv local search QUERY",
                         context_settings=HELP_SETTINGS)
-    for name in (*READ_COMMANDS, "export", "fork", "port", "send", "skill-usage", "append", "feed"):
+    for name in (*READ_COMMANDS, "fork", "port", "send", "skill-usage", "feed"):
         local.add_command(_reader(root.commands[name], LOCAL_SOURCES, "one-conv local"))
     root.add_command(local)
 
@@ -156,6 +184,7 @@ def install(root, browser_accounts, claude_accounts):
     cloud = click.Group("cloud", commands=dict(cloud_group.commands), context_settings=HELP_SETTINGS)
     cloud.callback = _scope_callback(cloud_sources, {
         "browser_accounts": browser_accounts, "claude_accounts": claude_accounts,
+        "login_profiles": login_profiles,
     })
     cloud.help = "Read cloud conversation history by product. Pull first, then read saved history."
     cloud.epilog = "\b\nExamples:\n  one-conv cloud claude --help\n  one-conv cloud chatgpt --help\n  one-conv cloud search QUERY"
@@ -217,8 +246,7 @@ def _pull(sync, name, product):
             except ProviderError as error:
                 raise click.ClickException(str(error)) from None
             if not accounts:
-                raise click.ClickException("No browser session is accessible without prompting. "
-                                           f"Run one-conv cloud {name} accounts to inspect access.")
+                raise click.ClickException("No browser session is accessible without prompting. " + _connect_hint(name))
             if len(accounts) > 1:
                 raise click.ClickException(f"Several accounts are available. Run one-conv cloud {name} accounts "
                                            "and select one with --account.")
@@ -242,6 +270,16 @@ def _pull(sync, name, product):
                          context_settings=HELP_SETTINGS)
 
 
+# The site each product signs in on; Codex cloud uses the ChatGPT account.
+SIGN_IN_SITES = {"chatgpt": "chatgpt.com", "codex": "chatgpt.com", "claude": "claude.ai", "cowork": "claude.ai"}
+
+
+def _connect_hint(name):
+    """The setup step that makes a browser session readable, in words that work from Claude too."""
+    return (f"Sign in to {SIGN_IN_SITES.get(name, 'the provider')} in Chrome, then run "
+            f"`one-conv cloud {name} connect` once and choose Always Allow in the macOS dialog.")
+
+
 def _accounts(name):
     """Expose verified selectors without serializing HTTP sessions or credentials."""
     import json
@@ -256,19 +294,64 @@ def _accounts(name):
                     for account in callback()]
         except ProviderError as error:
             raise click.ClickException(str(error)) from None
+        if not rows:
+            click.echo("No browser account is accessible without prompting. " + _connect_hint(name), err=True)
         if as_json:
             click.echo(json.dumps(rows))
-        elif rows:
+        else:
             for row in rows:
                 click.echo(f"{row['account_id']}  {row['email'] or row['organization_label'] or ''}")
-        else:
-            click.echo("No browser account is accessible without prompting. Sign in to the provider and authorize session access during setup.")
 
     return click.Command("accounts", callback=invoke,
                          params=[click.Option(["--json", "as_json"], is_flag=True, help="Emit safe account metadata as JSON.")],
                          help="Discover browser accounts accessible without password prompts.",
                          epilog=f"\b\nExamples:\n  one-conv cloud {name} accounts --json",
                          context_settings=HELP_SETTINGS)
+
+
+LOGIN_APPS = {"chrome": "Google Chrome", "brave": "Brave Browser",
+              "edge": "Microsoft Edge", "chromium": "Chromium"}
+
+
+def _open_login_window(name, browser, profile, root):
+    """Open provider sign-in in a browser profile only one-conv uses.
+
+    Signing out on claude.ai or chatgpt.com revokes that browser's session
+    server-side. A login made in its own profile is a separate session, so
+    the user can sign in and out freely in their everyday browser.
+    """
+    import itertools
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    site = "claude" if name in ("claude", "cowork") else "chatgpt"
+    url = "https://claude.ai/login" if site == "claude" else "https://chatgpt.com/auth/login"
+    if sys.platform != "darwin":
+        raise click.ClickException("Opening a sign-in window currently supports macOS only.")
+    if browser not in LOGIN_APPS:
+        raise click.ClickException(f"{browser} cannot open a separate sign-in profile; use --browser chrome.")
+    parent = Path(root) / browser
+    if profile:
+        directory = parent / profile
+        if not directory.is_dir():
+            raise click.ClickException(f"No one-conv login named {profile}; omit --profile to start a new one.")
+    else:
+        taken = {path.name for path in parent.glob(f"{site}-*")}
+        directory = parent / next(f"{site}-{n}" for n in itertools.count(1) if f"{site}-{n}" not in taken)
+    # Cookies of every login live here, so each level is private to the user.
+    for level in (Path(root), parent, directory):
+        level.mkdir(exist_ok=True, mode=0o700)
+    try:
+        subprocess.run(["open", "-na", LOGIN_APPS[browser], "--args", f"--user-data-dir={directory}",
+                        "--no-first-run", "--no-default-browser-check", url],
+                       check=True, capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        raise click.ClickException("Could not open the selected browser for login.") from None
+    click.echo(f"Sign in in the window that opened (one-conv login {directory.name}), then run "
+               f"one-conv cloud {name} accounts to verify it. This login is separate from your everyday "
+               "browser: signing out there leaves it connected. Opening this page does not mean the "
+               "account is connected.", err=True)
 
 
 def _connect(name):
@@ -278,23 +361,13 @@ def _connect(name):
                 "chromium": "Chromium Safe Storage"}
 
     @click.pass_context
-    def invoke(context, browser, login):
+    def invoke(context, browser, login, profile):
         from .native_auth import read_secret
         if login:
-            url = "https://claude.ai/login" if name in ("claude", "cowork") else "https://chatgpt.com/auth/login"
-            import subprocess
-            import sys
-            apps = {"chrome": "Google Chrome", "arc": "Arc", "brave": "Brave Browser",
-                    "edge": "Microsoft Edge", "chromium": "Chromium"}
-            if sys.platform != "darwin":
-                raise click.ClickException("Opening a selected browser currently supports macOS only.")
-            try:
-                subprocess.run(["open", "-a", apps[browser], url], check=True, capture_output=True, timeout=10)
-            except (OSError, subprocess.SubprocessError):
-                raise click.ClickException("Could not open the selected browser for login.") from None
-            click.echo(f"Finish provider sign-in in {browser}, then run one-conv cloud {name} accounts to verify it. "
-                       "Opening this page does not mean the account is connected.", err=True)
+            _open_login_window(name, browser, profile, context.obj["login_profiles"])
             return
+        if profile:
+            raise click.UsageError("--profile names a one-conv login window; use it with --login.")
         click.echo(f"Authorizing {browser} access. Choose Always Allow in the macOS dialog to reuse this authorization.", err=True)
         try:
             secret = read_secret(services[browser], authorize=True)
@@ -307,10 +380,14 @@ def _connect(name):
         context.invoke(_accounts(name), as_json=False)
 
     return click.Command("connect", callback=invoke,
-                         params=[click.Option(["--login"], is_flag=True, help="Open provider sign-in instead of requesting Keychain authorization."),
+                         params=[click.Option(["--login"], is_flag=True,
+                                              help="Sign in to another account in a browser window only one-conv uses."),
+                                 click.Option(["--profile"], metavar="LOGIN",
+                                              help="Reopen this one-conv login (e.g. claude-1) to renew it."),
                                  click.Option(["--browser"], type=click.Choice(tuple(services)),
                                               default="chrome", show_default=True,
                                               help="Authorize this browser only.")],
                          help="Authorize a stable native helper once; normal pulls never prompt.",
-                         epilog=f"\b\nExamples:\n  one-conv cloud {name} connect --browser chrome",
+                         epilog=(f"\b\nExamples:\n  one-conv cloud {name} connect --browser chrome\n"
+                                 f"  one-conv cloud {name} connect --login"),
                          context_settings=HELP_SETTINGS)

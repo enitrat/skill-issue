@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Pairing, browser authority and session boundaries use only disposable credentials."""
 
 import concurrent.futures
@@ -170,7 +191,7 @@ def test_pairing_tokens_are_not_logged(client, app, caplog):
 
 def test_provider_capabilities_reflect_configured_callbacks(paired):
     client, _ = paired
-    assert client.get("/api/session").json()["capabilities"] == {"workers": True, "accounting": False, "pairing": True, "channels": True, "changes": True}
+    assert client.get("/api/session").json()["capabilities"] == {"workers": True, "accounting": False, "pairing": True, "channels": True, "changes": True, "unread": True, "acks": True, "sign_out_others": True, "stop": True, "routines": True}
 
 
 def test_anonymous_browser_cannot_create_a_device_invite(client):

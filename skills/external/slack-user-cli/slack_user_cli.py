@@ -2,12 +2,15 @@
 # /// script
 # requires-python = ">=3.11,<3.12"  # leveldb 0.201 (via slacktokens) uses PyUnicode_AS_UNICODE, removed in 3.12
 # dependencies = [
-#     "slack-sdk>=3.33",
-#     "slacktokens>=0.2.6",
-#     "click>=8.0",
-#     "rich>=13.0",
-#     "requests>=2.31",
+#     "slack-sdk==3.41.0",
+#     "slacktokens==0.2.6",
+#     "click==8.3.2",
+#     "rich==14.3.3",
+#     "requests==2.33.1",
 # ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
 # ///
 """Slack User CLI — terminal access to Slack using browser session credentials.
 
@@ -19,9 +22,13 @@ or browser DevTools. No Slack app registration needed.
 import json
 import logging
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -39,17 +46,19 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = Path.home() / ".config" / "slack-user-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+VAULT_DOCUMENT = "slack-user-cli config.json"
+
 console = Console()
 
 
 def load_config() -> dict:
-    """Load config from disk, returning empty dict if missing.
+    """Load vault credentials, retaining local configuration during outages.
 
     Migrates legacy single-workspace format to multi-workspace on read.
     """
-    if not CONFIG_FILE.exists():
-        return {}
-    config = json.loads(CONFIG_FILE.read_text())
+    config = vault_config()
+    if not config:
+        config = json.loads(CONFIG_FILE.read_text()) if CONFIG_FILE.exists() else {}
     # Migrate legacy format: {token, cookie, team, user} → multi-workspace
     if "token" in config and "workspaces" not in config:
         team = config.get("team", "default")
@@ -68,10 +77,62 @@ def load_config() -> dict:
     return config
 
 
+def auth_broker(operation: str, config: dict | None = None) -> dict:
+    """Use the shared vault broker without exposing credentials in arguments."""
+    import shutil
+    import subprocess
+
+    helper = shutil.which("claudine-secret") or str(Path.home() / ".local/bin/claudine-secret")
+    args = [helper, "auth", operation, "slack"]
+    if operation == "status":
+        args.append("--json")
+    try:
+        result = subprocess.run(
+            args, input=json.dumps(config) if config is not None else None,
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode not in (0, 3) or not result.stdout.strip():
+            return {}
+        payload = json.loads(result.stdout)
+        if operation == "load" and result.returncode != 0:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return {}
+
+
+def vault_config() -> dict:
+    """Prefer pending credentials and 1Password through the shared broker."""
+    # A login made while the broker was absent must not revert to stale vault data.
+    if CONFIG_FILE.with_suffix(".pending").exists() and CONFIG_FILE.exists():
+        return json.loads(CONFIG_FILE.read_text())
+    return auth_broker("load")
+
+
 def save_config(config: dict) -> None:
-    """Persist config to disk, creating parent dirs as needed."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    """Keep a protected working copy and sync successful login credentials."""
+    import os
+    import tempfile
+
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    marker = CONFIG_FILE.with_suffix(".pending")
+    marker.touch(mode=0o600)
+    # Atomic replacement prevents truncated credentials after a crash.
+    descriptor, temporary = tempfile.mkstemp(prefix=".auth-", dir=CONFIG_FILE.parent)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(json.dumps(config, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, CONFIG_FILE)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    metadata = auth_broker("save", config)
+    if metadata.get("source") == "vault" and not metadata.get("pending"):
+        marker.unlink(missing_ok=True)
+    else:
+        logging.getLogger(__name__).warning("Login saved locally; 1Password synchronization is pending.")
+
 
 
 def get_workspace_config(config: dict, workspace: str | None) -> dict:
@@ -543,7 +604,7 @@ def _html_to_text(html: str) -> str:
 # -- CLI group ----------------------------------------------------------------
 
 
-@click.group()
+@click.group(epilog="\b\nExamples:\n  slack-user channels --json\n  slack-user read general --limit 20 --json\n  slack-user -w \"Other Workspace\" search \"release\" --json")
 @click.option(
     "--debug", is_flag=True, default=False, help="Enable debug logging."
 )
@@ -561,6 +622,8 @@ def cli(ctx: click.Context, debug: bool, workspace: str | None) -> None:
     # Resolve and store the active workspace name for cache keying
     ctx.ensure_object(dict)
     ctx.obj["workspace"] = workspace
+    if ctx.invoked_subcommand in {"auth-status", "auth-sync"}:
+        return
     config = load_config()
     ctx.obj["workspace_name"] = _get_active_workspace(config, workspace)
 
@@ -568,22 +631,27 @@ def cli(ctx: click.Context, debug: bool, workspace: str | None) -> None:
 # -- login --------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user login auto\n  slack-user login --auto\n  slack-user login browser\n  slack-user login manual --workspace-name \"Acme\"")
+@click.argument(
+    "mode",
+    required=False,
+    type=click.Choice(["auto", "browser", "manual"], case_sensitive=False),
+)
 @click.option(
     "--auto",
-    "mode",
+    "mode_flag",
     flag_value="auto",
     help="Extract credentials from Slack desktop app.",
 )
 @click.option(
     "--manual",
-    "mode",
+    "mode_flag",
     flag_value="manual",
     help="Paste credentials from browser DevTools (one workspace).",
 )
 @click.option(
     "--browser",
-    "mode",
+    "mode_flag",
     flag_value="browser",
     help="Paste localStorage JSON from browser to import all workspaces.",
 )
@@ -592,16 +660,18 @@ def cli(ctx: click.Context, debug: bool, workspace: str | None) -> None:
     default=None,
     help="Name for this workspace (manual mode only).",
 )
-def login(mode: str | None, workspace_name: str | None) -> None:
+def login(
+    mode: str | None, mode_flag: str | None, workspace_name: str | None
+) -> None:
     """Authenticate with Slack using session credentials.
 
-    Three modes:
-      --auto     Extract from Slack desktop app (all workspaces).
-      --browser  Paste browser localStorage JSON (all workspaces).
-      --manual   Paste a single xoxc- token + d cookie.
+    MODE is auto (default), browser, or manual. Flags (--auto, --browser,
+    --manual) are aliases for the same modes.
     """
-    if mode is None:
-        mode = "auto"
+    selected = {m.lower() for m in (mode, mode_flag) if m}
+    if len(selected) > 1:
+        raise click.UsageError("Pass only one login mode.")
+    mode = next(iter(selected), "auto")
 
     config = load_config()
     config.setdefault("workspaces", {})
@@ -678,6 +748,46 @@ def _patch_pycookiecheat_macos_slack_bugs() -> None:
     _chrome.get_macos_config = patched_get_macos_config
 
 
+def _snapshot_leveldb(src: Path) -> Path:
+    """Copy a LevelDB dir without LOCK so it can be opened while Slack holds it.
+
+    The caller owns the returned directory and must delete ``dest.parent``.
+    """
+    parent = Path(tempfile.mkdtemp(prefix="slack-user-cli-leveldb-"))
+    dest = parent / "leveldb"
+    try:
+        shutil.copytree(src, dest, ignore=shutil.ignore_patterns("LOCK"))
+    except Exception:
+        shutil.rmtree(parent, ignore_errors=True)
+        raise
+    return dest
+
+
+@contextmanager
+def _unlocked_slack_leveldb():
+    """Read Slack Local Storage from a temp copy so a running desktop app does not block login.
+
+    The copy is deleted when the context exits, on both success and failure.
+    """
+    import leveldb  # noqa: PLC0415
+
+    original = leveldb.LevelDB
+    snapshots: list[Path] = []
+
+    def _LevelDB(path, *args, **kwargs):
+        snap = _snapshot_leveldb(Path(path))
+        snapshots.append(snap)
+        return original(str(snap), *args, **kwargs)
+
+    leveldb.LevelDB = _LevelDB
+    try:
+        yield
+    finally:
+        leveldb.LevelDB = original
+        for snap in snapshots:
+            shutil.rmtree(snap.parent, ignore_errors=True)
+
+
 def _login_auto(config: dict) -> None:
     """Extract credentials from Slack desktop app via slacktokens."""
     try:
@@ -692,11 +802,14 @@ def _login_auto(config: dict) -> None:
     console.print(
         "[yellow]Extracting credentials from Slack desktop app…[/]"
     )
-    console.print(
-        "[dim]Note: close Slack desktop first (LevelDB lock) "
-        "and allow Keychain access when prompted.[/]"
-    )
-    result = get_tokens_and_cookie()
+    console.print("[dim]Allow Keychain access if prompted.[/]")
+    try:
+        with _unlocked_slack_leveldb():
+            result = get_tokens_and_cookie()
+    except Exception as exc:
+        raise click.ClickException(
+            f"Failed to extract Slack desktop credentials: {exc}"
+        ) from exc
 
     # slacktokens returns cookie as {'name': 'd', 'value': str}
     raw_cookie = result.get("cookie") or {}
@@ -956,7 +1069,7 @@ def _choose_default(teams: list[str]) -> str:
 # -- whoami -------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user whoami\n  slack-user whoami --json")
 @click.option(
     "--json",
     "as_json",
@@ -1006,7 +1119,7 @@ def whoami(ctx: click.Context, as_json: bool) -> None:
 # -- workspaces ---------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user workspaces\n  slack-user workspaces --json")
 @click.option(
     "--json",
     "as_json",
@@ -1052,7 +1165,7 @@ def workspaces(as_json: bool) -> None:
     console.print("[dim]Use -w <name> to switch workspace for a command.[/]")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user default \"Acme\"")
 @click.argument("name")
 @click.option(
     "--json",
@@ -1078,7 +1191,7 @@ def default(name: str, as_json: bool) -> None:
         console.print(f"[green]Default workspace set to [bold]{name}[/bold][/]")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user refresh\n  slack-user refresh --json")
 @click.option(
     "--json",
     "as_json",
@@ -1115,7 +1228,7 @@ def refresh(ctx: click.Context, as_json: bool) -> None:
         console.print("[green]Cache refreshed.[/]")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user resolve C0123456789 U0123456789\n  slack-user resolve C0123456789 U0123456789 --json")
 @click.argument("ids", nargs=-1, required=True)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit structured JSON.")
 @click.pass_context
@@ -1146,10 +1259,85 @@ def resolve(ctx: click.Context, ids: tuple[str, ...], as_json: bool) -> None:
             console.print(f"{_id} → [bold]{name}[/]{mark}")
 
 
+@cli.command(name="resolve-name", epilog="\b\nExamples:\n  slack-user resolve-name engineering marketing --json\n  slack-user resolve-name alex --type user --cache-only --json")
+@click.argument("names", nargs=-1, required=True)
+@click.option(
+    "--type",
+    "kind",
+    type=click.Choice(["channel", "user"]),
+    default="channel",
+    help="Which namespace to resolve names in.",
+)
+@click.option(
+    "--cache-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Never fall back to the API on a cache miss — just report it "
+        "unresolved. Use this for a batch lookup where a rebuild "
+        "(conversations.list/users.list, both heavily rate-limited) would "
+        "be too slow; a real miss can still be resolved later with a plain "
+        "(non---cache-only) call."
+    ),
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit structured JSON.")
+@click.pass_context
+def resolve_name(
+    ctx: click.Context, names: tuple[str, ...], kind: str, cache_only: bool, as_json: bool
+) -> None:
+    """Resolve channel or user names to IDs — the reverse of `resolve`.
+
+    Cache-first (the disk cache, then the never-expiring id→name store's
+    reverse). Without --cache-only, an unresolved name falls back to one API
+    call, which itself falls back to a full paginated rebuild
+    (conversations.list/users.list) if that single call also misses — slow
+    and rate-limit-prone, so pass --cache-only for a batch lookup that
+    should stay fast even when some names are misses. A name that still
+    doesn't resolve is reported as null (JSON) / "(not found)" (text)
+    rather than aborting the batch.
+    """
+    client = get_client(workspace=ctx.obj["workspace"])
+    ws = ctx.obj["workspace_name"]
+
+    out: dict[str, str | None] = {}
+    if cache_only:
+        # One cache load (builds it once if wholly missing/expired, otherwise
+        # a local disk read) — then every name is a plain dict lookup, no
+        # per-name API call regardless of how many names miss.
+        if kind == "channel":
+            channel_map = _get_channel_cache(client, ws)
+            out = {name: channel_map.get(name) for name in names}
+        else:
+            user_data = _get_user_cache(client, ws)
+            for name in names:
+                out[name] = user_data.get("name_to_id", {}).get(name) or user_data.get(
+                    "display_to_id", {}
+                ).get(name)
+    else:
+        for name in names:
+            try:
+                out[name] = (
+                    resolve_channel(client, name, ws)
+                    if kind == "channel"
+                    else _resolve_user_by_name(client, name, ws)
+                )
+            except click.ClickException:
+                out[name] = None
+
+    if as_json:
+        click.echo(json.dumps({"resolved": out}, ensure_ascii=False))
+    else:
+        for name, _id in out.items():
+            if _id is None:
+                console.print(f"{name} →  [dim](not found)[/]")
+            else:
+                console.print(f"{name} → [bold]{_id}[/]")
+
+
 # -- channels -----------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user channels\n  slack-user channels --all --json\n  slack-user channels --type \"im,mpim\" --json")
 @click.option(
     "--type",
     "channel_types",
@@ -1260,7 +1448,7 @@ def _channel_type_label(ch: dict) -> str:
 # -- read ---------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user read general --limit 20\n  slack-user read C0123456789 --limit 20 --json --expand-thread\n  slack-user read C0123456789 --since 2026-05-29 --limit 800 --json --expand-thread\n  slack-user read C0123456789 --since 2026-05-27 --keep-since 2026-05-29 --limit 800 --json\n  slack-user read C0123456789 --json --blocks")
 @click.argument("channel")
 @click.option("--limit", default=20, help="Number of messages to show.")
 @click.option(
@@ -1297,6 +1485,30 @@ def _channel_type_label(ch: dict) -> str:
     "treated as UTC. Sets the history `oldest` bound. Pair with a larger "
     "--limit to pull a whole window rather than the default 20.",
 )
+@click.option(
+    "--keep-since",
+    default=None,
+    help="Stricter than --since: drop any thread where neither the parent "
+    "nor any reply is at/after this time (same format as --since). Use a "
+    "--since a few days earlier than --keep-since so parents of hot threads "
+    "that predate --keep-since but got new replies after it aren't missed — "
+    "--since only bounds parents server-side, it can't see into replies. "
+    "Implies --expand-thread (threads must be expanded to check reply "
+    "times). Every kept message is tagged `after_cutoff: true/false` in "
+    "JSON output so a caller can tell what's actually new without "
+    "re-deriving it.",
+)
+@click.option(
+    "--blocks",
+    "with_blocks",
+    is_flag=True,
+    default=False,
+    help="Attach each message's block-kit text as `block_text` (JSON only). "
+    "Apps that post rich messages leave `text` as a one-line summary and put "
+    "the content in blocks, so without this the payload is invisible: a "
+    "Grafana on-call handoff reads as \"the shift changed\" while the blocks "
+    "name the person and the window.",
+)
 @click.pass_context
 def read(
     ctx: click.Context,
@@ -1304,8 +1516,10 @@ def read(
     limit: int,
     as_json: bool,
     with_names: bool,
+    with_blocks: bool,
     expand_thread: bool,
     since: str | None,
+    keep_since: str | None,
 ) -> None:
     """Read recent messages from a channel."""
     client = get_client(workspace=ctx.obj["workspace"])
@@ -1313,6 +1527,9 @@ def read(
     channel_id = resolve_channel(client, channel, workspace=ws)
 
     oldest = _parse_since(since) if since else None
+    cutoff = _parse_since(keep_since) if keep_since else None
+    if cutoff:
+        expand_thread = True
 
     messages: list[dict] = []
     cursor = None
@@ -1348,12 +1565,38 @@ def read(
             if msg.get("thread_ts") and msg.get("reply_count", 0) and ts:
                 msg["_replies"] = _fetch_thread_replies(client, channel_id, ts)
 
+    if cutoff:
+        messages = _filter_keep_since(messages, cutoff)
+
     if as_json:
         _emit_messages_json(
-            client, channel, messages, workspace=ws, with_names=with_names
+            client, channel, messages, workspace=ws, with_names=with_names,
+            with_blocks=with_blocks
         )
     else:
         _print_messages(client, messages, workspace=ws, with_names=with_names)
+
+
+def _filter_keep_since(messages: list[dict], cutoff: str) -> list[dict]:
+    """Drop threads with no activity at/after `cutoff`; tag the rest.
+
+    `cutoff` and message `ts` are both Slack-style `"<secs>.<micros>"`
+    strings, which sort correctly as plain strings — no float parsing
+    needed. Tags every kept parent/reply with `after_cutoff` so a caller
+    doesn't have to re-derive it.
+    """
+    kept: list[dict] = []
+    for msg in messages:
+        replies = msg.get("_replies") or []
+        parent_after = msg.get("ts", "") >= cutoff
+        reply_after = any(r.get("ts", "") >= cutoff for r in replies)
+        if not (parent_after or reply_after):
+            continue
+        msg["after_cutoff"] = parent_after
+        for r in replies:
+            r["after_cutoff"] = r.get("ts", "") >= cutoff
+        kept.append(msg)
+    return kept
 
 
 def _fetch_thread_replies(
@@ -1392,7 +1635,7 @@ def _fetch_thread_replies(
 # -- thread -------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user thread C0123456789 1777887012.881539\n  slack-user thread C0123456789 1777887012.881539 --json --names\n  slack-user thread --dm alex 1777887012.881539")
 @click.argument("channel")
 @click.argument("ts")
 @click.option("--limit", default=50, help="Number of replies to show.")
@@ -1411,6 +1654,17 @@ def _fetch_thread_replies(
     default=False,
     help="Resolve user IDs to display names. Default emits raw IDs.",
 )
+@click.option(
+    "--blocks",
+    "with_blocks",
+    is_flag=True,
+    default=False,
+    help="Attach each message's block-kit text as `block_text` (JSON only). "
+    "Apps that post rich messages leave `text` as a one-line summary and put "
+    "the content in blocks, so without this the payload is invisible: a "
+    "Grafana on-call handoff reads as \"the shift changed\" while the blocks "
+    "name the person and the window.",
+)
 @click.pass_context
 def thread(
     ctx: click.Context,
@@ -1420,6 +1674,7 @@ def thread(
     is_dm: bool,
     as_json: bool,
     with_names: bool,
+    with_blocks: bool,
 ) -> None:
     """Read thread replies for a given message timestamp."""
     client = get_client(workspace=ctx.obj["workspace"])
@@ -1461,7 +1716,8 @@ def thread(
     replies = replies[:limit]
     if as_json:
         _emit_messages_json(
-            client, channel, replies, workspace=ws, with_names=with_names
+            client, channel, replies, workspace=ws, with_names=with_names,
+            with_blocks=with_blocks
         )
     else:
         _print_messages(client, replies, workspace=ws, with_names=with_names)
@@ -1470,7 +1726,7 @@ def thread(
 # -- url (permalink reader) ---------------------------------------------------
 
 
-@cli.command(name="url")
+@cli.command(name="url", epilog="\b\nExamples:\n  slack-user url \"https://acme.slack.com/archives/C0123456789/p1777887012881539\"\n  slack-user url \"https://acme.slack.com/archives/C0123456789/p1777887012881539\" --json")
 @click.argument("slack_url")
 @click.option("--limit", default=50, help="Number of messages to show.")
 @click.option(
@@ -1487,6 +1743,17 @@ def thread(
     default=False,
     help="Resolve user IDs to display names. Default emits raw IDs.",
 )
+@click.option(
+    "--blocks",
+    "with_blocks",
+    is_flag=True,
+    default=False,
+    help="Attach each message's block-kit text as `block_text` (JSON only). "
+    "Apps that post rich messages leave `text` as a one-line summary and put "
+    "the content in blocks, so without this the payload is invisible: a "
+    "Grafana on-call handoff reads as \"the shift changed\" while the blocks "
+    "name the person and the window.",
+)
 @click.pass_context
 def url_command(
     ctx: click.Context,
@@ -1494,6 +1761,7 @@ def url_command(
     limit: int,
     as_json: bool,
     with_names: bool,
+    with_blocks: bool,
 ) -> None:
     """Read a Slack thread from a permalink URL.
 
@@ -1529,7 +1797,8 @@ def url_command(
     replies = replies[:limit]
     if as_json:
         _emit_messages_json(
-            client, slack_url, replies, workspace=ws, with_names=with_names
+            client, slack_url, replies, workspace=ws, with_names=with_names,
+            with_blocks=with_blocks
         )
     else:
         _print_messages(client, replies, workspace=ws, with_names=with_names)
@@ -1538,7 +1807,7 @@ def url_command(
 # -- download -----------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user download \"https://acme.slack.com/archives/C0123456789/p1777887012881539\" -o ./out\n  slack-user download C0123456789 1777887012.881539 --list --json\n  slack-user download F0123456789 -o ./out")
 @click.argument("target")
 @click.argument("ts", required=False)
 @click.option(
@@ -1660,7 +1929,7 @@ def download(
 # -- permalink ----------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user permalink C0123456789 1777887012.881539\n  slack-user permalink C0123456789 1777887012.881539 1777887099.000100 --json")
 @click.argument("channel")
 @click.argument("ts", nargs=-1, required=True)
 @click.option(
@@ -1713,7 +1982,7 @@ def permalink(
 # -- users --------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user users\n  slack-user users --json")
 @click.option(
     "--json",
     "as_json",
@@ -1795,7 +2064,7 @@ def users(ctx: click.Context, as_json: bool, with_names: bool) -> None:
 # -- user-channels ------------------------------------------------------------
 
 
-@cli.command(name="user-channels")
+@cli.command(name="user-channels", epilog="\b\nExamples:\n  slack-user user-channels alex\n  slack-user user-channels U0123456789 --type \"public_channel,private_channel,mpim\" --json")
 @click.argument("user")
 @click.option(
     "--type",
@@ -1907,7 +2176,7 @@ def user_channels(
 # -- send ---------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user send general \"message text\"\n  slack-user send C0123456789 \"reply text\" --thread 1777887012.881539")
 @click.argument("channel")
 @click.argument("message")
 @click.option("--thread", "thread_ts", default=None, help="Reply in thread (message timestamp).")
@@ -1949,6 +2218,190 @@ def send(
         )
     else:
         console.print(f"[green]Message sent[/] (ts={ts})")
+
+
+# -- drafts -------------------------------------------------------------------
+
+_MENTION_RE = re.compile(r"<@(U[A-Z0-9]+)>")
+
+
+def _draft_blocks(text: str) -> list[dict]:
+    """Rich-text blocks for a draft; `<@U…>` becomes a real mention, not literal text."""
+    elements: list[dict] = []
+    pos = 0
+    for m in _MENTION_RE.finditer(text):
+        if m.start() > pos:
+            elements.append({"type": "text", "text": text[pos : m.start()]})
+        elements.append({"type": "user", "user_id": m.group(1)})
+        pos = m.end()
+    if pos < len(text):
+        elements.append({"type": "text", "text": text[pos:]})
+    return [{"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": elements}]}]
+
+
+def _list_drafts(client: WebClient, limit: int = 100) -> list[dict]:
+    """Unsent drafts as drafts.list returns them."""
+    try:
+        resp = client.api_call("drafts.list", params={"is_active": "true", "limit": str(limit)})
+    except SlackApiError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return [d for d in resp.get("drafts", []) if not d.get("is_sent") and not d.get("is_deleted")]
+
+
+def _delete_draft(client: WebClient, draft: dict) -> None:
+    """Delete a draft; Slack answers draft_has_conflict unless the client ts is newer than the draft's."""
+    try:
+        client.api_call(
+            "drafts.delete",
+            data={"draft_id": draft.get("id", ""), "client_last_updated_ts": f"{time.time():.6f}"},
+        )
+    except SlackApiError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _draft_text(draft: dict) -> str:
+    """Flatten a draft's rich-text blocks back to plain text."""
+    parts: list[str] = []
+    for block in draft.get("blocks", []):
+        for section in block.get("elements", []):
+            for el in section.get("elements", []):
+                if el.get("type") == "user":
+                    parts.append(f"<@{el.get('user_id', '')}>")
+                else:
+                    parts.append(el.get("text", ""))
+    return "".join(parts)
+
+
+@cli.command(epilog="\b\nExamples:\n  slack-user draft general \"display bug only, nobody overpaid\"\n  slack-user draft C0123456789 \"<@U0123456789> both coexist\" --thread 1777887012.881539\n  slack-user draft C0123456789 \"reply text\" --thread 1777887012.881539\n  slack-user draft C0123456789 \"new text\" --thread 1777887012.881539 --replace --json")
+@click.argument("channel")
+@click.argument("message")
+@click.option("--thread", "thread_ts", default=None, help="Draft a reply in this thread (message timestamp).")
+@click.option("--replace", is_flag=True, default=False, help="Overwrite the draft already sitting in that channel or thread.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit structured JSON.")
+@click.pass_context
+def draft(
+    ctx: click.Context,
+    channel: str,
+    message: str,
+    thread_ts: str | None,
+    replace: bool,
+    as_json: bool,
+) -> None:
+    """Save MESSAGE as an unsent draft in CHANNEL (or a thread with --thread).
+
+    Nothing is posted: the draft lands in Slack's "Drafts & Sent", where it is
+    edited and sent by hand. `<@U…>` in MESSAGE becomes a real mention.
+    """
+    client = get_client(workspace=ctx.obj["workspace"])
+    ws = ctx.obj["workspace_name"]
+    channel_id = resolve_channel(client, channel, workspace=ws)
+
+    destination: dict = {"channel_id": channel_id}
+    if thread_ts:
+        destination.update(thread_ts=thread_ts, broadcast=False)
+
+    def create() -> dict:
+        # drafts.create is the internal endpoint the Slack client uses; it never posts.
+        return client.api_call(
+            "drafts.create",
+            data={
+                "client_msg_id": str(uuid.uuid4()),
+                "blocks": json.dumps(_draft_blocks(message)),
+                "destinations": json.dumps([destination]),
+                "file_ids": "[]",
+                "is_from_composer": "false",
+            },
+        )
+
+    try:
+        resp = create()
+    except SlackApiError as exc:
+        if exc.response.get("error") != "attached_draft_exists":
+            raise click.ClickException(str(exc)) from exc
+        # Slack keeps one draft per channel or thread.
+        existing = [
+            d
+            for d in _list_drafts(client)
+            if (d.get("destinations") or [{}])[0].get("channel_id") == channel_id
+            and (d.get("destinations") or [{}])[0].get("thread_ts") == thread_ts
+        ]
+        if not replace or not existing:
+            ids = ", ".join(d.get("id", "") for d in existing) or "unknown"
+            raise click.ClickException(
+                f"A draft already exists here ({ids}); pass --replace to overwrite it"
+            ) from exc
+        for d in existing:
+            _delete_draft(client, d)
+        try:
+            resp = create()
+        except SlackApiError as exc2:
+            raise click.ClickException(str(exc2)) from exc2
+
+    draft_id = resp.get("draft", {}).get("id", "")
+    if as_json:
+        click.echo(
+            json.dumps(
+                {"ok": True, "id": draft_id, "channel": channel_id, "thread_ts": thread_ts},
+                ensure_ascii=False,
+            )
+        )
+    else:
+        console.print(f"[green]Draft saved[/] (id={draft_id}), edit and send it from Drafts & Sent")
+
+
+@cli.command(epilog="\b\nExamples:\n  slack-user drafts\n  slack-user drafts --limit 5 --json")
+@click.option("--limit", default=20, help="Number of drafts to show.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit structured JSON.")
+@click.pass_context
+def drafts(ctx: click.Context, limit: int, as_json: bool) -> None:
+    """List unsent drafts, newest first: id, destination, text."""
+    client = get_client(workspace=ctx.obj["workspace"])
+    rows = []
+    for d in _list_drafts(client, limit):
+        dest = (d.get("destinations") or [{}])[0]
+        rows.append(
+            {
+                "id": d.get("id", ""),
+                "channel": dest.get("channel_id", ""),
+                "thread_ts": dest.get("thread_ts"),
+                "last_updated_ts": d.get("last_updated_ts", ""),
+                "text": _draft_text(d),
+            }
+        )
+
+    if as_json:
+        click.echo(json.dumps({"drafts": rows}, ensure_ascii=False))
+        return
+    table = Table(title="Drafts")
+    table.add_column("ID")
+    table.add_column("Channel")
+    table.add_column("Thread")
+    table.add_column("Text")
+    for r in rows:
+        table.add_row(r["id"], r["channel"], r["thread_ts"] or "", r["text"])
+    console.print(table)
+
+
+@cli.command(name="draft-delete", epilog="\b\nExamples:\n  slack-user draft-delete Dr0123456789\n  slack-user draft-delete Dr0123456789 Dr0123456790 --json")
+@click.argument("draft_ids", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit structured JSON.")
+@click.pass_context
+def draft_delete(ctx: click.Context, draft_ids: tuple[str, ...], as_json: bool) -> None:
+    """Delete one or more unsent drafts by id (from `drafts`)."""
+    client = get_client(workspace=ctx.obj["workspace"])
+    by_id = {d.get("id"): d for d in _list_drafts(client)}
+
+    deleted = []
+    for draft_id in draft_ids:
+        if draft_id not in by_id:
+            raise click.ClickException(f"Draft {draft_id} not found; list them with `slack-user drafts`")
+        _delete_draft(client, by_id[draft_id])
+        deleted.append(draft_id)
+
+    if as_json:
+        click.echo(json.dumps({"ok": True, "deleted": deleted}, ensure_ascii=False))
+    else:
+        console.print(f"[green]Deleted[/] {', '.join(deleted)}")
 
 
 # -- click (block-kit interactive) -------------------------------------------
@@ -2136,7 +2589,7 @@ def _dispatch_block_action(
     if not token or not cookie:
         raise click.ClickException("Not logged in. Run 'login' first.")
 
-    # `service_team_id` must be the Slack team ID (e.g. TFM7VTADR), not the
+    # `service_team_id` must be the Slack team ID (e.g. T0123456789), not the
     # workspace slug stored in our config. auth.test is the canonical source.
     auth = client.auth_test().data
     team_id = auth.get("team_id", "")
@@ -2185,7 +2638,7 @@ def _dispatch_block_action(
         ) from exc
 
 
-@cli.command(name="click")
+@cli.command(name="click", epilog="\b\nExamples:\n  slack-user click C0123456789 1777887012.881539 --option \"The first one!\"\n  slack-user click C0123456789 1777887012.881539 --index 2 --json")
 @click.argument("channel")
 @click.argument("message_ts")
 @click.option(
@@ -2273,7 +2726,7 @@ def click_cmd(
 # -- upload -------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user upload general report.pdf\n  slack-user upload C0123456789 report.pdf --message \"Here is the report\" --title \"Q1 Report\" --thread 1777887012.881539")
 @click.argument("channel")
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--thread", "thread_ts", default=None, help="Upload in thread.")
@@ -2329,7 +2782,7 @@ def upload(
 # -- dm -----------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user dm alex\n  slack-user dm alex \"message text\"\n  slack-user dm U0123456789 \"reply text\" --thread 1777887012.881539\n  slack-user dm alex --limit 40 --keep-since 2026-05-29 --json")
 @click.argument("user")
 @click.argument("message", required=False, default=None)
 @click.option("--limit", default=20, help="Messages to show when reading.")
@@ -2355,6 +2808,26 @@ def upload(
     help="When reading, also fetch replies for every threaded message and "
     "attach them inline under `replies`. Only meaningful with --json.",
 )
+@click.option(
+    "--keep-since",
+    default=None,
+    help="When reading: drop any thread where neither the parent nor any "
+    "reply is at/after this time (ISO date/datetime, same as `read "
+    "--keep-since`). `dm` has no `--since` to widen from first — raise "
+    "--limit instead to make sure old-enough parents are even fetched. "
+    "Implies --expand-thread; tags every kept message after_cutoff.",
+)
+@click.option(
+    "--blocks",
+    "with_blocks",
+    is_flag=True,
+    default=False,
+    help="Attach each message's block-kit text as `block_text` (JSON only). "
+    "Apps that post rich messages leave `text` as a one-line summary and put "
+    "the content in blocks, so without this the payload is invisible: a "
+    "Grafana on-call handoff reads as \"the shift changed\" while the blocks "
+    "name the person and the window.",
+)
 @click.pass_context
 def dm(
     ctx: click.Context,
@@ -2364,7 +2837,9 @@ def dm(
     thread_ts: str | None,
     as_json: bool,
     with_names: bool,
+    with_blocks: bool,
     expand_thread: bool,
+    keep_since: str | None,
 ) -> None:
     """Open a DM with a user. Send a message or read recent history."""
     client = get_client(workspace=ctx.obj["workspace"])
@@ -2404,6 +2879,9 @@ def dm(
             console.print(f"[green]{label}[/] (ts={ts})")
     else:
         # Read recent DM history
+        cutoff = _parse_since(keep_since) if keep_since else None
+        if cutoff:
+            expand_thread = True
         try:
             hist = client.conversations_history(
                 channel=dm_channel, limit=limit
@@ -2416,9 +2894,16 @@ def dm(
                 ts = msg.get("ts", "")
                 if msg.get("thread_ts") and msg.get("reply_count", 0) and ts:
                     msg["_replies"] = _fetch_thread_replies(client, dm_channel, ts)
+        if cutoff:
+            messages = _filter_keep_since(messages, cutoff)
         if as_json:
             _emit_messages_json(
-                client, dm_channel, messages, workspace=ws, with_names=with_names
+                client,
+                dm_channel,
+                messages,
+                workspace=ws,
+                with_names=with_names,
+                with_blocks=with_blocks,
             )
         else:
             _print_messages(client, messages, workspace=ws, with_names=with_names)
@@ -2427,7 +2912,7 @@ def dm(
 # -- dm-upload ----------------------------------------------------------------
 
 
-@cli.command(name="dm-upload")
+@cli.command(name="dm-upload", epilog="\b\nExamples:\n  slack-user dm-upload alex report.pdf\n  slack-user dm-upload alex report.pdf --message \"See attached\" --thread 1777887012.881539")
 @click.argument("user")
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--thread", "thread_ts", default=None, help="Upload in thread.")
@@ -2528,7 +3013,7 @@ def _resolve_user_by_name(
 # -- search -------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user search \"release\" --count 20 --page 1\n  slack-user search \"from:alex in:#general\" --json")
 @click.argument("query")
 @click.option("--count", default=20, help="Results per page.")
 @click.option("--page", default=1, help="Page number.")
@@ -2581,6 +3066,9 @@ def search(
                 channel_field = channel.get("id", "")
             out.append({
                 "ts": _format_ts(match.get("ts", "")),
+                # Same full-precision ts as `read --json`, so callers can filter
+                # or pass it to `permalink`/`thread` without parsing permalinks.
+                "raw_ts": match.get("ts", ""),
                 "user": user_field,
                 "channel": channel_field,
                 "text": match.get("text", ""),
@@ -2629,7 +3117,7 @@ def search(
 # -- canvas -------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  slack-user canvas \"https://acme.slack.com/docs/T0123456789/F0123456789\"\n  slack-user canvas F0123456789 --json\n  slack-user canvas \"https://acme.slack.com/docs/T0123456789/F0123456789\" --html")
 @click.argument("canvas_url_or_id")
 @click.option("--html", "raw_html", is_flag=True, default=False, help="Output raw HTML instead of plain text.")
 @click.option(
@@ -2675,7 +3163,7 @@ def canvas(
         console.print(text)
 
 
-@cli.command("canvas-edit")
+@cli.command("canvas-edit", epilog="\b\nExamples:\n  slack-user canvas-edit F0123456789 \"## New Section\"\n  slack-user canvas-edit F0123456789 \"## Fresh Start\" --operation replace\n  slack-user canvas-edit F0123456789 \"## Header\" --operation insert_at_start\n  cat summary.md | slack-user canvas-edit F0123456789 --operation replace")
 @click.argument("canvas_url_or_id")
 @click.argument("content", required=False)
 @click.option(
@@ -2712,17 +3200,6 @@ def canvas_edit(
 
     Content can be passed as an argument or piped via stdin.
     Accepts markdown — Slack converts it to canvas formatting.
-
-    Examples:
-
-        # Append markdown to a canvas
-        slack_user_cli canvas-edit DEADBEEFUUV "## New Section\\nSome text"
-
-        # Replace entire canvas content
-        slack_user_cli canvas-edit DEADBEEFUUV "## Fresh Start" --operation replace
-
-        # Pipe content from a file
-        cat summary.md | slack_user_cli canvas-edit DEADBEEFUUV --operation replace
     """
     import sys  # noqa: PLC0415
 
@@ -3120,11 +3597,35 @@ def _download_file(client: WebClient, file_info: dict, dest_dir: Path) -> Path:
     return path
 
 
+def _extract_block_text(blocks: list[dict]) -> str:
+    """Text carried by block kit but absent from a message's `text` field.
+
+    Apps that post rich messages put the payload in section/header blocks and
+    leave `text` as a one-line summary, so what a reader sees in Slack is
+    invisible to a `text`-only consumer. Grafana's on-call handoff notification
+    is the canonical case: `text` says only that the shift changed, while the
+    blocks name the person on call and the window they cover.
+    """
+    parts = []
+    for block in blocks or []:
+        if block.get("type") not in ("section", "header", "context"):
+            continue
+        body = block.get("text") or {}
+        if body.get("text"):
+            parts.append(body["text"])
+        # A section can carry its content in `fields` instead of `text`.
+        for field in block.get("fields") or []:
+            if field.get("text"):
+                parts.append(field["text"])
+    return "\n".join(parts)
+
+
 def _message_to_entry(
     client: WebClient,
     msg: dict,
     workspace: str,
     with_names: bool,
+    with_blocks: bool = False,
 ) -> dict:
     """Build the JSON entry for a single message.
 
@@ -3153,6 +3654,11 @@ def _message_to_entry(
         "user": username,
         "text": text,
     }
+    # Set only by `read --keep-since`; passes through the parent/reply split
+    # that filter already computed rather than making every caller re-derive
+    # "is this actually new" from raw_ts + a cutoff it has to know about too.
+    if "after_cutoff" in msg:
+        entry["after_cutoff"] = msg["after_cutoff"]
     thread_ts = msg.get("thread_ts")
     if thread_ts:
         entry["thread_ts"] = thread_ts
@@ -3172,6 +3678,12 @@ def _message_to_entry(
     # consumer can't even tell a message carries files, let alone fetch them;
     # the entries here include the IDs and private URLs the `download` command
     # needs.
+    # Only when it adds something: a message whose blocks just restate `text`
+    # would otherwise double every entry's size for nothing.
+    if with_blocks:
+        block_text = _extract_block_text(msg.get("blocks", []) or [])
+        if block_text and block_text.strip() != (msg.get("text") or "").strip():
+            entry["block_text"] = block_text
     files = _extract_files(msg)
     if files:
         entry["files"] = files
@@ -3195,7 +3707,8 @@ def _message_to_entry(
     replies = msg.get("_replies") or []
     if replies:
         entry["replies"] = [
-            _message_to_entry(client, r, workspace, with_names) for r in replies
+            _message_to_entry(client, r, workspace, with_names, with_blocks)
+            for r in replies
         ]
     return entry
 
@@ -3206,12 +3719,50 @@ def _emit_messages_json(
     messages: list[dict],
     workspace: str = "",
     with_names: bool = False,
+    with_blocks: bool = False,
 ) -> None:
     """Emit messages as a single JSON object on stdout."""
-    parsed = [_message_to_entry(client, m, workspace, with_names) for m in messages]
+    parsed = [
+        _message_to_entry(client, m, workspace, with_names, with_blocks)
+        for m in messages
+    ]
     click.echo(
         json.dumps({"channel": channel, "messages": parsed}, ensure_ascii=False)
     )
+
+
+@cli.command("auth-status", epilog="\b\nExamples:\n  slack-user auth-status\n  slack-user auth-status --json")
+@click.option("--json", "as_json", is_flag=True, help="Return credential metadata without secrets.")
+def auth_status(as_json: bool) -> None:
+    """Inspect vault synchronization. Example: auth-status --json."""
+    metadata = auth_broker("status") or {
+        "connector": "slack", "account": "default", "source": "unavailable",
+        "configured": False, "pending": False, "last_sync": None,
+    }
+    metadata["legacy_available"] = CONFIG_FILE.exists()
+    if CONFIG_FILE.with_suffix(".pending").exists():
+        metadata.update(source="pending", pending=True, configured=CONFIG_FILE.exists())
+    click.echo(json.dumps(metadata) if as_json else
+               f"{metadata['source']}; pending={metadata['pending']}; local={metadata['legacy_available']}")
+
+
+@cli.command("auth-sync", epilog="\b\nExamples:\n  slack-user auth-sync")
+def auth_sync() -> None:
+    """Retry pending vault sync or import local credentials. Example: auth-sync."""
+    # Broker pending data is newer than any compatibility copy.
+    config = vault_config()
+    if not config and CONFIG_FILE.exists():
+        config = json.loads(CONFIG_FILE.read_text())
+    if not config:
+        raise click.ClickException("No credentials available to synchronize; run `slack-user login`.")
+    metadata = auth_broker("save", config)
+    if not metadata:
+        raise click.ClickException("Credential broker unavailable; local login is preserved.")
+    if metadata.get("source") == "vault" and not metadata.get("pending"):
+        CONFIG_FILE.with_suffix(".pending").unlink(missing_ok=True)
+    click.echo(json.dumps(metadata))
+    if metadata.get("pending"):
+        raise click.exceptions.Exit(3)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """MCP tools preserve CLI boundaries and work through a real stdio connection."""
 
 import asyncio
@@ -6,9 +27,10 @@ import os
 import subprocess
 import sys
 
+import pytest
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters
-import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from one_conv import mcp_server
 
@@ -43,6 +65,21 @@ def test_read_keeps_unread_state(reader_stub):
     assert "--no-mark-read" in reader_stub[0][0]
 
 
+def test_ranked_search_passes_its_flag(reader_stub):
+    mcp_server.read_cli("local", "search", query="bridge reconnect", ranked=True)
+    assert "--ranked" in reader_stub[0][0]
+
+
+def test_semantic_search_passes_its_flag(reader_stub):
+    mcp_server.read_cli("local", "search", query="agent dies when the websocket drops", semantic=True)
+    assert "--semantic" in reader_stub[0][0]
+
+
+def test_semantic_search_waits_for_a_first_embedding(reader_stub):
+    mcp_server.read_cli("local", "search", query="agent dies when the websocket drops", semantic=True)
+    assert reader_stub[0][1]["timeout"] == 300
+
+
 def test_local_read_uses_thread(reader_stub):
     mcp_server.read_cli("local", "read", query="project", session="abc")
     assert reader_stub[0][0][4] == "thread"
@@ -53,7 +90,7 @@ def test_local_read_uses_thread(reader_stub):
     {"namespace": "local", "refresh": True}, {"session": "abc"},
 ])
 def test_invalid_request_is_rejected(fields):
-    with pytest.raises(ValueError):
+    with pytest.raises(ToolError):
         mcp_server.read_cli(**({"namespace": "cloud", "command": "chats"} | fields))
 
 
@@ -62,14 +99,14 @@ def test_reader_reports_timeout(monkeypatch):
         raise subprocess.TimeoutExpired("reader", 60)
 
     monkeypatch.setattr(mcp_server.subprocess, "run", run)
-    with pytest.raises(ValueError, match="timed out"):
+    with pytest.raises(ToolError, match="timed out"):
         mcp_server.read_cli("cloud", "chats")
 
 
 def test_reader_reports_cli_error(monkeypatch):
     monkeypatch.setattr(mcp_server.subprocess, "run", lambda *a, **kw:
                         subprocess.CompletedProcess(a, 1, "", "No conversation matches"))
-    with pytest.raises(ValueError, match="No conversation matches"):
+    with pytest.raises(ToolError, match="No conversation matches"):
         mcp_server.read_cli("cloud", "read", query="missing")
 
 
@@ -106,6 +143,7 @@ def test_stdio_discovers_tools(saved_history):
     assert {tool.name for tool in result.tools} == {
         "list_chats", "read_conversation", "search_conversations", "find_conversations", "list_accounts",
         "list_live_sessions", "send_message", "set_name", "join_topic", "list_topics",
+        "ack", "summarize", "open_block",
     }
 
 
@@ -133,7 +171,7 @@ def test_generated_config_starts_server():
         async with Client(StdioServerParameters(**config)) as client:
             return await client.list_tools()
 
-    assert len(asyncio.run(discover()).tools) == 10
+    assert len(asyncio.run(discover()).tools) == 13
 
 
 def test_stdio_send_message_names_codex_caller_from_tool_meta(tmp_path):
@@ -170,3 +208,17 @@ def test_stdio_send_message_fyi_leaves_notice(tmp_path):
 
     asyncio.run(send())
     assert json.loads((live / "fyi" / "omp-o1.jsonl").read_text())["from"] == "codex:t-123"
+
+
+def call_in_process(tool, arguments):
+    """Call one tool on an in-process server, as a client sees it: (is_error, text)."""
+    async def call():
+        async with Client(mcp_server.create_server()) as client:
+            result = await client.call_tool(tool, arguments)
+            return result.is_error, " ".join(getattr(item, "text", "") for item in result.content)
+    return asyncio.run(call())
+
+
+def test_a_refused_tool_call_tells_the_agent_why():
+    _, text = call_in_process("ack", {"message_id": "a" * 32})
+    assert text.startswith("Error executing tool ack: ")

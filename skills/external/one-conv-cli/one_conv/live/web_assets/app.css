@@ -1,5 +1,7 @@
 /* A conversation-first workspace with persistent navigation and a human composer. */
 :root {
+  --inset-top: env(safe-area-inset-top, 0px);
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
   color-scheme: light;
   --frame: #3a103e;
   --rail: #441448;
@@ -160,17 +162,8 @@ body {
 }
 .field-grid textarea { resize: vertical; min-height: 90px; }
 .full-field { grid-column: 1 / -1; }
-.channel-members { border: 0; padding: 0; margin: 0; min-width: 0; min-inline-size: 0; display: grid; gap: 7px; }
-.channel-members legend { color: var(--text); font-weight: 600; font-size: 12px; margin-bottom: 7px; }
-.channel-members label { display: flex; align-items: flex-start; gap: 8px; font-weight: 500; min-width: 0; }
-.channel-members span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-/* Checkboxes keep their own size instead of the form's full-width text inputs. */
-.field-grid .channel-members input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; min-width: 18px; margin: 1px 0 0; padding: 0; }
+.field-grid .optional { color: var(--muted); font-weight: 500; }
 .staff-dialog .primary-button { width: 100%; }
-.worker-jobs { display: grid; gap: 10px; margin-top: 22px; }
-.worker-job { display: flex; gap: 10px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line); }
-.worker-job > div { min-width: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; overflow-wrap: anywhere; }
-.worker-job small { color: var(--muted); font-size: 12px; }
 .job-detail { font-size: 11px; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
 .costs-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .rate-card { min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
@@ -185,10 +178,58 @@ body {
 .usage-row small { color: var(--muted); }
 .cost-empty { line-height: 1.6; padding: 20px; background: var(--soft); border-radius: 12px; }
 .device-dialog .secondary-button { margin-top: 18px; }
-@media (display-mode: standalone) {
-  .topbar { padding-top: env(safe-area-inset-top); height: calc(46px + env(safe-area-inset-top)); }
-  .workspace { height: calc(100dvh - 46px - env(safe-area-inset-top)); padding-bottom: max(5px, env(safe-area-inset-bottom)); }
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
 }
+.message-image {
+  display: block;
+  max-width: min(100%, 360px);
+  max-height: 320px;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e6dde9);
+}
+.attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 10px 0;
+}
+.attachment-chip {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  width: 72px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.attachment-chip.uploading .attachment-thumb { opacity: 0.5; }
+.attachment-chip.failed .attachment-state { color: #b3261e; }
+.attachment-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e6dde9);
+}
+.attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--surface);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+.attachment-remove .icon { width: 10px; height: 10px; }
 @media (max-width: 760px) {
   .topbar-end { gap: 6px !important; }
   .topbar-end .top-avatar { display: none; }
@@ -668,6 +709,29 @@ button {
   font-size: 10px;
   font-weight: 400;
 }
+.conversation-row.unread {
+  color: var(--selected-text);
+  font-weight: 750;
+}
+.conversation-row.unread .hash {
+  color: inherit;
+}
+.row-unread {
+  margin-left: auto;
+  flex: none;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.row-unread + .row-presence {
+  margin-left: 6px;
+}
 .row-presence {
   width: 7px;
   height: 7px;
@@ -682,7 +746,6 @@ button {
 }
 .row-presence.busy { background: #7a87ca; }
 .row-presence.unverified { background: #b78538; }
-#offline-people .conversation-row { padding-top: 7px; padding-bottom: 7px; }
 .agent-state { font-size: 10px; }
 .conversation-response { padding: 9px 24px; color: var(--muted); background: var(--hover); font-size: 11px; line-height: 1.5; }
 .message-delivery { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
@@ -865,6 +928,18 @@ button {
 .avatar.cursor {
   background: #e6eaf0;
   color: #526475;
+}
+/* A harness logo fills most of the tile on a light ground, at every avatar size. */
+.avatar.has-logo {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.avatar.cursor.has-logo {
+  color: #111;
+}
+.harness-logo {
+  width: 64%;
+  height: 64%;
 }
 .avatar.human-avatar {
   background: #f4dfcf;
@@ -1049,6 +1124,59 @@ button {
 .message-body li {
   padding-left: 3px;
 }
+.message-body ol {
+  margin: 4px 0 7px;
+  padding-left: 22px;
+}
+.message-body ul ul,
+.message-body ol ol,
+.message-body ul ol,
+.message-body ol ul {
+  margin: 2px 0 2px;
+}
+.message-body h3,
+.message-body h4,
+.message-body h5,
+.message-body h6 {
+  margin: 10px 0 4px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.message-body h3 { font-size: 16px; }
+.message-body h4 { font-size: 15px; }
+.message-body h5,
+.message-body h6 { font-size: 14px; }
+.message-body blockquote {
+  margin: 4px 0 7px;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--selected);
+  color: var(--muted);
+}
+.message-body hr {
+  border: 0;
+  border-top: 1px solid var(--line, #e6dde9);
+  margin: 10px 0;
+}
+.message-body table {
+  border-collapse: collapse;
+  margin: 6px 0 8px;
+  font-size: 13px;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.message-body th,
+.message-body td {
+  border: 1px solid var(--line, #e6dde9);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.message-body th {
+  background: var(--hover);
+  font-weight: 650;
+}
+.message-body s { opacity: 0.7; }
 .message-body code {
   font:
     11px/1.5 ui-monospace,
@@ -1422,6 +1550,14 @@ button {
 .member-row .row-presence {
   margin-left: auto;
 }
+/* Sits under its member row, aligned with the text past the avatar. */
+.stop-agent {
+  margin: 0 18px 12px 52px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.stop-agent.armed { background: #b3261e; color: white; }
+.stop-agent:disabled { opacity: 0.6; }
 .message-dialog {
   width: min(480px, calc(100vw - 32px));
   padding: 0;
@@ -1537,6 +1673,20 @@ button {
 }
 .mobile-menu {
   display: none;
+}
+.mobile-menu {
+  position: relative;
+}
+.mobile-menu.has-unread::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
 }
 .search-summary {
   display: flex;
@@ -1689,7 +1839,7 @@ button {
   .members-toggle {
     font-size: 10px;
   }
-  .conversation-actions > .icon-button {
+  .conversation-actions > .icon-button:not(.archive-channel) {
     display: none;
   }
   .conversation-intro {
@@ -1736,6 +1886,20 @@ button {
   .composer-area {
     padding: 8px 12px 10px;
   }
+  /* At rest the composer is one input line; its toolbar and controls appear while it is in use. */
+  .composer.compact .formatting-toolbar,
+  .composer.compact .composer-bottom,
+  .composer.compact #attachments {
+    display: none;
+  }
+  .composer.compact textarea {
+    min-height: 40px;
+    height: 40px !important;
+    padding: 10px 14px;
+  }
+  .composer.compact + .composer-feedback {
+    display: none;
+  }
   /* iPhone keeps the page scale when focusing controls with readable native-sized text. */
   input,
   textarea,
@@ -1771,6 +1935,31 @@ button {
   .notice {
     padding: 9px 16px;
   }
+  /* With the keyboard open the app fills exactly the visible area, in the browser and installed alike,
+     so the composer sits right above the keyboard. Its specificity beats the installed rules below. */
+  html.keyboard-open body {
+    position: fixed;
+    top: var(--viewport-top, 0px);
+    bottom: auto;
+    left: 0;
+    right: 0;
+    height: var(--viewport-height, 100dvh);
+    display: flex;
+    flex-direction: column;
+  }
+  html.keyboard-open .topbar {
+    flex: none;
+  }
+  html.keyboard-open .workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    padding-bottom: 0;
+  }
+  /* The keyboard covers the home indicator, so the composer sits flush above it. */
+  html.keyboard-open .composer-area {
+    padding-bottom: 10px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -1792,12 +1981,6 @@ button {
 .staff-dialog .dialog-heading h2,
 .costs-dialog .dialog-heading h2,
 .device-dialog .dialog-heading h2 { padding-right: 32px; }
-.job-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.pool-job { padding-top: 16px; border-top: 1px solid var(--border); }
-@media (display-mode: standalone) {
-  .topbar { padding-top: env(safe-area-inset-top); height: calc(46px + env(safe-area-inset-top)); }
-  .workspace { height: calc(100dvh - 46px - env(safe-area-inset-top)); padding-bottom: max(5px, env(safe-area-inset-bottom)); }
-}
 /* A send this tab started: honest states until the workspace's own copy replaces it. */
 .message-delivery.local-sending { color: var(--muted); font-style: italic; }
 .message-delivery.local-uncertain,
@@ -1811,3 +1994,204 @@ button {
   color: inherit;
   font-size: 11px;
 }
+/* A human request's owner and progress, under its bubble; long names and notes wrap inside it. */
+/* Who read a human post: one check mark per session that acked it. */
+.message-acks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.message-ack { color: #2f8f5b; font-weight: 600; overflow-wrap: anywhere; }
+.message-acks.starting { font-style: italic; }
+/* A forwarded Claude Code question: per question, its options as radio buttons or checkboxes and
+   "Other" for a typed answer, sent back to the asking agent. */
+.ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+.ask-question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input);
+}
+.ask-header {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.ask-text {
+  margin: 0 0 2px;
+  font-weight: 600;
+}
+.ask-option {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: flex-start;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ask-option:has(input:checked) {
+  background: #f1e7f4;
+}
+.ask-option input[type="radio"],
+.ask-option input[type="checkbox"] {
+  margin: 3px 0 0;
+  flex: none;
+}
+.ask-choice {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.ask-description {
+  color: var(--muted);
+  font-size: 12px;
+}
+.ask-other {
+  flex: 1 1 100%;
+  margin-left: 22px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.ask-send {
+  align-self: flex-start;
+}
+/* A question its agent no longer waits on: kept for reading, not for answering. */
+.ask-options.closed {
+  opacity: 0.6;
+}
+/* "Name is working…" above the composer while a member's bridge reports it busy. */
+.working {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 2px 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.working > span:last-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.working-dots {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+}
+.working-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: working-pulse 1.2s infinite ease-in-out;
+}
+.working-dots span:nth-child(2) { animation-delay: 0.2s; }
+.working-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes working-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .working-dots span { animation: none; opacity: 0.6; }
+}
+/* A routine's row reads its schedule and next run; a paused one is dimmed, a failed one marked. */
+#routines button.paused { opacity: 0.6; }
+.routine-error { color: var(--red, #b42318); }
+.routine-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+/* Archive or bring back the open channel; agents still read archived channels. */
+.archive-channel {
+  border: 0;
+  cursor: pointer;
+}
+.archive-channel.archived {
+  color: var(--text);
+  background: var(--hover);
+}
+/* Installed on a phone's home screen. Last in the sheet, so it wins over the phone rules above: the
+   page is a fixed column that never scrolls; the top bar extends under the status bar and keeps
+   its controls below it; the workspace fills what remains and stops above the home indicator; the
+   keyboard, measured from the visual viewport, raises the bottom edge rather than pushing the page. */
+@media (display-mode: standalone) {
+  html, body { height: 100%; overscroll-behavior: none; }
+  body {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    /* iOS sizes an installed app's page (100%, bottom: 0) short of the screen by the status bar it draws
+       over, leaving a band at the bottom; the large viewport height is the whole screen. */
+    bottom: auto;
+    height: calc(100vh - var(--keyboard-height, 0px));
+    height: calc(100lvh - var(--keyboard-height, 0px));
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+  .topbar {
+    flex: none;
+    padding-top: env(safe-area-inset-top);
+    height: calc(46px + env(safe-area-inset-top));
+  }
+  .workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    padding-bottom: 0;
+  }
+  /* The conversation runs to the screen's bottom edge; the composer keeps clear of the home indicator. */
+  .conversation {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .composer-area {
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .sidebar,
+  .sidebar-open .sidebar-overlay,
+  .details {
+    top: calc(46px + env(safe-area-inset-top));
+  }
+}
+
+.row-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  display: grid;
+}
+.row-menu-item {
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row-menu-item:hover { background: var(--hover); }
+.row-menu-item.danger { color: #b3261e; }
+.row-menu-item.armed { background: #b3261e; color: white; }

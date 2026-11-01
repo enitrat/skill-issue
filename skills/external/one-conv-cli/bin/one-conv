@@ -1,13 +1,17 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12"
 # dependencies = [
 #     "click==8.3.3",
 #     "curl_cffi==0.13.0",
 #     "pycryptodome==3.23.0",
 #     "mcp==2.2.0",
 #     "websockets==17.2",
+#     "numpy==2.5.4",
 # ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
 # ///
 """Read your own local Claude Code / Codex CLI / Cursor / Oh My Pi conversation history.
 
@@ -118,7 +122,7 @@ CLOUD_SOURCES = ("claude-chat", "codex-cloud", "cowork-cloud")
 SOURCES = ("claude", "codex", "cursor", "cursor-cli", "omp", "chatgpt", "corpus", *CLOUD_SOURCES)
 
 # Resolve the checkout behind the launcher symlink for the shared provider package.
-_PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+_PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
 
@@ -361,26 +365,27 @@ def _clean_text(text: str) -> str:
     return text.strip()
 
 
+# A session read to take it over needs every action whole; only a long tool output is cut, in its middle,
+# keeping its start and its end (where errors land).
+TOOL_RESULT_CHARS = 4000
+
+
 def _tool_summary(block: dict) -> str:
-    name = block.get("name", "?")
-    tool_input = block.get("input", {})
-    snippet = json.dumps(tool_input, ensure_ascii=False)
-    if len(snippet) > 120:
-        snippet = snippet[:117] + "..."
-    return f"→ {name}({snippet})"
+    return f"→ {block.get('name', '?')}({json.dumps(block.get('input', {}), ensure_ascii=False)})"
 
 
 def _tool_result_summary(block: dict) -> str:
     content = block.get("content")
     if isinstance(content, list):
-        text = " ".join(
+        text = "\n".join(
             b.get("text", "") for b in content if isinstance(b, dict) and b.get("text")
         )
     else:
         text = str(content or "")
-    text = text.replace("\n", " ").strip()
-    if len(text) > 200:
-        text = text[:197] + "..."
+    text = text.strip()
+    if len(text) > TOOL_RESULT_CHARS:
+        half = TOOL_RESULT_CHARS // 2
+        text = f"{text[:half]}\n[… {len(text) - 2 * half} characters cut …]\n{text[-half:]}"
     return f"← {text}"
 
 
@@ -826,7 +831,7 @@ def _cursor_iter_turns(composer_id: str) -> list[Turn]:
             return []
         try:
             data = json.loads(row[0])
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):  # TypeError: a NULL row
             return []
         turns = []
         for bh in data.get("fullConversationHeadersOnly") or []:
@@ -841,7 +846,7 @@ def _cursor_iter_turns(composer_id: str) -> list[Turn]:
                 continue
             try:
                 bubble = json.loads(brow[0])
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):  # TypeError: a NULL bubble row
                 continue
             role = {1: "user", 2: "assistant"}.get(bubble.get("type"))
             if role is None:
@@ -855,7 +860,7 @@ def _cursor_iter_turns(composer_id: str) -> list[Turn]:
                     blocks.append({"type": "thinking", "thinking": tb["text"]})
             for tr in bubble.get("toolResults") or []:
                 if isinstance(tr, dict):
-                    blocks.append({"type": "tool_result", "content": json.dumps(tr, ensure_ascii=False)[:500]})
+                    blocks.append({"type": "tool_result", "content": json.dumps(tr, ensure_ascii=False)})
             if not blocks:
                 continue
             turns.append(Turn(ts=bubble.get("createdAt") or "", role=role, blocks=blocks))
@@ -878,7 +883,7 @@ def _cursor_session_tokens(composer_id: str) -> int | None:
             return None
         try:
             data = json.loads(row[0])
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):  # TypeError: a NULL row
             return None
         total = 0
         found = False
@@ -894,7 +899,7 @@ def _cursor_session_tokens(composer_id: str) -> int | None:
                 continue
             try:
                 bubble = json.loads(brow[0])
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):  # TypeError: a NULL bubble row
                 continue
             token_count = bubble.get("tokenCount")
             if not token_count:
@@ -1284,6 +1289,9 @@ CHATGPT_COOKIE_SOURCES = [
     ("edge", "~/Library/Application Support/Microsoft Edge/*/Cookies", "Microsoft Edge Safe Storage"),
     ("chromium", "~/Library/Application Support/Chromium/*/Cookies", "Chromium Safe Storage"),
 ]
+# Profiles `connect --login` opens, as <root>/<browser label>/<login name>/. Each holds a
+# login of its own, so signing out in an everyday profile never revokes it.
+LOGIN_PROFILES_DIR = Path(os.environ.get("ONE_CONV_LOGIN_PROFILES", str(STATE_DIR / "browser-profiles")))
 
 # ChatGPT wraps inline render directives in private-use codepoints:
 # <kind><json>. They carry no prose, so they're stripped.
@@ -1399,7 +1407,11 @@ def _chatgpt_cookie_jars(domain="chatgpt.com", required_cookie="__Secure-next-au
         browser_filter = (context.obj or {}).get("browser_filter") if context else None
         if browser_filter and label != browser_filter:
             continue
-        for store in sorted(glob.glob(str(Path(pattern).expanduser()))):
+        stores = [(store, f"{label}/{Path(store).parent.name}")
+                  for store in sorted(glob.glob(str(Path(pattern).expanduser())))]
+        stores += [(str(store), f"{label}/one-conv/{store.parents[1].name}")
+                   for store in sorted(LOGIN_PROFILES_DIR.glob(f"{label}/*/Default/Cookies"))]
+        for store, profile in stores:
             if service not in keys:
                 keys[service] = _chatgpt_keychain_key(service)
             key = keys[service]
@@ -1430,7 +1442,7 @@ def _chatgpt_cookie_jars(domain="chatgpt.com", required_cookie="__Secure-next-au
                 for k in chunks:
                     jar.pop(k)
             if jar.get(required_cookie):
-                yield f"{label}/{Path(store).parent.name}", jar
+                yield profile, jar
 
 
 def _session_vault():
@@ -1458,7 +1470,11 @@ def _claude_accounts():
     def expired(profile, cookies):
         entry = saved.get(cookies.get("sessionKey"))
         if entry is None:
-            log.warning("The Claude login in %s is signed out; sign in again on claude.ai", profile)
+            if "/one-conv/" in profile:
+                log.warning("The one-conv Claude login %s is signed out; sign in again with: "
+                            "one-conv cloud claude connect --login --profile %s", profile, profile.rsplit("/", 1)[1])
+            else:
+                log.warning("The Claude login in %s is signed out; sign in again on claude.ai", profile)
             return
         # Signing out on claude.ai revokes the session server-side, so the saved copy is dead too.
         vault.remove("claude", entry.identity)
@@ -1512,7 +1528,8 @@ def _chatgpt_authenticate(jar: dict[str, str]) -> dict | None:
         return None
     if payload.get("error"):
         # A stale token comes back with RefreshAccessTokenError and is refused by every API route.
-        log.warning("A ChatGPT session has expired; sign in again with: one-conv cloud chatgpt connect --login")
+        log.warning("A ChatGPT session has expired; sign in to chatgpt.com in Chrome again, "
+                    "or renew a one-conv login with: one-conv cloud chatgpt connect --login")
         return None
     account = payload.get("account") or {}
     session.headers["Authorization"] = f"Bearer {token}"
@@ -1970,156 +1987,7 @@ def _chatgpt_epoch(value) -> float:
         return 0.0
 
 
-# ---------------------------------------------------------------------------
-# Shared corpus (other machines + dedicated mouths)
-# ---------------------------------------------------------------------------
-
-_MOUTH_SOURCES = {"whatsapp", "telegram", "shortcut", "voicememo", "iphone", "brain", "chatgpt", "memo"}
 _THIS_MACHINE = socket.gethostname().split(".")[0]
-
-
-def _corpus_roots() -> list[Path]:
-    env = os.environ.get("ONE_CONV_CORPUS") or os.environ.get("AGENT_CONV_CORPUS")
-    if env:
-        return [Path(part).expanduser() for part in env.split(":") if part.strip()]
-    corpus = Path.home() / "Documents" / "corpus"
-    local = Path.home() / "Documents" / "Brain" / "log"
-    if corpus.is_dir():
-        return [corpus]
-    if local.is_dir():
-        return [local]
-    return []
-
-
-def _corpus_should_include(doc: dict) -> bool:
-    """Skip this machine's local agent sessions — those are read live."""
-    source = doc.get("source") or ""
-    machine = doc.get("machine") or ""
-    if source in _MOUTH_SOURCES or source == "corpus":
-        return True
-    return machine != _THIS_MACHINE
-
-
-def _corpus_load(path: Path) -> dict | None:
-    try:
-        doc = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-    if not isinstance(doc, dict) or "turns" not in doc or "session" not in doc:
-        return None
-    if not _corpus_should_include(doc):
-        return None
-    return doc
-
-
-def _corpus_project_index() -> dict[str, list[SessionHandle]]:
-    """Scan once per CLI invocation without retaining complete transcripts in memory."""
-    context = click.get_current_context(silent=True)
-    if context is not None and "corpus_index" in context.meta:
-        return context.meta["corpus_index"]
-    grouped: dict[str, list[SessionHandle]] = {}
-    for root in _corpus_roots():
-        for path in root.rglob("*.json"):
-            if path.name.startswith("."):
-                continue
-            doc = _corpus_load(path)
-            if doc is None:
-                continue
-            cwd = doc.get("cwd") or "brain"
-            last = doc.get("last") or doc.get("started") or ""
-            try:
-                mtime = datetime.fromisoformat(last).timestamp() if last else path.stat().st_mtime
-            except ValueError:
-                mtime = path.stat().st_mtime
-            grouped.setdefault(cwd, []).append(
-                SessionHandle(
-                    source="corpus",
-                    uuid=str(doc.get("session")),
-                    project_cwd=cwd,
-                    mtime=float(doc.get("mtime") or mtime),
-                    path=path,
-                    title_hint=doc.get("title"),
-                )
-            )
-    for handles in grouped.values():
-        handles.sort(key=lambda h: h.mtime, reverse=True)
-    if context is not None:
-        context.meta["corpus_index"] = grouped
-    return grouped
-
-
-
-def _corpus_iter_projects():
-    for cwd in _corpus_project_index():
-        yield ProjectHandle(source="corpus", cwd=cwd, key=cwd)
-
-
-def _corpus_project_sessions(project: ProjectHandle) -> list[SessionHandle]:
-    return _corpus_project_index().get(project.key, [])
-
-
-def _corpus_iter_turns(path: Path) -> list[Turn]:
-    try:
-        doc = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return []
-    turns = []
-    for row in doc.get("turns") or []:
-        text = row.get("text") or ""
-        if not text:
-            continue
-        turns.append(Turn(ts=row.get("ts") or "", role=row.get("role") or "user", blocks=[{"type": "text", "text": text}]))
-    return turns
-
-
-def _append_log_turn(mouth: str, role: str, text: str, machine: str | None = None) -> Path:
-    """Write one turn into the shared brain session (same schema as export)."""
-    text = (text or "").strip()
-    if not text:
-        raise click.ClickException("empty turn")
-    if role not in ("user", "assistant"):
-        raise click.ClickException(f"bad role {role!r}")
-    support = Path(os.environ.get("BRAIN_SUPPORT", str(Path.home() / "Library/Application Support/Brain")))
-    config_path = support / "runtime.json"
-    if config_path.exists():
-        config = json.loads(config_path.read_text())
-        if config.get("mode") == "active" and config.get("runtime"):
-            # The installed engine journals the turn before attempting cross-host sync.
-            result = subprocess.run([config["runtime"], "append-stdin"],
-                input=json.dumps({"mouth": mouth, "role": role, "text": text, "machine": machine}),
-                capture_output=True, text=True, timeout=60)
-            if result.returncode:
-                raise click.ClickException("Brain could not confirm the append; check its saved-input status before retrying.")
-            return Path(json.loads(result.stdout)["path"])
-    machine = machine or _THIS_MACHINE
-    roots = _corpus_roots()
-    root = roots[0] if roots else Path.home() / "Documents" / "corpus"
-    path = root / machine / "brain" / "brain" / "brain.json"
-    if path.exists():
-        try:
-            doc = json.loads(path.read_text())
-        except (OSError, ValueError):
-            doc = {}
-    else:
-        doc = {}
-    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    turns = list(doc.get("turns") or [])
-    turns.append({"ts": now, "role": role, "text": text, "mouth": mouth})
-    doc.update({
-        "source": "brain",
-        "session": "brain",
-        "machine": machine,
-        "cwd": "brain",
-        "title": doc.get("title") or "brain",
-        "author": "human",
-        "mtime": datetime.now(timezone.utc).timestamp(),
-        "started": doc.get("started") or now,
-        "last": now,
-        "turns": turns,
-    })
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n")
-    return path
 
 
 def _native_projects(sources: tuple[str, ...]):
@@ -2137,12 +2005,10 @@ def _native_projects(sources: tuple[str, ...]):
         yield from _omp_iter_projects()
     if "chatgpt" in sources:
         yield from _chatgpt_iter_projects()
-    if "corpus" in sources:
-        yield from _corpus_iter_projects()
     yield from _cloud_projects(sources)
 
 
-ARCHIVE_SYNC_SOURCES = tuple(source for source in SOURCES if source != "corpus")  # Corpus holds other machines' exports.
+ARCHIVE_SYNC_SOURCES = tuple(source for source in SOURCES if source != "corpus")  # Corpus rows are imported copies, never native.
 
 
 def _archive_state():
@@ -2210,14 +2076,17 @@ def _archive_sync_health(state, minutes):
     instead of stopping the user's command.
     """
     from one_conv.archive import SYNC_LOG
+    from one_conv.live.model import live_home
+    # An explicit ONE_CONV_ARCHIVE_URL syncs from commands; otherwise the live bridge runs it and logs there.
+    log_path = STATE_DIR / SYNC_LOG if os.environ.get("ONE_CONV_ARCHIVE_URL") else live_home() / "bridge" / SYNC_LOG
     if state["error"] or state["failed"]:
         detail = state["error"] or "; ".join(state["failures"]) or "no details recorded"
         finished = (datetime.fromtimestamp(state["finished"]).strftime("%Y-%m-%d %H:%M")
                     if state["finished"] is not None else "an unknown time")
-        log.warning("Archive sync at %s failed: %s (log: %s)", finished, detail, STATE_DIR / SYNC_LOG)
+        log.warning("Archive sync at %s failed: %s (log: %s)", finished, detail, log_path)
     elif minutes > 0 and (state["succeeded"] or state["requested"]) is not None \
             and time.time() - (state["succeeded"] or state["requested"]) > 86400:
-        log.warning("Archive sync has not completed in the last day (log: %s)", STATE_DIR / SYNC_LOG)
+        log.warning("Archive sync has not completed in the last day (log: %s)", log_path)
 
 
 def _archive_sync_in_background():
@@ -2229,9 +2098,12 @@ def _archive_sync_in_background():
     raw = read_json(state_path)
     state = sync_record(raw)
     _archive_sync_health(state, minutes)
+    # The live bridge (`one-conv live serve`) syncs its hub's archive; commands start only an explicit one.
+    if not os.environ.get("ONE_CONV_ARCHIVE_URL"):
+        return
     if minutes <= 0 or time.time() - (state["started"] or 0) < minutes * 60:
         return
-    script = Path(__file__).resolve().parents[1] / "scripts" / "archive-sync.py"
+    script = Path(__file__).resolve().parent / "scripts" / "archive-sync.py"
     if not script.is_file():
         log.warning("Could not start archive sync: %s is missing", script)
         return
@@ -2283,7 +2155,15 @@ def _iter_all_projects(sources: tuple[str, ...]):
 
 
 def _cloud_documents():
+    """(path, listing fields) of every saved cloud conversation, read once per command.
+
+    Each document holds a whole transcript; listing reads every one, so a command reads them only once.
+    """
+    context = click.get_current_context(silent=True)
+    if context is not None and "cloud_documents" in context.meta:
+        return context.meta["cloud_documents"]
     root = Path(os.environ.get("ONE_CONV_CLOUD_CACHE", str(Path.home() / ".cache/one-conv-cli/cloud")))
+    documents = []
     for path in root.glob("*/*.json"):
         if path.name.startswith("."):
             continue
@@ -2294,10 +2174,15 @@ def _cloud_documents():
         if (isinstance(document, dict) and isinstance(document.get("turns"), list)
                 and isinstance(document.get("cwd"), str) and isinstance(document.get("session"), str)
                 and document.get("source") in (*CLOUD_SOURCES, "chatgpt")):
-            yield path, document
+            documents.append((path, {field: document.get(field) for field in ("source", "cwd", "session", "title")}))
+    if context is not None:
+        context.meta["cloud_documents"] = documents
+    return documents
 
 
 def _cloud_projects(sources):
+    if not set(sources) & {*CLOUD_SOURCES, "chatgpt"}:
+        return
     seen = set()
     for _, document in _cloud_documents():
         source, cwd = document["source"], document["cwd"]
@@ -2333,8 +2218,6 @@ def _native_project_sessions(project: ProjectHandle) -> list[SessionHandle]:
         return _omp_project_sessions(project)
     if project.source == "chatgpt":
         return _chatgpt_project_sessions(project)
-    if project.source == "corpus":
-        return _corpus_project_sessions(project)
     return []
 
 
@@ -2356,6 +2239,95 @@ def _recency_order(handle: SessionHandle) -> tuple[float, tuple[str, str, str, s
     return handle.mtime, _record_identity(handle)
 
 
+def _archive_handle(row: dict) -> SessionHandle:
+    return SessionHandle(source=row["source"], uuid=row["session"], project_cwd=row["cwd"], mtime=row["mtime"],
+                         title_hint=row["summary"]["title"], unread_native=row["unread_native"], archive=row)
+
+
+# Live sessions are addressed NODE/harness:id across machines; a bare harness:id is this machine's.
+LIVE_ADDRESS = re.compile(r"(?:(?P<node>[a-z0-9][a-z0-9-]{0,31})/)?(?P<harness>claude|codex|omp|cursor):"
+                          r"(?P<session>[A-Za-z0-9][A-Za-z0-9._-]{0,127})")
+HARNESS_SOURCES = {"claude": ("claude",), "codex": ("codex",), "omp": ("omp",), "cursor": ("cursor", "cursor-cli")}
+SOURCE_HARNESS = {source: harness for harness, sources in HARNESS_SOURCES.items() for source in sources}
+
+
+def _this_node() -> str | None:
+    """This machine's node name on its live hub, read once per command; None without a hub."""
+    context = click.get_current_context(silent=True)
+    if context is not None and "this_node" in context.meta:
+        return context.meta["this_node"]
+    from one_conv.live import hubclient
+    try:
+        hub = hubclient.configured()
+    except hubclient.HubRefused:
+        hub = None
+    node = hub.node if hub else None
+    if context is not None:
+        context.meta["this_node"] = node
+    return node
+
+
+def _handle_address(handle: SessionHandle) -> str | None:
+    """The live address naming this conversation on every machine, or None for non-agent sources."""
+    from one_conv.archive import NODE_NAME
+    harness = SOURCE_HARNESS.get(handle.source)
+    if harness is None:
+        return None
+    node = handle.archive.get("origin") if handle.archive else _this_node()
+    if not (isinstance(node, str) and NODE_NAME.fullmatch(node)):
+        return f"{harness}:{handle.uuid}"  # No hub, or an archive copy uploaded under an installation ID.
+    return f"{node}/{harness}:{handle.uuid}"
+
+
+def _address_handle(address: str) -> SessionHandle:
+    """Resolve NODE/harness:id: native history when NODE is this machine, else the archive's copy from NODE."""
+    from one_conv.archive import NODE_NAME
+    match = LIVE_ADDRESS.fullmatch(address)
+    node, sources, session = match["node"], HARNESS_SOURCES[match["harness"]], match["session"]
+    here = _this_node()
+    origin = node or here
+    newest: dict[tuple[str, str, str, str], SessionHandle] = {}
+    if node is None or here is None or node == here:
+        for project in _native_projects(sources):
+            for handle in _native_project_sessions(project):
+                if handle.uuid.startswith(session):
+                    newest[_record_identity(handle)] = handle
+    archive = _archive_state()
+    for row in archive["rows"] if archive else ():
+        uploader = row.get("origin")
+        # A bare harness:id also covers copies uploaded under an installation ID rather than a node name.
+        owned = origin in (None, uploader) or (node is None and not NODE_NAME.fullmatch(str(uploader)))
+        if row["source"] in sources and row["session"].startswith(session) and owned:
+            handle = _archive_handle(row)
+            existing = newest.get(_record_identity(handle))
+            if not existing or existing.mtime < handle.mtime:
+                newest[_record_identity(handle)] = handle
+    if not newest:
+        where = "this machine" if node is None or node == here else f"the archive for node {node}"
+        hint = "" if archive else " (no archive is configured: run `one-conv live serve` against the controller)"
+        raise click.ClickException(f"No conversation {address} on {where}{hint}.")
+    if len({handle.uuid for handle in newest.values()}) > 1:
+        choices = ", ".join(sorted({handle.uuid for handle in newest.values()})[:10])
+        raise click.ClickException(f"Several conversations match {address}; use the full id: {choices}")
+    return max(newest.values(), key=_recency_order)
+
+
+def _around_index(turns: list[dict], around: str) -> int:
+    """The turn nearest an ISO time, or else the first whose text contains `around` (a live message id)."""
+    moment = _parse_iso_ts(around)
+    if moment is not None:
+        stamped = [(abs(stamp - moment), index) for index, turn in enumerate(turns)
+                   if (stamp := _parse_iso_ts(turn["ts"])) is not None]
+        if not stamped:
+            raise click.ClickException("This conversation's turns carry no timestamps; use text with --around.")
+        return min(stamped)[1]
+    needle = around.casefold()
+    for index, turn in enumerate(turns):
+        if needle in turn["text"].casefold():
+            return index
+    raise click.ClickException(f"No turn contains {around!r}; with --raw, tool calls and thinking are searched too.")
+
+
 def _project_sessions(project: ProjectHandle) -> list[SessionHandle]:
     native = _native_project_sessions(project)
     archive = _archive_state()
@@ -2365,9 +2337,7 @@ def _project_sessions(project: ProjectHandle) -> list[SessionHandle]:
     # Machines or reset state directories can upload one record under several origins; show its newest copy.
     by_record = {_record_identity(h): h for h in native}
     for row in rows:
-        handle = SessionHandle(source=row["source"], uuid=row["session"],
-            project_cwd=row["cwd"], mtime=row["mtime"], title_hint=row["summary"]["title"],
-            unread_native=row["unread_native"], archive=row)
+        handle = _archive_handle(row)
         existing = by_record.get(_record_identity(handle))
         if not existing or existing.mtime < handle.mtime:
             by_record[_record_identity(handle)] = handle
@@ -2399,8 +2369,6 @@ def _handle_iter_turns(handle: SessionHandle, include_subagents: bool) -> list[T
         return list(_omp_iter_turns(handle.path))
     if handle.source == "chatgpt":
         return _chatgpt_iter_turns(handle.path)
-    if handle.source == "corpus":
-        return list(_corpus_iter_turns(handle.path))
     return []
 
 
@@ -2509,7 +2477,9 @@ def _project_summary_handle(project: ProjectHandle, read_state: dict) -> dict:
     }
 
 
-def _resolve_projects(query: str, match: int, sources: tuple[str, ...]) -> list[ProjectHandle]:
+def _resolve_projects(
+    query: str, match: int, sources: tuple[str, ...], as_json: bool = False
+) -> list[ProjectHandle]:
     """Like `_resolve_one_project` but source-aware, and — this is the whole
     point of unifying — when a query exactly names one real directory that
     exists under more than one source, resolves to *all* of them at once
@@ -2540,10 +2510,23 @@ def _resolve_projects(query: str, match: int, sources: tuple[str, ...]) -> list[
     if len(candidates) == 1:
         return candidates
 
-    click.echo(f"Multiple projects match {query!r} — pick with --match N:", err=True)
     state = _load_read_state()
-    for i, p in enumerate(candidates[:20], 1):
-        summary = _project_summary_handle(p, state)
+    shown = [(i, p, _project_summary_handle(p, state)) for i, p in enumerate(candidates[:20], 1)]
+    if as_json:
+        # A --json caller parses stdout, so the ambiguity is reported there as an object.
+        click.echo(json.dumps({
+            "error": "ambiguous",
+            "query": query,
+            "total": len(candidates),
+            "matches": [
+                {"n": i, "source": p.source, "cwd": summary["cwd"], "threads": summary["threads"]}
+                for i, p, summary in shown
+            ],
+            "hint": "re-run with --match N",
+        }, ensure_ascii=False))
+        raise SystemExit(1)
+    click.echo(f"Multiple projects match {query!r} — pick with --match N:", err=True)
+    for i, p, summary in shown:
         click.echo(f"  {i}. [{p.source}] {summary['cwd']}  ({summary['threads']} threads)", err=True)
     raise SystemExit(1)
 
@@ -2720,7 +2703,7 @@ def _print_handle_list(cwd_label: str, handles: list[SessionHandle], as_json: bo
 # ---------------------------------------------------------------------------
 
 
-from one_conv.namespaces import NamespaceRoot, install as install_namespaces, selected_sources
+from one_conv.namespaces import NamespaceRoot, SourceChoice, install as install_namespaces, selected_sources
 
 
 @click.group(cls=NamespaceRoot, context_settings={"help_option_names": ["-h", "--help"]},
@@ -2735,12 +2718,12 @@ def cli() -> None:
 _SOURCE_OPTION = click.option(
     "--source",
     "source_filter",
-    type=click.Choice(SOURCES),
+    type=SourceChoice(SOURCES),
     help="Restrict to one source (default: claude + codex + cursor + cursor-cli + omp + chatgpt, all at once).",
 )
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv chats --limit 10\n  one-conv chats --source codex --json")
 @_SOURCE_OPTION
 @click.option("--limit", default=30, help="Number of projects to list.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
@@ -2790,7 +2773,7 @@ def chats(source_filter: str | None, limit: int, as_json: bool, conversations: b
         click.echo(f"{p['last_active']}  [{p['source']}]  {p['cwd']}  ({p['threads']} threads{unread})")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv read PROJECT --source claude --json\n  one-conv read PROJECT --expand --limit 2")
 @click.argument("query")
 @_SOURCE_OPTION
 @click.option("--expand", is_flag=True, help="Show every thread's full content instead of just its anchor.")
@@ -2824,7 +2807,7 @@ def read(
     `thread QUERY` (Slack's `thread <channel> <ts>`), not this command.
     """
     sources = selected_sources(source_filter, SOURCES)
-    projects = _resolve_projects(query, match, sources)
+    projects = _resolve_projects(query, match, sources, as_json)
     sessions = _all_sessions_for(projects)
     session_subset = sessions[:limit] if limit else sessions
     show_source = len({p.source for p in projects}) > 1 or len(sources) > 1
@@ -2860,13 +2843,16 @@ def read(
             click.echo(f"{_local_ts(m['ts'])}  {m['role']}: {m['text']}\n")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv thread PROJECT --source claude --no-mark-read --json\n  one-conv thread PROJECT --around 2026-10-27T10:00:00Z --context 3")
 @click.argument("query")
 @_SOURCE_OPTION
 @click.option("--session", "session_uuid", help="Read exactly this thread in full (session UUID or prefix).")
 @click.option("--nth", default=1, help="Which thread to read, 1 = most recent (default).")
 @click.option("--match", default=0, help="Pick the Nth matching project (1-based).")
 @click.option("--limit", default=0, help="Only show the last N turns (0 = all).")
+@click.option("--around", help="Center on the turn nearest this ISO time, or the first turn containing this text (e.g. a live message id).")
+@click.option("--context", "context_turns", default=5, show_default=True, type=click.IntRange(min=0),
+              help="With --around: turns shown before and after it.")
 @click.option("--raw", is_flag=True, help="Include thinking blocks and tool calls/results.")
 @click.option("--include-subagents", is_flag=True, help="Include forked subagent turns (claude only).")
 @click.option("--no-mark-read", is_flag=True, help="Don't mark this thread as read.")
@@ -2883,6 +2869,8 @@ def thread(
     no_mark_read: bool,
     as_json: bool,
     direct_query: bool = False,
+    around: str | None = None,
+    context_turns: int = 5,
 ) -> None:
     """Read one thread in full, from the project matching QUERY — Slack's
     `thread <channel> <ts>`, with a UUID/--nth position standing in for
@@ -2894,9 +2882,22 @@ def thread(
     Defaults to the most recently active thread; pick another with --nth
     (2 = the one before, ...) or target an exact --session UUID. Marks it
     read (see `unread`) unless --no-mark-read is passed.
+
+    QUERY may instead be a live address, NODE/harness:id (harness claude,
+    codex, omp or cursor), as `one-conv live ls` and message envelopes show
+    it: read from this machine's history when NODE is this machine, and from
+    the live hub's archive otherwise. `--around` narrows the output to the
+    turns around a time or a message.
     """
     sources = selected_sources(source_filter, SOURCES)
-    if direct_query:
+    if around is not None and limit:
+        raise click.UsageError("--around picks its own window; drop --limit.")
+    address_match = None if direct_query else LIVE_ADDRESS.fullmatch(query)
+    if address_match and session_uuid:
+        raise click.UsageError("A live address names one conversation; drop --session.")
+    if address_match:
+        handle = _address_handle(query)
+    elif direct_query:
         sessions = _all_sessions_for(list(_iter_all_projects(sources)))
         # Displayed ID prefixes resolve before titles, independent of account groups.
         matches = [handle for handle in sessions if handle.uuid.startswith(query)]
@@ -2911,12 +2912,18 @@ def thread(
             raise click.ClickException(f"Several conversations match {query!r}; use a longer ID: {choices}")
         handle = matches[0]
     else:
-        projects = _resolve_projects(query, match, sources)
+        projects = _resolve_projects(query, match, sources, as_json)
         sessions = _all_sessions_for(projects)
         handle = _pick_session_handle(sessions, session_uuid, nth)
     out = _handle_rendered_turns(handle, raw, include_subagents, limit)
+    anchor = None
+    if around is not None:
+        anchor = _around_index(out, around)
+        start = max(0, anchor - context_turns)
+        out, anchor = out[start:anchor + context_turns + 1], anchor - start
     title = _handle_title(handle)
     tokens = _handle_token_total(handle)
+    address = _handle_address(handle)
 
     if not no_mark_read:
         state = _load_read_state()
@@ -2924,22 +2931,25 @@ def thread(
         _save_read_state(state)
 
     if as_json:
-        click.echo(json.dumps(
-            {"source": handle.source, "session": handle.uuid, "cwd": handle.project_cwd, "title": title, "tokens": tokens, "turns": out},
-            ensure_ascii=False,
-        ))
+        document = {"source": handle.source, "session": handle.uuid, "cwd": handle.project_cwd, "title": title,
+                    "tokens": tokens, "turns": out}
+        if address:
+            document["address"] = address
+        if anchor is not None:
+            document["anchor"] = anchor  # Index in `turns` of the turn --around named.
+        click.echo(json.dumps(document, ensure_ascii=False))
         return
-    click.echo(f"# [{handle.source}] {handle.project_cwd} — thread {handle.uuid} — {title} — {len(out)} turns, {_format_tokens(tokens)} tok\n")
-    for m in out:
-        click.echo(f"{_local_ts(m['ts'])}  {m['role']}: {m['text']}\n")
+    label = f" — {address}" if address else ""
+    click.echo(f"# [{handle.source}] {handle.project_cwd} — thread {handle.uuid}{label} — {title} — {len(out)} turns, {_format_tokens(tokens)} tok\n")
+    for index, m in enumerate(out):
+        marker = ">> " if index == anchor else ""
+        click.echo(f"{marker}{_local_ts(m['ts'])}  {m['role']}: {m['text']}\n")
 
 
-# --- export: the conversation corpus ------------------------------------------
+# --- export: text-only session snapshots for `tune` ----------------------------
 #
 # Every session, every source, as one small JSON file of user/assistant text:
-# what was said and answered, never tool output. That is 2% of the raw logs
-# and is what "my conversations, everywhere" needs: a private git repo synced
-# from each machine, readable by this CLI or by an agent looking for context.
+# what was said and answered, never tool output.
 
 # Token-shaped strings that tool output leaks into transcripts. Each pattern is
 # replaced by a marker so a transcript can never re-leak a credential.
@@ -3012,33 +3022,6 @@ def _export_all(out_root: Path, machine: str, sources: tuple[str, ...], cutoff: 
     return written, skipped
 
 
-@cli.command()
-@click.option("--out", "out_dir", required=True, help="Root of the corpus checkout, e.g. ~/Documents/corpus.")
-@click.option("--machine", default=None, help="Folder name for this machine (default: hostname).")
-@click.option("--source", "source_filter", type=click.Choice(SOURCES), default=None, help="Only this backend.")
-@click.option("--since", default=None, help="Only sessions active at/after this ISO date (default: all).")
-@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def export(out_dir: str, machine: str | None, source_filter: str | None, since: str | None, as_json: bool) -> None:
-    """Export every session as text to OUT/<machine>/<source>/<cwd>/<uuid>.json.
-
-    Only user and assistant text blocks are kept: tool calls, tool output,
-    thinking and sub-agent turns are dropped, and token-shaped strings are
-    redacted. A session
-    whose stored copy is already as recent as the source is skipped, so the
-    command is cheap to run hourly. Each file carries `author`: "human" for
-    sessions a person drove, "system" for heartbeat/worker prompts.
-    """
-    out_root = Path(out_dir).expanduser()
-    machine = machine or socket.gethostname().split(".")[0]
-    sources = selected_sources(source_filter, SOURCES)
-    cutoff = datetime.fromisoformat(since).timestamp() if since else 0.0
-    written, skipped = _export_all(out_root, machine, sources, cutoff)
-    if as_json:
-        click.echo(json.dumps({"machine": machine, "written": written, "skipped": skipped}))
-        return
-    click.echo(f"{machine}: {len(written)} session(s) written, {skipped} already current, under {out_root}")
-
-
 def _sessions_for_scope(project_query: str | None, sources: tuple[str, ...]) -> list[SessionHandle]:
     """Every session across the matching projects (or every project in scope,
     if no query) — recency-sorted, merged across sources. Shared by
@@ -3077,43 +3060,20 @@ def _online_search(text: str, limit: int, project_query: str | None = None) -> l
     return rows
 
 
-@cli.command()
-@click.argument("text")
-@_SOURCE_OPTION
-@click.option("--project", "project_query", help="Restrict to projects matching this query (default: all).")
-@click.option("--limit", default=50, type=click.IntRange(min=1), help="Number of matches to show.")
-@click.option("--offline", is_flag=True, help="Search saved history only, without contacting online providers.")
-@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def search(text: str, source_filter: str | None, project_query: str | None, limit: int, offline: bool, as_json: bool) -> None:
-    """Full-text search across session transcripts, across every source.
-
-    A cheap pre-filter runs before any full parsing — a raw-bytes substring
-    check for claude/codex/omp's flat JSONL files, one batched SQL LIKE query
-    for cursor's SQLite store (no single-file check is possible there) — so
-    searching everywhere stays fast even with a lot of history.
-    """
-    sources = selected_sources(source_filter, SOURCES)
-    needle = text.lower()
-    needle_bytes = text.encode("utf-8")
-    sessions = _sessions_for_scope(project_query, sources)
-    archive = _archive_state()
-    candidates = set()
-    if archive and archive["offline"] and any(h.archive for h in sessions):
-        log.warning("Archived conversations were not searched.")
-    elif archive and any(h.archive for h in sessions):
-        from one_conv.archive import ArchiveError
-        try:  # Copies are merged on the full listing; only matching archived ones are read.
-            candidates = {row["key"] for row in archive["client"].list_conversations(query=text)}
-        except ArchiveError as error:
-            log.warning("%s Archived conversations were not searched.", error)
-    cursor_ids = _cursor_composer_ids_matching(text) if "cursor" in sources else None
-
+def _exact_search(needle, sessions, sources, candidates, limit):
+    """The first `limit` turns holding `needle` as a substring, in session order, prefiltered without parsing."""
+    from one_conv.ranking import snippet
+    # bytes.lower() folds only ASCII, so a non-ASCII needle skips the raw-bytes prefilter.
+    probe = needle.encode("utf-8") if needle.isascii() else None
+    cursor_ids = None
+    if "cursor" in sources:
+        # None means Cursor is not installed, so nothing filters its (absent) sessions.
+        cursor_ids = _cursor_composer_ids_matching(needle)
     results = []
     for h in sessions:
-        if not h.archive and h.source in ("claude", "codex", "omp") and text.isascii():
-            # bytes.lower() folds only ASCII, so non-ASCII queries skip this prefilter.
+        if not h.archive and h.source in ("claude", "codex", "omp") and probe:
             with h.path.open("rb") as f:
-                if needle_bytes.lower() not in f.read().lower():
+                if probe not in f.read().lower():
                     continue
         elif not h.archive and h.source == "cursor" and cursor_ids is not None and h.composer_id not in cursor_ids:
             continue
@@ -3128,30 +3088,166 @@ def search(text: str, source_filter: str | None, project_query: str | None, limi
             rendered = _render_turn(turn, raw=False)
             if not rendered or needle not in rendered.lower():
                 continue
-            snippet = rendered.replace("\n", " ")
-            if len(snippet) > 200:
-                idx = snippet.lower().find(needle)
-                start = max(0, idx - 80)
-                snippet = ("…" if start else "") + snippet[start : start + 200] + "…"
-            results.append(
-                {
-                    "ts": turn.ts,
-                    "source": h.source,
-                    "cwd": h.project_cwd,
-                    "session": h.uuid,
-                    "role": turn.role,
-                    "text": snippet,
-                }
-            )
+            results.append(_search_row(h, turn.ts, turn.role, snippet(rendered, [needle])))
             if len(results) >= limit:
-                break
-        if len(results) >= limit:
-            break
+                return results
+    return results
 
+
+def _search_row(handle, ts, role, text):
+    row = {"ts": ts, "source": handle.source, "cwd": handle.project_cwd, "session": handle.uuid,
+           "role": role, "text": text}
+    address = _handle_address(handle)
+    if address:
+        row["address"] = address
+    return row
+
+
+SEARCH_INDEX = "search-index.sqlite"
+# Turns are embedded and stored in batches, so an interrupted first semantic search keeps its progress.
+EMBED_BATCH = 2000
+
+
+def _semantic_model():
+    """The local embedding model, downloaded once into the state directory ($ONE_CONV_SEMANTIC_MODEL overrides it)."""
+    from one_conv import semantic
+    directory = os.environ.get("ONE_CONV_SEMANTIC_MODEL")
+    if not directory:
+        try:
+            directory = semantic.fetch(STATE_DIR / "models" / semantic.MODEL.split("/")[1] / semantic.REVISION)
+        except OSError as error:
+            raise click.ClickException(f"Could not download the semantic search model {semantic.MODEL}: {error}") from None
+    return semantic.StaticModel(directory)
+
+
+def _embed_pending(index, model, keys):
+    """Embed the turns of sessions `keys` that have none yet."""
+    pending = index.unembedded(keys)
+    if len(pending) > EMBED_BATCH:
+        log.warning("Embedding %d turns for semantic search; later searches embed only new turns.", len(pending))
+    for start in range(0, len(pending), EMBED_BATCH):
+        batch = pending[start:start + EMBED_BATCH]
+        index.embed([turn for turn, _ in batch], model.encode([text for _, text in batch]))
+
+
+def _index_identity(handle):
+    """(key, stamp) of a session in the search index; the stamp changes whenever its content may have."""
+    if handle.archive:
+        return f"archive:{handle.archive['key']}", handle.archive["revision"]
+    if handle.path is not None:
+        stat = handle.path.stat()
+        return f"{handle.source}:{handle.path}", f"{stat.st_mtime_ns}:{stat.st_size}"
+    return f"{handle.source}:{handle.composer_id or handle.uuid}", repr(handle.mtime)
+
+
+def _ranked_search(needles, sessions, candidates, limit, complete_sources, semantic_query=None):
+    """Best `limit` turns holding every needle, from the persistent index refreshed for changed sessions.
+
+    Archived sessions are indexed only once the hub lists them as candidates, so a search never
+    downloads the whole archive. `complete_sources`, when `sessions` lists every session of those
+    sources, drops their indexed sessions that no longer exist. With `semantic_query`, turns rank by
+    meaning fused with BM25 over any needle, and already indexed archived sessions stay in scope.
+    """
+    from one_conv.ranking import SearchIndex, snippet
+    index = SearchIndex(Path(os.environ.get("ONE_CONV_SEARCH_INDEX", str(STATE_DIR / SEARCH_INDEX))))
+    stamps = index.stamps()
+    scope, present = {}, set()
+    for h in sessions:
+        try:
+            key, stamp = _index_identity(h)
+        except OSError:  # Deleted since it was listed.
+            continue
+        present.add(key)
+        if h.archive and h.archive["key"] not in candidates and not (semantic_query and stamps.get(key) == stamp):
+            continue
+        if stamps.get(key) != stamp:
+            try:
+                turns = _handle_iter_turns(h, include_subagents=False)
+            except click.ClickException as error:  # One unreadable archived conversation must not hide the rest.
+                log.warning("%s: %s", h.uuid, error.message)
+                continue
+            index.replace(key, h.source, stamp, ((turn.ts, turn.role, rendered) for turn in turns
+                                       if (rendered := _render_turn(turn, raw=False))))
+        scope[key] = h
+    if complete_sources:
+        index.forget(complete_sources, present)
+    if semantic_query is None:
+        hits = index.top(needles, scope, limit)
+    else:
+        model = _semantic_model()
+        _embed_pending(index, model, scope)
+        hits = index.hybrid(needles, model.encode([semantic_query])[0], scope, limit)
+    return [_search_row(scope[key], ts, role, snippet(text, needles)) for key, ts, role, text in hits]
+
+
+@cli.command(epilog="\b\nExamples:\n  one-conv search 'rate limit' --json\n  one-conv search 'bridge reconnect' --ranked --limit 10\n"
+                     "  one-conv search 'agent dies when the websocket drops' --semantic")
+@click.argument("text")
+@_SOURCE_OPTION
+@click.option("--project", "project_query", help="Restrict to projects matching this query (default: all).")
+@click.option("--limit", default=50, type=click.IntRange(min=1), help="Number of matches to show.")
+@click.option("--offline", is_flag=True, help="Search saved history only, without contacting online providers.")
+@click.option("--ranked", is_flag=True, help="Match turns holding every word, as a word or word prefix, in any order; best matches first.")
+@click.option("--semantic", is_flag=True, help="Rank turns by meaning, fused with matches on any word; best matches first.")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def search(text: str, source_filter: str | None, project_query: str | None, limit: int, offline: bool,
+           ranked: bool, semantic: bool, as_json: bool) -> None:
+    """Full-text search across session transcripts, across every source.
+
+    By default TEXT matches as one exact substring, newest first. --ranked
+    matches turns holding every word of TEXT, each as a word or the start of
+    one ("build" finds "builds"), and orders them by BM25 relevance.
+    --semantic also finds turns that share no word with TEXT: it fuses the
+    closeness in meaning of each turn to TEXT, from a small embedding model
+    run locally (downloaded once, about 130 MB), with BM25 over turns holding
+    any word of TEXT.
+
+    A cheap pre-filter runs before any full parsing — a raw-bytes substring
+    check for claude/codex/omp's flat JSONL files, one batched SQL LIKE query
+    for cursor's SQLite store (no single-file check is possible there) — so
+    searching everywhere stays fast even with a lot of history.
+
+    --ranked reads a full-text index kept in the state directory
+    ($ONE_CONV_SEARCH_INDEX overrides its path). Each search re-indexes only
+    the sessions that changed since the last one, so the first ranked search
+    indexes all history once and later ones parse only what changed. The
+    first --semantic search embeds every indexed turn once in the same way.
+    """
+    from one_conv.ranking import words
+
+    ranked = ranked or semantic
+    sources = selected_sources(source_filter, SOURCES)
+    needles = words(text) if ranked else [text.lower()]
+    if ranked and not needles:
+        raise click.BadParameter("The query holds no word to rank.", param_hint="TEXT")
+    sessions = _sessions_for_scope(project_query, sources)
+    archive = _archive_state()
+    candidates = set()
+    if archive and archive["offline"] and any(h.archive for h in sessions):
+        log.warning("Archived conversations were not searched.")
+    elif archive and any(h.archive for h in sessions):
+        from one_conv.archive import ArchiveError
+        from concurrent.futures import ThreadPoolExecutor
+        try:  # Copies are merged on the full listing; only archived ones holding every needle are read.
+            # One hub round trip per needle; in parallel, a several-word query costs about one.
+            with ThreadPoolExecutor(len(needles)) as pool:
+                listings = list(pool.map(lambda needle: {row["key"] for row in archive["client"].list_conversations(query=needle)},
+                                         needles))
+            # A semantic hit needs only one word in common with the query, or none.
+            candidates = set.union(*listings) if semantic else set.intersection(*listings)
+        except ArchiveError as error:
+            log.warning("%s Archived conversations were not searched.", error)
+    if ranked:
+        results = _ranked_search(needles, sessions, candidates, limit, () if project_query else sources,
+                                 text if semantic else None)
+    else:
+        results = _exact_search(needles[0], sessions, sources, candidates, limit)
     if not offline and (source_filter is None or source_filter == "chatgpt"):
         results.extend(_online_search(text, limit, project_query))
     unique = {(row["source"], row["cwd"], row["session"], row["text"]): row for row in results}
-    results = sorted(unique.values(), key=lambda r: r["ts"], reverse=True)[:limit]
+    # Ranked rows keep relevance order; the provider's own hits follow them.
+    order = list(unique.values()) if ranked else sorted(unique.values(), key=lambda r: r["ts"], reverse=True)
+    results = order[:limit]
     if as_json:
         click.echo(json.dumps(results, ensure_ascii=False))
         return
@@ -3159,7 +3255,7 @@ def search(text: str, source_filter: str | None, project_query: str | None, limi
         click.echo(f"{_local_ts(r['ts'])}  [{r['source']}]  {r['cwd']}  [{r['session'][:8]}]  {r['role']}: {r['text']}")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv unread --json\n  one-conv unread --project PROJECT --limit 10")
 @_SOURCE_OPTION
 @click.option("--project", "project_query", help="Restrict to projects matching this query (default: all).")
 @click.option("--limit", default=30, help="Number of threads to show.")
@@ -3207,7 +3303,7 @@ def unread(source_filter: str | None, project_query: str | None, limit: int, mar
     _print_thread_rows(results, show_cwd=True, show_unread_mark=False, show_source=True)
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv find QUERY --json")
 @click.argument("text")
 @_SOURCE_OPTION
 @click.option("--limit", default=30, help="Number of threads to show.")
@@ -3239,6 +3335,9 @@ def find(text: str, source_filter: str | None, limit: int, as_json: bool) -> Non
         summary = _handle_summary(h, state)
         if needle not in summary["title"].lower():
             continue
+        address = _handle_address(h)
+        if address:
+            summary = {**summary, "address": address}
         results.append(summary)
 
     results.sort(key=lambda s: s["end"] or s["start"], reverse=True)
@@ -3261,7 +3360,7 @@ def _parse_iso_ts(ts: str) -> float | None:
         return None
 
 
-@cli.command("skill-usage")
+@cli.command("skill-usage", epilog="\b\nExamples:\n  one-conv skill-usage --since-days 30 --json")
 @click.option(
     "--since-days",
     default=0,
@@ -3351,7 +3450,7 @@ def skill_usage(since_days: int, recent: int, as_json: bool) -> None:
         click.echo(f"{_local_ts(r['last_used'])}  {r['skill']}  ({r['count']}x)")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv fork PROJECT\n  one-conv fork PROJECT --nth 2 --yes")
 @click.argument("query")
 @click.option("--nth", default=1, help="Which thread to fork, 1 = most recent (default).")
 @click.option("--session", "session_uuid", help="Exact session UUID (or prefix) instead of the Nth most recent.")
@@ -3392,7 +3491,7 @@ def fork(query: str, nth: int, session_uuid: str | None, match: int, yes: bool) 
         raise click.ClickException("`claude` not found on PATH.")
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv send PROJECT 'summarize the open TODOs'\n  one-conv send PROJECT 'run the tests' --fork --yes")
 @click.argument("query")
 @click.argument("message")
 @click.option("--nth", default=1, help="Which thread to continue, 1 = most recent (default).")
@@ -3491,7 +3590,7 @@ def _port_seed_text(handle: SessionHandle, raw: bool, include_subagents: bool, l
     return "\n".join(lines)
 
 
-@cli.command()
+@cli.command(epilog="\b\nExamples:\n  one-conv port PROJECT --into codex\n  one-conv port PROJECT --into claude --limit 20 --print --yes")
 @click.argument("query")
 @click.option("--into", "target", type=click.Choice(("claude", "codex")), required=True, help="Which provider to start the new conversation in.")
 @_SOURCE_OPTION
@@ -3607,12 +3706,12 @@ def port(
 
 
 
-@cli.group("chatgpt")
+@cli.group("chatgpt", epilog="\b\nExamples:\n  one-conv chatgpt accounts\n  one-conv chatgpt search 'assurance' --limit 10")
 def chatgpt_group() -> None:
     """Sync and inspect chatgpt.com web chats (the only source with no local store)."""
 
 
-@chatgpt_group.command("accounts")
+@chatgpt_group.command("accounts", epilog="\b\nExamples:\n  one-conv chatgpt accounts\n  one-conv chatgpt accounts --json")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def chatgpt_accounts(as_json: bool) -> None:
     """Show cached accounts, and which ones a browser profile can refresh."""
@@ -3728,7 +3827,7 @@ def _chatgpt_sync_targeted(conversation_ids: tuple[str, ...], search_text: str |
     click.echo(f"{ok}/{len(results)} synced into the cache.")
 
 
-@chatgpt_group.command("sync")
+@chatgpt_group.command("sync", epilog="\b\nExamples:\n  one-conv chatgpt sync --search 'assurance'\n  one-conv chatgpt sync 690326c8-...")
 @click.argument("conversation_ids", nargs=-1)
 @click.option("--search", "search_text", default=None,
               help="Sync only what this chatgpt.com search finds (and the cache lacks).")
@@ -3818,7 +3917,7 @@ def chatgpt_sync(conversation_ids: tuple[str, ...], search_text: str | None, lim
                 )
 
 
-@chatgpt_group.command("search")
+@chatgpt_group.command("search", epilog="\b\nExamples:\n  one-conv chatgpt search 'assurance' --limit 10\n  one-conv chatgpt search 'assurance' --account EMAIL --json")
 @click.argument("text")
 @click.option("--limit", default=30, show_default=True, help="Maximum hits per account.")
 @click.option("--account", "account_filter", default=None, help="Only this account id or email.")
@@ -3871,18 +3970,8 @@ def chatgpt_search(text: str, limit: int, account_filter: str | None, as_json: b
                    f"`one-conv chatgpt sync` pulls their text down.", err=True)
 
 
-@cli.command("append")
-@click.argument("mouth")
-@click.argument("role", type=click.Choice(("user", "assistant")))
-@click.argument("text")
-@click.option("--machine", default=None, help="Folder name for this machine (default: hostname).")
-def append(mouth: str, role: str, text: str, machine: str | None) -> None:
-    """Write one turn into the shared brain log (seconds-fresh on every host after sync)."""
-    path = _append_log_turn(mouth, role, text, machine=machine)
-    click.echo(str(path))
-
-
-@cli.command("cloud", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, add_help_option=False)
+@cli.command("cloud", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, add_help_option=False,
+             epilog="\b\nExamples:\n  one-conv cloud providers\n  one-conv cloud sync chatgpt --limit 10")
 @click.pass_context
 def cloud_command(context):
     """Inspect and sync experimental session-based cloud adapters."""
@@ -3978,11 +4067,15 @@ _feed_command = build_feed_command(_feed_find_threads, _feed_whoami, _feed_root,
 _feed_command.hidden = True
 cli.add_command(_feed_command)
 
-install_namespaces(cli, lambda: _chatgpt_accounts(), lambda: _claude_accounts())
+from one_conv.live.prompts import build_prompts_command  # noqa: E402
+
+cli.add_command(build_prompts_command(_feed_find_threads, _feed_live_addresses))
+
+install_namespaces(cli, lambda: _chatgpt_accounts(), lambda: _claude_accounts(), LOGIN_PROFILES_DIR)
 
 
 def _tune_snapshot(out_root: Path) -> tuple[int, int]:
-    # The corpus source re-reads exports, so excluding it avoids training on duplicates.
+    # Corpus rows are archive copies of other sessions, so excluding them avoids training on duplicates.
     sources = tuple(source for source in SOURCES if source != "corpus")
     written, skipped = _export_all(out_root, _THIS_MACHINE, sources)
     return len(written), skipped
@@ -3990,7 +4083,7 @@ def _tune_snapshot(out_root: Path) -> tuple[int, int]:
 
 from one_conv.tune.cli import build_tune_group  # noqa: E402
 
-cli.add_command(build_tune_group(_tune_snapshot, _corpus_roots))
+cli.add_command(build_tune_group(_tune_snapshot, lambda: []))
 
 from one_conv.live.cli import build_live_group  # noqa: E402
 
@@ -4006,14 +4099,10 @@ from one_conv.hr_cli import build_hr_group  # noqa: E402
 cli.add_command(build_hr_group())
 
 
-@cli.command("mcp")
+@cli.command("mcp", epilog="\b\nExamples:\n  one-conv mcp\n  one-conv mcp --config")
 @click.option("--config", is_flag=True, help="Print MCP client JSON with resolved paths, then exit.")
 def mcp_command(config):
     """Serve conversation readers over local MCP stdio.
-
-    Examples:
-      one-conv mcp
-      one-conv mcp --config
     """
     from one_conv.mcp_server import create_server
     if config:

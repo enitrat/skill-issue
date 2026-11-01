@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..live import web
-from ..live.hub import Hub, HubError
+from ..live.hub import ATTACHMENT_LIMIT, ATTACHMENT_TYPES, Hub, HubError
 from ..live.hub import application as hub_application
 from .auth import COOKIE, AuthStore
 from .store import HUMAN, ControlStore
@@ -171,7 +171,9 @@ def application(store_dir: Path, public_origin: str, hub: Hub | None = None, *, 
                              "expires_at": current["expires_at"],
                              "human": {"address": "user", "route": HUMAN, "name": "You", "kind": "human"},
                              "capabilities": {"workers": "workers" in provider_map, "accounting": "accounting" in provider_map,
-                                              "pairing": True, "channels": True, "changes": True}})
+                                              "pairing": True, "channels": True, "changes": True,
+                                              "unread": True, "acks": True, "sign_out_others": True, "stop": True,
+                                              "routines": True}})
 
     async def pair_device(request):
         """An authenticated owner can connect another device without exporting its session cookie."""
@@ -181,6 +183,13 @@ def application(store_dir: Path, public_origin: str, hub: Hub | None = None, *, 
         token = await run_in_threadpool(auth.issue_pairing_token, PAIRING_SECONDS)
         return JSONResponse({"url": origin + "/#pair=" + token, "expires_at": expires,
                              "single_use": True, "access": "owner"})
+
+    async def sign_out_others(request):
+        """The owner disconnects every other browser and cancels unused pairing links, keeping this one."""
+        if await bounded_json(request):
+            raise HubError(400, "Signing out other devices accepts an empty JSON object.")
+        cookie, _ = session_for(request)
+        return JSONResponse({"signed_out": await run_in_threadpool(auth.revoke_others, cookie)})
 
     async def login(request):
         check_origin(request)
@@ -226,7 +235,7 @@ def application(store_dir: Path, public_origin: str, hub: Hub | None = None, *, 
                 checked = loop.time()
             await asyncio.sleep(CHANGES_STEP)
         await run_in_threadpool(session_for, request)
-        return JSONResponse({"fp": current, "changed": bool(since) and current != since})
+        return JSONResponse({"fp": current, "changed": bool(since) and current != since, "version": web.VERSION})
 
     async def topic(request):
         return JSONResponse(await run_in_threadpool(store.topic, request.path_params["topic"]))
@@ -238,9 +247,50 @@ def application(store_dir: Path, public_origin: str, hub: Hub | None = None, *, 
         payload = await bounded_json(request)
         return JSONResponse(await run_in_threadpool(store.send, payload))
 
+    async def upload(request):
+        """One image, sent as its own bytes; the answer's id goes into the message that carries it."""
+        media_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+        if media_type not in ATTACHMENT_TYPES or request.headers.get("content-encoding", "identity").lower() != "identity":
+            raise HubError(415, "Attach a PNG, JPEG, GIF or WebP image, uncompressed.")
+        declared = request.headers.getlist("content-length")
+        if declared and (len(declared) != 1 or not re.fullmatch(r"[0-9]{1,12}", declared[0])):
+            raise HubError(400, "Content-Length must be a nonnegative byte count.")
+        if declared and int(declared[0]) > ATTACHMENT_LIMIT:
+            raise HubError(413, "The image is too large.")
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > ATTACHMENT_LIMIT:
+                raise HubError(413, "The image is too large.")
+            body.extend(chunk)
+        return JSONResponse(await run_in_threadpool(store.store_attachment, media_type, bytes(body)))
+
+    async def attachment(request):
+        media_type, body = await run_in_threadpool(store.attachment, request.path_params["ident"])
+        return Response(body, media_type=media_type)
+
+    async def read(request):
+        payload = await bounded_json(request)
+        return JSONResponse(await run_in_threadpool(store.mark_read, payload))
+
     async def channel(request):
         payload = await bounded_json(request)
         return JSONResponse(await run_in_threadpool(store.create_channel, payload))
+
+    async def archive(request):
+        payload = await bounded_json(request)
+        return JSONResponse(await run_in_threadpool(store.archive_channel, payload))
+
+    async def save_routine(request):
+        payload = await bounded_json(request)
+        return JSONResponse(await run_in_threadpool(store.routines.save, payload))
+
+    async def routine_action(request):
+        payload = await bounded_json(request)
+        return JSONResponse(await run_in_threadpool(store.routines.act, payload))
+
+    async def stop_session(request):
+        payload = await bounded_json(request)
+        return JSONResponse(await run_in_threadpool(store.stop_session, payload))
 
     async def provider(request):
         callback = provider_map.get(request.path_params["name"])
@@ -280,10 +330,18 @@ def application(store_dir: Path, public_origin: str, hub: Hub | None = None, *, 
         Route("/api/session", endpoint(session, public=True)),
         Route("/api/login", endpoint(login, public=True), methods=["POST"]),
         Route("/api/devices/pair", endpoint(pair_device, write=True), methods=["POST"]),
+        Route("/api/devices/sign-out-others", endpoint(sign_out_others, write=True), methods=["POST"]),
         Route("/api/logout", endpoint(logout, write=True), methods=["POST"]),
         Route("/api/state", endpoint(state)), Route("/api/changes", endpoint(changes)), Route("/api/topics/{topic}", endpoint(topic)),
         Route("/api/direct", endpoint(direct)), Route("/api/messages", endpoint(message, write=True), methods=["POST"]),
+        Route("/api/attachments", endpoint(upload, write=True), methods=["POST"]),
+        Route("/api/attachments/{ident}", endpoint(attachment)),
         Route("/api/channels", endpoint(channel, write=True), methods=["POST"]),
+        Route("/api/channels/archive", endpoint(archive, write=True), methods=["POST"]),
+        Route("/api/read", endpoint(read, write=True), methods=["POST"]),
+        Route("/api/routines", endpoint(save_routine, write=True), methods=["POST"]),
+        Route("/api/routines/action", endpoint(routine_action, write=True), methods=["POST"]),
+        Route("/api/sessions/stop", endpoint(stop_session, write=True), methods=["POST"]),
         Route("/api/providers/{name}", endpoint(provider), methods=["GET", "POST"]),
         *hub_application(store.hub).routes,
     ])

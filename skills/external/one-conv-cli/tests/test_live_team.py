@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Agent names and topics: binding, collisions, fan-out, catch-up positions and the envelope."""
 
 import json
@@ -186,11 +207,18 @@ def test_catch_up_excludes_other_topics(homes):
     assert [row["text"] for row in team.catch_up("release", "omp:o1")["messages"]] == ["relevant"]
 
 
-def test_catch_up_is_capped(homes):
+def test_catch_up_past_its_budget_folds_the_oldest_block(homes):
     team.join("release", "omp:o1")
     for index in range(team.CATCH_UP + 5):
         team.record("release", f"m{index}", "claude:c1", f"message {index}")
-    assert team.catch_up("release", "omp:o1")["omitted"] == 5
+    assert team.catch_up("release", "omp:o1")["omitted"] == 16
+
+
+def test_catch_up_past_its_budget_shows_the_newest_posts_whole(homes):
+    team.join("release", "omp:o1")
+    for index in range(team.CATCH_UP + 5):
+        team.record("release", f"m{index}", "claude:c1", f"message {index}")
+    assert [m["pos"] for m in team.catch_up("release", "omp:o1")["messages"]] == list(range(16, 25))
 
 
 def test_history_keeps_the_most_recent_messages(homes, monkeypatch):

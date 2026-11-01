@@ -1,7 +1,29 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Exercise real native readers, HTTP sync and unchanged CLI commands on isolated history."""
 import base64
 import copy
 import dataclasses
+import gzip
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -19,6 +41,7 @@ import types
 import zlib
 from pathlib import Path
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 import pytest
 import uvicorn
@@ -27,7 +50,6 @@ from archive.server import create_app
 from archive.store import SQLiteStore
 from one_conv.archive import (
     CHUNK_BYTES,
-    SYNC_STALE_SECONDS,
     ArchiveClient,
     ArchiveError,
     pack,
@@ -40,7 +62,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def serve(app):
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
+    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False, timeout_graceful_shutdown=1))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
 
@@ -60,11 +82,103 @@ def archive(tmp_path):
     store.engine.dispose()
 
 
+@pytest.fixture
+def large_listing(archive):
+    """Repeated metadata makes HTTP compression observable over a real socket."""
+    store, client, url = archive
+    metadata = {"mtime": 1, "title": "A conversation in a shared project " * 100}
+    store.put("key", "revision", metadata, "", {}, None)
+    return client, url, {"items": [{**metadata, "key": "key", "revision": "revision"}], "next": None}
+
+
+@pytest.mark.parametrize("encoding,expected", [("gzip", "gzip"), ("identity", None)])
+def test_listing_compression_is_negotiated(large_listing, encoding, expected):
+    _, url, _ = large_listing
+    request = Request(url + "/v1/conversations", headers={
+        "Authorization": "Bearer test-secret", "Accept-Encoding": encoding})
+    with urlopen(request) as response:
+        assert response.headers.get("Content-Encoding") == expected
+
+
+def test_compressed_listing_reduces_wire_bytes(large_listing):
+    _, url, expected = large_listing
+    request = Request(url + "/v1/conversations", headers={
+        "Authorization": "Bearer test-secret", "Accept-Encoding": "gzip"})
+    with urlopen(request) as response:
+        assert len(response.read()) < len(json.dumps(expected).encode()) / 4
+
+
+def test_archive_client_decodes_compressed_listing(large_listing):
+    client, _, expected = large_listing
+    assert list(client.list_conversations()) == expected["items"]
+
+
+@pytest.mark.parametrize("payload", [b"invalid gzip", gzip.compress(b"{}", mtime=0)[0:12]],
+                         ids=["invalid-header", "truncated-stream"])
+def test_archive_client_reports_invalid_compression(payload):
+    from starlette.applications import Starlette
+    from starlette.responses import Response
+    from starlette.routing import Route
+
+    async def compressed(request):
+        return Response(payload, headers={"Content-Encoding": "gzip"})
+
+    url, stop = serve(Starlette(routes=[Route("/v1/conversations", compressed)]))
+    try:
+        with pytest.raises(ArchiveError, match="invalid response"):
+            ArchiveClient(url, "test-secret").request("conversations")
+    finally:
+        stop()
+
+
+def test_archive_client_decodes_compressed_errors():
+    from starlette.applications import Starlette
+    from starlette.responses import Response
+    from starlette.routing import Route
+
+    async def compressed(request):
+        return Response(gzip.compress(b'{"error":"compressed reason"}'), status_code=409,
+                        headers={"Content-Encoding": "gzip"})
+
+    url, stop = serve(Starlette(routes=[Route("/v1/conversations", compressed)]))
+    try:
+        with pytest.raises(ArchiveError, match="409.*compressed reason"):
+            ArchiveClient(url, "test-secret").request("conversations")
+    finally:
+        stop()
+
+
+# Keys on, around and between the parallel listing ranges' bounds, plus a non-hex key.
+RANGE_KEYS = ["0a", "4", "40", "7f", "8", "8a", "c", "ff", "key"]
+
+
+@pytest.fixture
+def ranged_archive(archive):
+    store, client, _ = archive
+    for key in reversed(RANGE_KEYS):
+        store.put(key, "revision", {"mtime": 1}, key, {}, None)
+    return client
+
+
+def test_listing_returns_every_key_once_in_order(ranged_archive):
+    assert [row["key"] for row in ranged_archive.list_conversations()] == RANGE_KEYS
+
+
+def test_listing_follows_pages_within_a_range(ranged_archive, monkeypatch):
+    import archive.server
+    monkeypatch.setattr(archive.server, "PAGE_SIZE", 1)
+    assert [row["key"] for row in ranged_archive.list_conversations()] == RANGE_KEYS
+
+
+def test_filtered_listing_returns_matching_keys(ranged_archive):
+    assert [row["key"] for row in ranged_archive.list_conversations(query="8")] == ["8", "8a"]
+
+
 def fixture_env(tmp_path):
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(tmp_path / "claude"),
         "CODEX_HOME": str(tmp_path / "codex"), "CURSOR_USER_DIR": str(tmp_path / "cursor"),
         "CURSOR_CLI_HOME": str(tmp_path / "cursor-cli"), "OMP_HOME": str(tmp_path / "omp"),
-        "ONE_CONV_CORPUS": str(tmp_path / "corpus"), "ONE_CONV_CLOUD_CACHE": str(tmp_path / "cloud"),
+        "ONE_CONV_CLOUD_CACHE": str(tmp_path / "cloud"),
         # Without this, sync reads the developer's own saved ChatGPT conversations.
         "ONE_CONV_CHATGPT_CACHE": str(tmp_path / "chatgpt"), "AGENT_CONV_CHATGPT_CACHE": str(tmp_path / "chatgpt"),
         "ONE_CONV_STATE_DIR": str(tmp_path / "state"), "AGENT_CONV_STATE_DIR": str(tmp_path / "state")}
@@ -118,7 +232,7 @@ def test_native_sync_remote_only_parity_and_updates(tmp_path, archive):
     (session_folder / "tool-results").mkdir(parents=True)
     (session_folder / "tool-results" / "full-output.txt").write_text("complete tool output")
     (session_folder / "custom-title.json").write_text('{"title": "Ancestry"}')
-    baseline = [run(env, "bin/one-conv", "local", *args, "--source", "claude", "--json") for args in commands]
+    baseline = [run(env, "one_conv_cli.py", "local", *args, "--source", "claude", "--json") for args in commands]
     assert baseline[4]["turns"] == [
         {"ts": "2026-01-01T10:00:00Z", "role": "user", "text": "Remember Quartz_100% and café?"},
         {"ts": "2026-01-01T10:01:00Z", "role": "assistant", "text": "The answer is forty-two."}]
@@ -126,16 +240,16 @@ def test_native_sync_remote_only_parity_and_updates(tmp_path, archive):
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     assert run(env, "scripts/archive-sync.py", "--source", "claude") == {"uploaded": 1, "unchanged": 0}
     assert run(env, "scripts/archive-sync.py", "--source", "claude") == {"uploaded": 0, "unchanged": 1}
-    assert run(env, "bin/one-conv", "local", "read", "ancestry", "--source", "claude", "--json") == baseline[2]
+    assert run(env, "one_conv_cli.py", "local", "read", "ancestry", "--source", "claude", "--json") == baseline[2]
     remote_env = {**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "empty")}
     for args, expected in zip(commands, baseline):
-        assert run(remote_env, "bin/one-conv", "local", *args, "--source", "claude", "--json") == expected
+        assert run(remote_env, "one_conv_cli.py", "local", *args, "--source", "claude", "--json") == expected
     metadata = next(iter(client.list_conversations()))
     old = client.read_capture(metadata["key"])
     assert old["originals"] == {str(p): p.read_bytes() for p in (path, *sorted(session_folder.rglob("*"))) if p.is_file()}
     write_claude(env, extra=True)
     assert run(env, "scripts/archive-sync.py", "--source", "claude")["uploaded"] == 1
-    updated = run(remote_env, "bin/one-conv", "local", "thread", "ancestry", "--source", "claude", "--no-mark-read", "--json")
+    updated = run(remote_env, "one_conv_cli.py", "local", "thread", "ancestry", "--source", "claude", "--no-mark-read", "--json")
     assert updated["turns"][-1]["text"] == "An additional message"
     with pytest.raises(ArchiveError, match="409"):
         client.put(*pack(old), metadata["revision"])
@@ -154,7 +268,7 @@ def test_auth_failure_and_unavailable_archive_are_visible(tmp_path, archive):
     env = fixture_env(tmp_path)
     write_claude(env)
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="wrong")
-    result = run(env, "bin/one-conv", "local", "search", "Quartz", "--source", "claude", "--json", success=False)
+    result = run(env, "one_conv_cli.py", "local", "search", "Quartz", "--source", "claude", "--json", success=False)
     assert result.returncode == 0 and "401" in result.stderr and "native history only" in result.stderr
     assert len(json.loads(result.stdout)) == 1
     client = ArchiveClient(url, "test-secret")
@@ -206,7 +320,7 @@ def test_other_sources_keep_native_thread_shape(tmp_path, archive, source):
     commands = [("search", text), ("read", project, "--expand", "--raw", "--no-mark-read")]
     if namespace == "cloud":
         commands[1] = ("read", "cloud-fixture", "--raw", "--no-mark-read")
-    baseline = [run(env, "bin/one-conv", namespace, *args, "--source", source, "--json") for args in commands]
+    baseline = [run(env, "one_conv_cli.py", namespace, *args, "--source", source, "--json") for args in commands]
     assert baseline[0]
     assert (baseline[1] if namespace == "cloud" else baseline[1][0])["turns"]
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
@@ -216,7 +330,7 @@ def test_other_sources_keep_native_thread_shape(tmp_path, archive, source):
     assert set(originals) == {"cursorDiskKV", "composerHeaders"} if source == "cursor" else originals
     env[native_root] = str(tmp_path / "empty")
     for args, expected in zip(commands, baseline):
-        assert run(env, "bin/one-conv", namespace, *args, "--source", source, "--json") == expected
+        assert run(env, "one_conv_cli.py", namespace, *args, "--source", source, "--json") == expected
 
 
 def test_interrupted_upload_does_not_commit(tmp_path, archive):
@@ -267,8 +381,8 @@ def test_copies_from_two_installations_show_the_newest(tmp_path, archive):
     assert run(second, "scripts/archive-sync.py", "--source", "claude") == {"uploaded": 1, "unchanged": 0}
     assert len(list(client.list_conversations())) == 2
     for reader_env in (env, {**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "empty")}):
-        assert [row["threads"] for row in run(reader_env, "bin/one-conv", "local", "chats", "--source", "claude", "--json")] == [1]
-        thread = run(reader_env, "bin/one-conv", "local", "thread", "ancestry", "--source", "claude", "--no-mark-read", "--json")
+        assert [row["threads"] for row in run(reader_env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json")] == [1]
+        thread = run(reader_env, "one_conv_cli.py", "local", "thread", "ancestry", "--source", "claude", "--no-mark-read", "--json")
         assert thread["turns"][-1]["text"] == "An additional message"
 
 
@@ -773,6 +887,50 @@ def test_sync_recaptures_a_cursor_ide_row_change_under_an_unchanged_header(tmp_p
     assert run(env, "scripts/archive-sync.py", "--source", "cursor") == {"uploaded": 1, "unchanged": 0}
 
 
+def write_unused_cursor_chat(env):
+    """A chat Cursor lists in its headers but never wrote records for."""
+    path = Path(env["CURSOR_USER_DIR"]) / "globalStorage" / "state.vscdb"
+    workspace = Path(env["CURSOR_USER_DIR"]) / "workspaceStorage" / "workspace" / "workspace.json"
+    path.parent.mkdir(parents=True)
+    workspace.parent.mkdir(parents=True)
+    workspace.write_text(json.dumps({"folder": "file:///example/cursor-fixture"}))
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE composerHeaders (composerId, workspaceId, createdAt, lastUpdatedAt, isArchived, value)")
+        conn.execute("INSERT INTO composerHeaders VALUES (?, ?, ?, ?, ?, ?)",
+            ("cursor-unused", "workspace", 1, None, 0, json.dumps({"type": "head"})))
+        conn.execute("CREATE TABLE cursorDiskKV (key, value)")
+
+
+def test_sync_uploads_a_cursor_chat_with_a_null_bubble_row(tmp_path, archive):
+    _, _client, url = archive
+    env = fixture_env(tmp_path)
+    write_cursor_ide(env, "IDE question")
+    with sqlite3.connect(Path(env["CURSOR_USER_DIR"]) / "globalStorage" / "state.vscdb") as conn:
+        conn.execute("INSERT INTO cursorDiskKV VALUES (?, NULL)", ("bubbleId:cursor-fixture:orphan",))
+    env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
+    assert run(env, "scripts/archive-sync.py", "--source", "cursor") == {"uploaded": 1, "unchanged": 0}
+
+
+def test_cursor_thread_skips_a_referenced_null_bubble(tmp_path):
+    env = fixture_env(tmp_path)
+    write_cursor_ide(env, "IDE question")
+    with sqlite3.connect(Path(env["CURSOR_USER_DIR"]) / "globalStorage" / "state.vscdb") as conn:
+        conn.execute("INSERT INTO cursorDiskKV VALUES (?, NULL)", ("bubbleId:cursor-fixture:orphan",))
+        conn.execute("UPDATE cursorDiskKV SET value = ? WHERE key = ?", (json.dumps(
+            {"fullConversationHeadersOnly": [{"bubbleId": "orphan"}, {"bubbleId": "one"}]}), "composerData:cursor-fixture"))
+    thread = run(env, "one_conv_cli.py", "local", "thread", "/example/cursor-fixture", "--source", "cursor",
+                 "--no-mark-read", "--json")
+    assert [turn["text"] for turn in thread["turns"]] == ["IDE question"]
+
+
+def test_sync_counts_an_unused_cursor_chat_as_empty(tmp_path, archive):
+    _, _client, url = archive
+    env = fixture_env(tmp_path)
+    write_unused_cursor_chat(env)
+    env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
+    assert run(env, "scripts/archive-sync.py", "--source", "cursor") == {"uploaded": 0, "unchanged": 0, "empty": 1}
+
+
 def test_sync_reconciles_an_archive_rolled_back_to_an_older_revision(tmp_path, archive):
     _, client, url = archive
     env = fixture_env(tmp_path)
@@ -828,12 +986,14 @@ def test_unavailable_archive_warns_and_keeps_native_results(tmp_path):
     env = fixture_env(tmp_path)
     write_claude(env)
     with socket.socket() as reserved:
-        reserved.bind(("127.0.0.1", 0))  # Bound but not listening: connection must fail.
-        env.update(ONE_CONV_ARCHIVE_URL=f"http://127.0.0.1:{reserved.getsockname()[1]}", ONE_CONV_ARCHIVE_TOKEN="secret")
-        for args in (("search", "Quartz"), ("chats",), ("thread", "ancestry", "--no-mark-read")):
-            result = run(env, "bin/one-conv", "local", *args, "--source", "claude", "--json", success=False)
-            assert result.returncode == 0 and "unavailable" in result.stderr and "native history only" in result.stderr
-            assert json.loads(result.stdout)
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    # Nothing listens there any more, so the connection is refused at once instead of timing out.
+    env.update(ONE_CONV_ARCHIVE_URL=f"http://127.0.0.1:{port}", ONE_CONV_ARCHIVE_TOKEN="secret")
+    for args in (("search", "Quartz"), ("chats",), ("thread", "ancestry", "--no-mark-read")):
+        result = run(env, "one_conv_cli.py", "local", *args, "--source", "claude", "--json", success=False)
+        assert result.returncode == 0 and "unavailable" in result.stderr and "native history only" in result.stderr
+        assert json.loads(result.stdout)
 
 
 def test_failed_capture_does_not_starve_older_history(tmp_path, archive):
@@ -869,7 +1029,7 @@ def test_an_older_local_copy_becomes_current(tmp_path, archive):
     os.utime(path, (first["mtime"] - 10,) * 2)
     assert run(env, "scripts/archive-sync.py", "--source", "claude") == {"uploaded": 1, "unchanged": 0}
     remote = {**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "empty")}
-    thread = run(remote, "bin/one-conv", "local", "thread", "ancestry", "--source", "claude", "--no-mark-read", "--json")
+    thread = run(remote, "one_conv_cli.py", "local", "thread", "ancestry", "--source", "claude", "--no-mark-read", "--json")
     assert thread["turns"][-1]["text"] == "The answer is restored from a backup."
     assert "forty-two" in json.dumps(client.read_capture(first["key"], first["revision"])["turns"])
 
@@ -887,17 +1047,17 @@ def test_codex_rollouts_sharing_a_session_id_are_archived_separately(tmp_path, a
     os.utime(parent, (time.time() - 60,) * 2)
     commands = [("chats",), ("thread", "codex-fixture", "--session", "shared", "--no-mark-read"),
                 ("thread", "codex-fixture", "--nth", "2", "--no-mark-read"), ("search", "question")]
-    baseline = [run(env, "bin/one-conv", "local", *args, "--source", "codex", "--json") for args in commands]
+    baseline = [run(env, "one_conv_cli.py", "local", *args, "--source", "codex", "--json") for args in commands]
     assert baseline[1]["turns"][0]["text"] == "Subagent question"  # The newest rollout, as without an archive.
     assert baseline[2]["turns"][0]["text"] == "Quartz question"
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     assert run(env, "scripts/archive-sync.py", "--source", "codex") == {"uploaded": 2, "unchanged": 0}
     assert run(env, "scripts/archive-sync.py", "--source", "codex") == {"uploaded": 0, "unchanged": 2}
     for args, expected in zip(commands, baseline):
-        assert run(env, "bin/one-conv", "local", *args, "--source", "codex", "--json") == expected
+        assert run(env, "one_conv_cli.py", "local", *args, "--source", "codex", "--json") == expected
     remote = {**env, "CODEX_HOME": str(tmp_path / "empty")}
     for args, expected in zip(commands, baseline):
-        assert run(remote, "bin/one-conv", "local", *args, "--source", "codex", "--json") == expected
+        assert run(remote, "one_conv_cli.py", "local", *args, "--source", "codex", "--json") == expected
 
 
 def test_conversations_with_identical_times_keep_one_order(tmp_path, archive):
@@ -910,11 +1070,11 @@ def test_conversations_with_identical_times_keep_one_order(tmp_path, archive):
         copy.write_bytes(path.read_bytes())
         os.utime(copy, (stamp, stamp))
     os.utime(path, (stamp, stamp))
-    native = run(env, "bin/one-conv", "local", "read", "ancestry", "--source", "claude", "--json")
+    native = run(env, "one_conv_cli.py", "local", "read", "ancestry", "--source", "claude", "--json")
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     assert run(env, "scripts/archive-sync.py", "--source", "claude")["uploaded"] == 7
     remote = {**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "empty")}
-    assert run(remote, "bin/one-conv", "local", "read", "ancestry", "--source", "claude", "--json") == native
+    assert run(remote, "one_conv_cli.py", "local", "read", "ancestry", "--source", "claude", "--json") == native
 
 
 def test_collision_does_not_break_other_sources_or_projects(tmp_path, archive):
@@ -927,11 +1087,11 @@ def test_collision_does_not_break_other_sources_or_projects(tmp_path, archive):
     manifest = client.read_conversation(row["key"])
     manifest["origin"] = "second-machine"
     client.put(manifest, {}, None)
-    assert run(env, "bin/one-conv", "local", "chats", "--source", "codex", "--json") == []
+    assert run(env, "one_conv_cli.py", "local", "chats", "--source", "codex", "--json") == []
     manifest["cwd"] = manifest["summary"]["cwd"] = "/example/independent"
     client.put(manifest, {}, None)
     assert len(list(client.list_conversations())) == 3  # Both conflicting captures still exist.
-    results = run(env, "bin/one-conv", "local", "search", "Quartz", "--project", "independent", "--source", "claude", "--json")
+    results = run(env, "one_conv_cli.py", "local", "search", "Quartz", "--project", "independent", "--source", "claude", "--json")
     assert len(results) == 1 and results[0]["cwd"] == "/example/independent"
 
 
@@ -1014,12 +1174,12 @@ def test_archived_trace_uses_existing_local_views(tmp_path, archive, source):
     commands = [("thread", "ancestry", "--no-mark-read"),
                 ("thread", "ancestry", "--raw", "--no-mark-read"),
                 ("search", "tool-result-marker")]
-    baseline = [run(env, "bin/one-conv", "local", *args, "--source", source, "--json") for args in commands]
+    baseline = [run(env, "one_conv_cli.py", "local", *args, "--source", source, "--json") for args in commands]
     compact = "\n".join(turn["text"] for turn in baseline[0]["turns"])
     raw = "\n".join(turn["text"] for turn in baseline[1]["turns"])
     assert thinking not in compact and "tool-result-marker" not in compact
     assert thinking in raw and tool in raw and "tool-result-marker" in raw
-    assert "original-tail" not in raw  # Existing local rendering remains summarized.
+    assert "original-tail" in raw  # A tool result under TOOL_RESULT_CHARS is shown whole.
     assert baseline[2] == []  # Search keeps its existing prose-only contract.
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     run(env, "scripts/archive-sync.py", "--source", source)
@@ -1029,7 +1189,7 @@ def test_archived_trace_uses_existing_local_views(tmp_path, archive, source):
     assert any(block.get("content") == result_text for turn in captured["turns"] for block in turn["blocks"])
     env[native_root] = str(tmp_path / "empty")
     for args, expected in zip(commands, baseline):
-        assert run(env, "bin/one-conv", "local", *args, "--source", source, "--json") == expected
+        assert run(env, "one_conv_cli.py", "local", *args, "--source", source, "--json") == expected
 
 
 def test_search_follows_the_newest_copy(tmp_path, archive):
@@ -1044,8 +1204,8 @@ def test_search_follows_the_newest_copy(tmp_path, archive):
     path.write_text(path.read_text().replace("Quartz", "Basalt"))
     os.utime(path, (path.stat().st_mtime + 60,) * 2)
     run(other, "scripts/archive-sync.py", "--source", "claude")
-    assert run(env, "bin/one-conv", "local", "search", "Quartz", "--source", "claude", "--json") == []
-    assert len(run(env, "bin/one-conv", "local", "search", "Basalt", "--source", "claude", "--json")) == 1
+    assert run(env, "one_conv_cli.py", "local", "search", "Quartz", "--source", "claude", "--json") == []
+    assert len(run(env, "one_conv_cli.py", "local", "search", "Basalt", "--source", "claude", "--json")) == 1
 
 
 def test_project_directories_sharing_a_cwd_list_each_thread_once(tmp_path, archive):
@@ -1057,7 +1217,7 @@ def test_project_directories_sharing_a_cwd_list_each_thread_once(tmp_path, archi
     second.write_text(first.read_text().replace("forty-two", "forty-three"))
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     run(env, "scripts/archive-sync.py", "--source", "claude")
-    threads = run(env, "bin/one-conv", "local", "read", "ancestry", "--source", "claude", "--json")
+    threads = run(env, "one_conv_cli.py", "local", "read", "ancestry", "--source", "claude", "--json")
     assert sorted(thread["uuid"] for thread in threads) == ["session-one", "session-two"]
 
 
@@ -1072,7 +1232,7 @@ def test_one_unreadable_archived_conversation_does_not_hide_other_results(tmp_pa
     with store.engine.begin() as conn:
         conn.execute(store.chunks.delete().where(store.chunks.c.digest.in_(client.read_conversation(broken["key"])["fields"]["turns"])))
     remote = {**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "empty")}
-    result = run(remote, "bin/one-conv", "local", "search", "Quartz", "--source", "claude", "--json", success=False)
+    result = run(remote, "one_conv_cli.py", "local", "search", "Quartz", "--source", "claude", "--json", success=False)
     assert result.returncode == 0 and "session-two" in result.stderr and "404" in result.stderr
     assert [row["session"] for row in json.loads(result.stdout)] == ["session-one"]
 
@@ -1093,21 +1253,21 @@ def one_broken_archived(tmp_path, archive):
 
 
 def test_listing_a_project_with_a_broken_archived_conversation_succeeds(one_broken_archived):
-    result = run(one_broken_archived, "bin/one-conv", "local", "read", "ancestry", "--source", "claude", "--json", success=False)
+    result = run(one_broken_archived, "one_conv_cli.py", "local", "read", "ancestry", "--source", "claude", "--json", success=False)
     assert result.returncode == 0
 
 
 def test_listing_a_project_still_shows_the_readable_conversation(one_broken_archived):
-    result = run(one_broken_archived, "bin/one-conv", "local", "read", "ancestry", "--source", "claude", "--json", success=False)
+    result = run(one_broken_archived, "one_conv_cli.py", "local", "read", "ancestry", "--source", "claude", "--json", success=False)
     assert "session-one" in [row["uuid"] for row in json.loads(result.stdout or "[]")]
 
 
 def test_chats_with_a_broken_archived_conversation_succeeds(one_broken_archived):
-    assert run(one_broken_archived, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False).returncode == 0
+    assert run(one_broken_archived, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False).returncode == 0
 
 
 def test_reading_the_broken_archived_thread_says_it_is_unavailable(one_broken_archived):
-    result = run(one_broken_archived, "bin/one-conv", "local", "thread", "ancestry", "--source", "claude",
+    result = run(one_broken_archived, "one_conv_cli.py", "local", "thread", "ancestry", "--source", "claude",
                  "--session", "session-two", "--json", success=False)
     assert result.returncode == 1 and "unavailable" in result.stderr and "Traceback" not in result.stderr
 
@@ -1122,7 +1282,7 @@ def test_archived_cloud_conversations_keep_their_account_label(tmp_path, archive
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     run(env, "scripts/archive-sync.py", "--source", "claude-chat")
     env["ONE_CONV_CLOUD_CACHE"] = str(tmp_path / "empty")
-    rows = run(env, "bin/one-conv", "cloud", "chats", "--source", "claude-chat", "--json")
+    rows = run(env, "one_conv_cli.py", "cloud", "chats", "--source", "claude-chat", "--json")
     assert [row["account_label"] for row in rows] == ["me@example.com"]
 
 
@@ -1162,7 +1322,7 @@ def test_using_one_conv_syncs_in_the_background(tmp_path, archive):
     write_claude(env)
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret", ONE_CONV_ARCHIVE_SYNC_MINUTES="15")
     # Any command starts it, including one that never reads the archive, and returns without waiting.
-    assert run(env, "bin/one-conv", "cloud", "providers", success=False).returncode == 0
+    assert run(env, "one_conv_cli.py", "cloud", "providers", success=False).returncode == 0
     deadline = time.time() + 60
     while not list(client.list_conversations()) and time.time() < deadline:
         time.sleep(0.5)
@@ -1187,14 +1347,14 @@ def test_failing_or_missing_syncs_are_reported_on_every_command(tmp_path, archiv
     finally:
         unreadable.chmod(0o600)
     for _ in range(2):
-        result = run(env, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False)
+        result = run(env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False)
         assert result.returncode == 0 and "Archive sync at" in result.stderr and "claude/session-one" in result.stderr
     state = Path(env["ONE_CONV_STATE_DIR"]) / "archive-sync.json"
     state.write_text(json.dumps({"requested": time.time() - 2 * 86400, "started": time.time() - 2 * 86400}))
-    result = run(env, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False)
+    result = run(env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False)
     assert "has not completed in the last day" not in result.stderr  # Automatic sync is off.
     env["ONE_CONV_ARCHIVE_SYNC_MINUTES"] = str(3 * 24 * 60)  # On, but not yet due again: nothing starts.
-    result = run(env, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False)
+    result = run(env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False)
     assert "has not completed in the last day" in result.stderr
 
 
@@ -1218,7 +1378,7 @@ def test_freeing_deletes_only_verified_files_and_restore_brings_them_back(tmp_pa
         os.utime(item, (old, old))
     originals = {item: item.read_bytes() for item in files}
     commands = [("thread", project, "--raw", "--no-mark-read"), ("search", "Quartz"), ("chats",)]
-    baseline = [run(env, "bin/one-conv", "local", *args, "--source", source, "--json") for args in commands]
+    baseline = [run(env, "one_conv_cli.py", "local", *args, "--source", source, "--json") for args in commands]
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     run(env, "scripts/archive-sync.py", "--source", source)
     times = tampered.stat()
@@ -1235,12 +1395,12 @@ def test_freeing_deletes_only_verified_files_and_restore_brings_them_back(tmp_pa
     assert result["freed"] == 1 and result["freed_bytes"] == sum(map(len, originals.values()))
     assert not any(item.exists() for item in files) and not path.with_suffix("").exists()
     for args, expected in zip(commands, baseline):
-        assert run(env, "bin/one-conv", "local", *args, "--source", source, "--json") == expected
+        assert run(env, "one_conv_cli.py", "local", *args, "--source", source, "--json") == expected
     (Path(env["ONE_CONV_STATE_DIR"]) / "archive-origin").unlink()  # Restore works after the installation ID is lost.
     assert run(env, "scripts/archive-sync.py", "--restore", session) == {"restored": len(files)}
     assert {item: item.read_bytes() for item in originals} == originals and path.stat().st_mtime == old
     for args, expected in zip(commands, baseline):
-        assert run(env, "bin/one-conv", "local", *args, "--source", source, "--json") == expected
+        assert run(env, "one_conv_cli.py", "local", *args, "--source", source, "--json") == expected
 
 
 DAMAGED_SYNC_STATES = [
@@ -1261,7 +1421,7 @@ def test_damaged_sync_state_does_not_break_an_unrelated_command(tmp_path, state)
     state_dir.mkdir(parents=True)
     # Written as raw text: json.dumps would refuse Infinity in strict mode and a 1001-digit int is valid JSON.
     (state_dir / "archive-sync.json").write_text(json.dumps(state, allow_nan=True))
-    assert run(env, "bin/one-conv", "cloud", "providers", success=False).returncode == 0
+    assert run(env, "one_conv_cli.py", "cloud", "providers", success=False).returncode == 0
 
 
 def complete_row():
@@ -1310,7 +1470,7 @@ def test_damaged_listing_cache_still_lists_its_complete_rows(tmp_path):
     state_dir.mkdir(parents=True)
     rows = [complete_row(), {**complete_row(), "key": "k2", "session": "s2", "summary": {}}]
     (state_dir / "archive-listing.json").write_text(json.dumps({"url": "http://127.0.0.1:1", "listed": 1000.0, "rows": rows}))
-    result = run(env, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False)
+    result = run(env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False)
     assert [row["cwd"] for row in json.loads(result.stdout)] == ["/example/ancestry"]
 
 
@@ -1328,7 +1488,7 @@ def test_damaged_listing_cache_does_not_break_local_reads(tmp_path, cached):
     state_dir = Path(env["ONE_CONV_STATE_DIR"])
     state_dir.mkdir(parents=True)
     (state_dir / "archive-listing.json").write_text(json.dumps(cached))
-    assert run(env, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False).returncode == 0
+    assert run(env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False).returncode == 0
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -1581,12 +1741,12 @@ def test_damaged_state_files_and_settings_do_not_break_commands(tmp_path, archiv
     damaged = ("archive-sync.json", "archive-listing.json", "archive-freed.json")
     for name in damaged:
         (state / name).write_text('{"truncated')
-    native = run(env, "bin/one-conv", "local", "chats", "--source", "claude", "--json")
+    native = run(env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json")
     unreachable = {**env, "ONE_CONV_ARCHIVE_URL": "http://127.0.0.1:1", "ONE_CONV_ARCHIVE_TOKEN": "test-secret"}
-    result = run(unreachable, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False)
+    result = run(unreachable, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False)
     assert result.returncode == 0 and json.loads(result.stdout) == native and "Showing native history only" in result.stderr
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret", ONE_CONV_ARCHIVE_SYNC_MINUTES="soon")
-    result = run(env, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False)
+    result = run(env, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False)
     assert result.returncode == 0 and json.loads(result.stdout) == native and "Ignoring ONE_CONV_ARCHIVE_SYNC_MINUTES" in result.stderr
     deadline = time.time() + 60  # The invalid interval falls back to the default, so a sync starts and repairs the state.
     while "succeeded" not in (state / "archive-sync.json").read_text() and time.time() < deadline:
@@ -1597,19 +1757,53 @@ def test_damaged_state_files_and_settings_do_not_break_commands(tmp_path, archiv
             assert not (state / name).exists() or (state / name).stat().st_mode & 0o777 == 0o600, name
 
 
-def test_only_one_sync_runs_and_a_stopped_sync_does_not_block_later_ones(tmp_path, archive):
+def held_sync_lock(env):
+    """Another process holds the sync lock, as a running sync does."""
+    lock = Path(env["ONE_CONV_STATE_DIR"]) / "archive-sync.lock"
+    lock.parent.mkdir(exist_ok=True)
+    return subprocess.Popen([sys.executable, "-c", "import fcntl,sys,time; f=open(sys.argv[1],'w');"
+                             " fcntl.flock(f, fcntl.LOCK_EX); print('held', flush=True); time.sleep(60)", str(lock)],
+                            stdout=subprocess.PIPE, text=True)
+
+
+def test_a_running_sync_makes_another_skip(tmp_path, archive):
     _, _, url = archive
     env = fixture_env(tmp_path)
     write_claude(env)
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
-    lock = Path(env["ONE_CONV_STATE_DIR"]) / "archive-sync.lock"
-    lock.parent.mkdir()
-    lock.touch()
-    assert run(env, "scripts/archive-sync.py", "--source", "claude") == {"skipped": "another sync is running"}
-    stopped = time.time() - SYNC_STALE_SECONDS - 60
-    os.utime(lock, (stopped, stopped))
+    holder = held_sync_lock(env)
+    holder.stdout.readline()
+    try:
+        assert run(env, "scripts/archive-sync.py", "--source", "claude") == {"skipped": "another sync is running"}
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_running_sync_does_not_block_another_lane(tmp_path, archive):
+    _, _, url = archive
+    env = fixture_env(tmp_path)
+    write_claude(env)
+    env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
+    holder = held_sync_lock(env)
+    holder.stdout.readline()
+    try:
+        assert run(env, "scripts/archive-sync.py", "--source", "claude", "--lane", "ide") == {"uploaded": 1, "unchanged": 0}
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_a_killed_sync_does_not_block_the_next_one(tmp_path, archive):
+    _, _, url = archive
+    env = fixture_env(tmp_path)
+    write_claude(env)
+    env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
+    holder = held_sync_lock(env)
+    holder.stdout.readline()
+    holder.kill()
+    holder.wait()
     assert run(env, "scripts/archive-sync.py", "--source", "claude") == {"uploaded": 1, "unchanged": 0}
-    assert not lock.exists()
 
 
 def test_offline_archive_keeps_archived_conversations_listed(tmp_path):
@@ -1620,10 +1814,20 @@ def test_offline_archive_keeps_archived_conversations_listed(tmp_path):
     env.update(ONE_CONV_ARCHIVE_URL=url, ONE_CONV_ARCHIVE_TOKEN="test-secret")
     run(env, "scripts/archive-sync.py", "--source", "claude")
     remote = {**env, "CLAUDE_CONFIG_DIR": str(tmp_path / "empty")}
-    online = run(remote, "bin/one-conv", "local", "chats", "--source", "claude", "--json")
+    online = run(remote, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json")
     stop()
     store.engine.dispose()
-    result = run(remote, "bin/one-conv", "local", "chats", "--source", "claude", "--json", success=False)
+    result = run(remote, "one_conv_cli.py", "local", "chats", "--source", "claude", "--json", success=False)
     assert result.returncode == 0 and json.loads(result.stdout) == online and "archive's listing from" in result.stderr
-    result = run(remote, "bin/one-conv", "local", "thread", "ancestry", "--source", "claude", "--json", success=False)
+    result = run(remote, "one_conv_cli.py", "local", "thread", "ancestry", "--source", "claude", "--json", success=False)
     assert result.returncode != 0 and "stored only in the archive, which is unavailable" in result.stderr
+
+
+def test_local_listing_ignores_corpus_files(tmp_path):
+    env = {**fixture_env(tmp_path), "ONE_CONV_CORPUS": str(tmp_path / "corpus")}
+    (tmp_path / "claude" / "projects").mkdir(parents=True)
+    path = tmp_path / "corpus" / "box" / "claude" / "-work" / "session.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"source": "claude", "session": "session", "machine": "box", "cwd": "/work",
+                                "turns": [{"ts": "2026-01-01T10:00:00Z", "role": "user", "text": "hello"}]}))
+    assert run(env, "one_conv_cli.py", "local", "chats", "--json") == []

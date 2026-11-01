@@ -94,10 +94,28 @@ class HubClient:
         except (urllib.error.URLError, OSError, ValueError) as error:
             raise HubUnavailable(f"hub at {self.url} is unreachable: {error}") from None
 
+    def download(self, path: str) -> tuple[str, bytes]:
+        """(media_type, body) of a binary resource, such as an attachment a message carries."""
+        if self.listener_pid is not None and not tunnel.listening(self.listener_pid, urlsplit(self.url).port or 0):
+            raise HubUnavailable("the bridge's ssh forward is not running")
+        request = urllib.request.Request(self.url + path, headers={"Authorization": f"Bearer {self.token}"})
+        try:
+            with self._opener.open(request, timeout=self.timeout) as response:
+                return response.headers.get("Content-Type", "application/octet-stream").partition(";")[0], response.read()
+        except urllib.error.HTTPError as error:
+            try:
+                message = json.loads(error.read()).get("error", "")
+            except ValueError:
+                message = error.reason
+            raise HubRefused(error.code, message) from None
+        except (urllib.error.URLError, OSError) as error:
+            raise HubUnavailable(f"hub at {self.url} is unreachable: {error}") from None
+
     # Topics ---------------------------------------------------------------------------------
 
-    def join(self, topic: str, address: str) -> dict:
-        return self.request("PUT", f"/v1/topics/{quote(topic)}/members/{quote(address, safe=':')}")
+    def join(self, topic: str, address: str, work: bool | None = None) -> dict:
+        query = "" if work is None else f"?work={int(work)}"
+        return self.request("PUT", f"/v1/topics/{quote(topic)}/members/{quote(address, safe=':')}{query}")
 
     def leave(self, topic: str, address: str) -> dict:
         return self.request("DELETE", f"/v1/topics/{quote(topic)}/members/{quote(address, safe=':')}")
@@ -105,9 +123,18 @@ class HubClient:
     def topics(self) -> list[dict]:
         return self.request("GET", "/v1/topics").get("topics", [])
 
-    def history(self, topic: str, after: str | None = None, limit: int = 100) -> list[dict]:
-        query = f"?limit={limit}" + (f"&after={quote(after)}" if after else "")
+    def history(self, topic: str, after: str | None = None, limit: int = 100, pos: int = 0) -> list[dict]:
+        query = f"?limit={limit}" + (f"&after={quote(after)}" if after else "") + (f"&pos={pos}" if pos else "")
         return self.request("GET", f"/v1/topics/{quote(topic)}/messages{query}").get("messages", [])
+
+    def summaries(self, topic: str) -> dict:
+        return self.request("GET", f"/v1/topics/{quote(topic)}/summaries")
+
+    def summarize(self, topic: str, block: str, text: str, by: str) -> dict:
+        return self.request("PUT", f"/v1/topics/{quote(topic)}/summaries/{block}", {"text": text, "by": by})
+
+    def open_block(self, topic: str, block: str) -> dict:
+        return self.request("GET", f"/v1/topics/{quote(topic)}/summaries/{block}")
 
     def post(self, message: dict) -> dict:
         return self.request("POST", "/v1/messages", message)

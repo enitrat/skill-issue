@@ -1,3 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pytest==9.1.1",
+#     "pytest-xdist==3.8.0",
+#     "click==8.3.3",
+#     "curl_cffi==0.13.0",
+#     "pycryptodome==3.23.0",
+#     "mcp==2.2.0",
+#     "websockets==17.2",
+#     "starlette==1.8.0",
+#     "uvicorn==0.54.0",
+#     "sqlalchemy==2.1.4",
+#     "pydantic==2.12.5",
+#     "httpx==0.28.1",
+# ]
+#
+# [tool.uv]
+# exclude-newer = "2026-10-27T00:00:00Z"
+# ///
 """Same-machine agent messages reach the workspace as history only: original ids, times and outcomes, no wake."""
 
 import json
@@ -72,7 +93,7 @@ def test_an_invalid_time_is_refused(hub, item, at):
 
 def test_reporting_creates_no_membership(hub, item):
     hub.report("mac", [{**item, "topic": "release"}])
-    assert hub.topics() == [{"topic": "release", "members": [], "last": AT}]
+    assert hub.topics()[0]["members"] == []
 
 
 def test_history_names_a_tagged_dms_recipient(hub, item):
@@ -115,7 +136,7 @@ def test_a_conflict_keeps_the_first_text(hub, item):
 
 
 @pytest.mark.parametrize("change", [
-    {"from": "user"}, {"to": "user"}, {"to": "workspace/user"}, {"from": "box/codex:c9"}, {"to": "#release"},
+    {"from": "box/user"}, {"from": "user", "to": "user"}, {"to": "workspace/user"}, {"from": "box/codex:c9"}, {"to": "#release"},
     {"id": "not-hex"}, {"topic": "Bad Topic"}, {"text": ""}, {"outcome": "read"}, {"mode": "loud"}, {"at": "yesterday"},
 ])
 def test_an_invalid_item_is_refused(hub, item, change):
@@ -128,7 +149,7 @@ def test_invalid_unicode_is_refused_without_blocking_the_rest(hub, item):
 
 
 def test_an_invalid_item_does_not_block_the_rest(hub, item):
-    results = hub.report("mac", [{**item, "from": "user"}, {**item, "id": "b" * 32}])["results"]
+    results = hub.report("mac", [{**item, "to": "workspace/user"}, {**item, "id": "b" * 32}])["results"]
     assert [row["status"] for row in results] == ["refused", "recorded"]
 
 
@@ -238,16 +259,10 @@ def test_the_bridge_reports_a_local_dm(home, served, row):
     assert served[1].report_history()["recorded"] == 1
 
 
-def test_a_reported_dm_appears_in_the_workspace_thread(home, served, row):
+def test_a_reported_agent_dm_stays_out_of_the_human_direct_threads(home, served, row):
     _log(home, row)
     served[1].report_history()
-    assert served[0].direct()["threads"][0]["pair"] == "macbook/claude:c2 macbook/codex:c1"
-
-
-def test_a_reported_dm_shows_its_original_outcome(home, served, row):
-    _log(home, row)
-    served[1].report_history()
-    assert served[0].direct()["threads"][0]["messages"][0]["delivery"]["state"] == "accepted"
+    assert served[0].direct()["threads"] == []
 
 
 def test_reported_rows_are_not_sent_again(home, served, row):
@@ -375,11 +390,6 @@ def test_a_channel_post_is_not_marked_directed(tagged):
 
 def test_a_tagged_dm_keeps_its_recipient(tagged):
     assert tagged.topic("release")["messages"][0]["to"] == "macbook/claude:c2"
-
-
-def test_a_tagged_dm_stays_in_its_pairs_thread(tagged):
-    pairs = [thread["pair"] for thread in tagged.direct()["threads"]]
-    assert "macbook/claude:c2 macbook/codex:c1" in pairs
 
 
 def test_a_channel_post_stays_out_of_direct_threads(tagged):
