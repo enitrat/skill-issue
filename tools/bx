@@ -149,7 +149,9 @@ ready_check() {
       [ -d \"\$repo/.git\" ] || continue
       check \"git fetch in \$repo\" git -C \"\$repo\" fetch --quiet origin
       if [ -f \"\$repo/pnpm-lock.yaml\" ]; then
-        check \"pnpm install --offline in \$repo\" sh -c \"cd '\$repo' && pnpm install --frozen-lockfile --offline\"
+        # Online allowed: pnpm fetches its own pinned version into ~/.cache, which Boat never
+        # saves. The packages come from the store in the snapshot.
+        check \"pnpm install in \$repo\" sh -c \"cd '\$repo' && pnpm install --frozen-lockfile --prefer-offline\"
       fi
     done
     exit \$fails
@@ -246,10 +248,10 @@ create() {
 }
 
 # Waits for the setup script that `boat new --setup-file` started. The bootstrap takes
-# about 2 minutes; 5 leaves room for a slow Nix download.
+# about 7 minutes; 10 leaves room for a slow Nix download.
 wait_setup() {
   local status i=0
-  while [ $i -lt 60 ]; do
+  while [ $i -lt 120 ]; do
     status=$(boat info "$1" --json | jq -r '.sandbox.setupStatus')
     case $status in
       running | pending | null) sleep 5 ;;
@@ -258,7 +260,7 @@ wait_setup() {
     esac
     i=$((i + 1))
   done
-  log "setup still running after 5 minutes"
+  log "setup still running after 10 minutes"
   return 1
 }
 
@@ -280,7 +282,7 @@ bake() {
     log "creating a bare sandbox"
     id=$(create --name "bake-$snapshot" --setup-file "$setup")
     rm -f "$setup"
-    log "$id: running the bootstrap (about 2 minutes)"
+    log "$id: running the bootstrap (about 7 minutes)"
     wait_setup "$id" || die "bootstrap failed on $id. Inspect: boat info $id. Delete: boat delete $id"
   else
     local list=$HOME/.config/bx/$env line repos=()

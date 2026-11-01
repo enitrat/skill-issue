@@ -43,9 +43,10 @@ if [ ! -e "$repo_dir/flake.nix" ]; then
 fi
 
 log "switching home-manager to $flake_output"
-# -b moves files that home-manager would overwrite (a stock .zshrc) aside. Run from
-# a scratch directory: the first switch leaves its build links in the current one.
-(cd "$(mktemp -d)" && nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$flake_output" -b pre-nix)
+# -b moves files that home-manager would overwrite (a stock .zshrc) aside. Boat sets
+# WORK_DIR=/home/user in the commands it runs, setup scripts included, and home-manager
+# would leave its build links there.
+env -u WORK_DIR nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$flake_output" -b pre-nix
 
 log "installing nix-after-restore.service"
 sudo install -m 644 "$repo_dir/bootstrap/nix-after-restore.service" /etc/systemd/system/
