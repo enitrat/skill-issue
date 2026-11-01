@@ -42,8 +42,10 @@ SSH for the clone only: no token is written to the build sandbox or kept in the 
 Each repo gets: git submodules, `pnpm install --frozen-lockfile` when it has a pnpm
 lockfile, and `make setup` when its Makefile has that target.
 
-Build sandboxes start with --no-env, so no Boat credentials land in a snapshot. A failed
-build keeps its sandbox for inspection and prints how to delete it.
+Build sandboxes get your Boat environment like any other: a sandbox made with --no-env
+passes "no logins" on to every sandbox started from its snapshot. Before saving, the bake
+deletes the login files Boat wrote, so the snapshot holds none. A failed build keeps its
+sandbox for inspection and prints how to delete it.
 EOF
 }
 
@@ -243,8 +245,15 @@ EOF
 
 # Creates a sandbox and prints its id. Arguments go to `boat new`.
 create() {
-  boat new --no-env --json "$@" | jq -r 'select(.event == "ready") | .id' | grep . \
+  boat new --json "$@" | jq -r 'select(.event == "ready") | .id' | grep . \
     || die "could not create a sandbox"
+}
+
+# Deletes the logins Boat writes to a sandbox's disk (docs.boat.dev/environments/access),
+# so a snapshot holds none. Tokens in /run/ascii-secrets are never snapshotted.
+scrub_logins() {
+  ssh -o BatchMode=yes "$1" 'rm -f ~/.claude/.credentials.json ~/.codex/auth.json \
+    ~/.config/gh/hosts.yml ~/.config/ascii/boat/config.json'
 }
 
 # Waits for the setup script that `boat new --setup-file` started. The bootstrap takes
@@ -304,6 +313,7 @@ bake() {
       "bash -c $(printf %q "$(env_script)") bx-env $(printf '%q ' "$env" "${repos[@]}")" \
       || die "env setup failed on $id. Inspect: ssh $id. Delete: boat delete $id"
   fi
+  scrub_logins "$id" || die "could not delete the logins on $id. Delete: boat delete $id"
   log "$id: saving as $snapshot"
   boat snapshot "$id" "$snapshot" --json | jq -e 'select(.event == "saved")' >/dev/null \
     || die "could not save $snapshot from $id"
