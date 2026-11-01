@@ -12,6 +12,13 @@ in
   # Determinate Nix manages the Nix installation and daemon itself.
   nix.enable = false;
 
+  # Touch ID for sudo. `reattach` makes it work inside herdr and tmux panes too,
+  # whose server runs outside the login session.
+  security.pam.services.sudo_local = {
+    touchIdAuth = true;
+    reattach = true;
+  };
+
   # --- Apps -------------------------------------------------------------------
   # Homebrew itself. A Mac that already has Homebrew needs `autoMigrate = true`
   # for its first switch only.
