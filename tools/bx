@@ -294,6 +294,10 @@ bake() {
     [ ${#repos[@]} -gt 0 ] || die "$list lists no repos"
     log "creating a sandbox from dev-base"
     id=$(create --from dev-base --name "bake-$snapshot")
+    # Install nothing while the disk restores: pnpm then puts its store on Boat's restore
+    # layer, a path that is gone once the restore ends, and every later install wants to
+    # rebuild node_modules.
+    wait_hydrated "$id"
     log "$id: cloning ${repos[*]}"
     # One connection: the script travels quoted in the command line, the token on stdin.
     gh auth token | ssh -o BatchMode=yes "$id" \
