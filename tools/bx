@@ -94,6 +94,21 @@ new() {
   gh auth token | ssh -o BatchMode=yes "$id" "
     set -e
     read -r token
+    # Boat restores the disk lazily, so at boot systemd has not loaded the Nix units and
+    # the daemon starts late or not at all: nix commands are refused. Wait for it, then
+    # restart it once; it creates its own socket.
+    nix_up() {
+      for _ in \$(seq \$1); do
+        /nix/var/nix/profiles/default/bin/nix store ping >/dev/null 2>&1 && return
+        sleep 2
+      done
+      return 1
+    }
+    if ! nix_up 15; then
+      sudo systemctl daemon-reload
+      sudo systemctl restart nix-daemon.service
+      nix_up 30 || echo 'bx: warning: the nix daemon is still down' >&2
+    fi
     mkdir -p ~/.config/gh
     (umask 077; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: %s\n' \"\$token\" $(printf %q "$(gh api user -q .login)") > ~/.config/gh/hosts.yml)
     gh auth status >/dev/null
@@ -141,6 +156,7 @@ rm_box() {
   id=$(resolve "$1")
   herdr_forget "$id"
   boat delete "$id" --yes >/dev/null
+  rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/boat-resolve/$id.json"
   log "deleted $id"
 }
 
@@ -192,17 +208,21 @@ create() {
     || die "could not create a sandbox"
 }
 
-# Waits for the setup script that `boat new --setup-file` started.
+# Waits for the setup script that `boat new --setup-file` started. The bootstrap takes
+# about 2 minutes; 5 leaves room for a slow Nix download.
 wait_setup() {
-  local status
-  while :; do
+  local status i=0
+  while [ $i -lt 60 ]; do
     status=$(boat info "$1" --json | jq -r '.sandbox.setupStatus')
     case $status in
       running | pending | null) sleep 5 ;;
       done) return ;;
       *) return 1 ;;
     esac
+    i=$((i + 1))
   done
+  log "setup still running after 5 minutes"
+  return 1
 }
 
 bake() {

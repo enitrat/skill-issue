@@ -26,6 +26,9 @@
     rebuild = "nh home switch ${config.skillIssue.repo} -c user@${pkgs.stdenv.hostPlatform.system}";
   };
 
+  # In .zshenv, so non-interactive `ssh box cmd` gets it too, not only herdr panes.
+  programs.zsh.envExtra = builtins.readFile ./zsh/boat-env.zsh;
+
   # Runs before every integration, which is the point: see the file.
   programs.zsh.initContent = lib.mkBefore (builtins.readFile ./zsh/ephemeral-host.zsh);
 }
