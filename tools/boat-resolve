@@ -1,0 +1,105 @@
+#!/bin/sh
+# boat-resolve: OpenSSH glue for Boat sandboxes, used by the `Host bx_*` block in
+# nix/home/darwin.nix. Every resume or fork moves a sandbox to a new machine with a new
+# address and host key, so both are fetched from the Boat API at connect time instead of
+# being remembered.
+set -eu
+
+VERSION="1.0.0"
+
+usage() {
+  cat <<'EOF'
+boat-resolve - find a Boat sandbox's current address and host key for ssh
+
+USAGE
+    boat-resolve connect <alias>              ProxyCommand: pipe stdio to the sandbox's sshd
+    boat-resolve hostkey <alias> <%H> <%I>    KnownHostsCommand: print the host key Boat reports
+    boat-resolve --help | --version
+
+<alias> is bx_<id>, or bx_<id>.wake to resume the sandbox first when it is stopped. Plain
+aliases never resume: herdr reconnects saved machines in the background, and a resume there
+would keep restarting sandboxes that were stopped on purpose.
+
+The API key is read from the login Keychain, service "boat-resolve". Create it once:
+    boat api-key create boat-resolve --ttl 365d --actions sandbox.read,sandbox.resume,ssh
+    security add-generic-password -U -s boat-resolve -a "$USER" -w '<secret>'
+EOF
+}
+
+api=https://boat.dev/api/v1
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/boat-resolve
+pubkey=$HOME/.ssh/ascii_box_ed25519.pub
+
+die() { echo "boat-resolve: $*" >&2; exit 1; }
+
+case ${1:-} in
+  -h | --help) usage; exit 0 ;;
+  --version) echo "boat-resolve $VERSION"; exit 0 ;;
+esac
+[ $# -ge 2 ] || die "usage: boat-resolve connect|hostkey <alias> [%H %I]"
+mode=$1
+alias=$2
+id=${alias%.wake}
+
+token() {
+  security find-generic-password -s boat-resolve -w 2>/dev/null \
+    || die "no API key in the Keychain under service boat-resolve"
+}
+
+call() { # METHOD PATH [JSON_BODY]
+  curl -sS --fail-with-body --max-time 30 -X "$1" "$api$2" \
+    -H "Authorization: Bearer $(token)" -H 'Content-Type: application/json' ${3:+-d "$3"}
+}
+
+state() { call GET "/sandboxes/$id" | jq -er .sandbox.state; }
+
+ensure_running() {
+  s=$(state) || die "cannot read $id"
+  case $s in
+    ready | idle | running) return ;;
+    archived | archiving | error)
+      [ "$alias" != "$id" ] || die "$id is $s. Connect to $id.wake to resume it, or run: boat resume $id"
+      echo "boat-resolve: resuming $id" >&2
+      call POST "/sandboxes/$id/resume" '{}' >/dev/null || die "resume of $id failed"
+      ;;
+  esac
+  # Starting states, or a resume we just asked for: Boat holds commands up to 60 s, we allow 3 min.
+  i=0
+  while [ $i -lt 90 ]; do
+    case $(state) in ready | idle | running) return ;; esac
+    sleep 2
+    i=$((i + 1))
+  done
+  die "$id did not become ready in 3 minutes"
+}
+
+# Authorizes our key (safe to repeat) and returns where to connect and which host key to trust.
+authorize() {
+  mkdir -p "$cache"
+  umask 077
+  call POST "/sandboxes/$id/sshkey" "$(jq -nc --arg k "$(cat "$pubkey")" '{key: $k}')" >"$cache/$id.json.tmp" \
+    || die "could not authorize the SSH key on $id"
+  mv "$cache/$id.json.tmp" "$cache/$id.json"
+}
+
+case $mode in
+  connect)
+    ensure_running
+    authorize
+    endpoint=$(jq -er '.sshEndpoint // (.machineIp + ":22")' "$cache/$id.json") || die "no address for $id"
+    exec nc "${endpoint%:*}" "${endpoint##*:}"
+    ;;
+  hostkey)
+    known_name=${3:-$alias}
+    reason=${4:-HOSTNAME}
+    file=$cache/$id.json
+    # `connect` refreshed the file a moment ago. Before the connection (%I = ORDER) a stale or
+    # missing file is fine: ssh only uses this to order key types.
+    if [ -z "$(find "$file" -mmin -2 2>/dev/null)" ]; then
+      [ "$reason" = ORDER ] && exit 0
+      authorize
+    fi
+    printf '%s %s\n' "$known_name" "$(jq -er .hostKey "$file")"
+    ;;
+  *) die "unknown mode $mode" ;;
+esac

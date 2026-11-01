@@ -93,7 +93,8 @@ Outside Nix on purpose:
 - Files the apps rewrite: `~/.claude/settings.json` is copied from
   `nix/home/files/claude-settings.json` on each switch, not linked.
 - Secrets and identity: `~/.gitconfig.local` (written by `git-id`),
-  `~/.ssh/config.local`, and 1Password. The Nix store is world-readable.
+  `~/.ssh/config.local`, the Boat API key in the Keychain (`boat-resolve --help`
+  shows how to create it), and 1Password. The Nix store is world-readable.
 - Mac apps installed by hand: Grok Bot, Scrawl, Canon Utilities, darktable, Blender
   (reasons in `nix/darwin/default.nix`).
 

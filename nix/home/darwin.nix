@@ -25,6 +25,27 @@ in
   '';
   # ...and `ssh orb`.
   programs.ssh.includes = [ "~/.orbstack/ssh/config" ];
+
+  # Boat sandboxes. `ssh bx_<id>` looks up the sandbox's current address and host key
+  # through the Boat API on every connect, so nothing goes stale after a resume or fork.
+  # `ssh bx_<id>.wake` also resumes a stopped sandbox. Mac only: tools/boat-resolve reads
+  # its API key from the Keychain.
+  # Before "*": ssh keeps the first value it sees, and "*" turns on ControlMaster.
+  programs.ssh.settings."bx_*" = lib.hm.dag.entryBefore [ "*" ] {
+    User = "user";
+    IdentityFile = "~/.ssh/ascii_box_ed25519";
+    IdentitiesOnly = "yes";
+    ProxyCommand = "~/.local/bin/boat-resolve connect %n";
+    # ssh requires an absolute path here; ~ and %d are not expanded.
+    KnownHostsCommand = "${config.home.homeDirectory}/.local/bin/boat-resolve hostkey %n %H %I";
+    # Trust only the key the API reports, never an old known_hosts line.
+    UserKnownHostsFile = "/dev/null";
+    StrictHostKeyChecking = "yes";
+    UpdateHostKeys = "no";
+    # A shared connection would outlive a stop and point at the old machine.
+    ControlMaster = "no";
+    ControlPath = "none";
+  };
   programs.zsh.shellAliases = {
     rebuild = "sudo darwin-rebuild switch --flake ${config.skillIssue.repo}#mac";
     localip = "ipconfig getifaddr en0";

@@ -229,8 +229,8 @@ in
     programs.ssh = {
       enable = true;
       enableDefaultConfig = false;
-      # Machine-local Host blocks (the Boat `bx_*` resolver, work hosts). Included
-      # first because ssh keeps the first value it sees for each option.
+      # Machine-local Host blocks (work hosts). Included first because ssh keeps
+      # the first value it sees for each option.
       includes = [ "~/.ssh/config.local" ];
       settings."*" = {
         # Reuse one authenticated connection per host. %C keeps the socket path
