@@ -26,6 +26,15 @@ in
   # The Boat CLI's own installer and self-updater keep it here.
   home.sessionPath = [ "$HOME/.ascii/bin" ];
 
+  # Mac only: agents on dev boxes do not use them, and every byte a box adds to
+  # Boat's base image is downloaded again at each start.
+  home.packages = with pkgs; [
+    bitwarden-cli
+    awscli2
+  ];
+  # `, <tool>` runs anything in nixpkgs once without installing it.
+  programs.nix-index-database.comma.enable = true;
+
   # ...and `ssh orb`.
   programs.ssh.includes = [ "~/.orbstack/ssh/config" ];
 

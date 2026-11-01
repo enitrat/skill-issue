@@ -47,6 +47,11 @@ log "switching home-manager to $flake_output"
 # a scratch directory: the first switch leaves its build links in the current one.
 (cd "$(mktemp -d)" && nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$flake_output" -b pre-nix)
 
+log "installing nix-after-restore.service"
+sudo install -m 644 "$repo_dir/bootstrap/nix-after-restore.service" /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable nix-after-restore.service
+
 zsh_path=$(command -v zsh)
 if [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$zsh_path" ]; then
     log "making zsh the login shell"

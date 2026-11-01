@@ -38,8 +38,6 @@ in
 
       # Everything else in daily use
       tmux
-      bitwarden-cli
-      awscli2
       ffmpeg-headless # full ffmpeg pulls in SDL, GTK and gstreamer
       foundry
       linear-cli
@@ -142,8 +140,6 @@ in
       nix-direnv.enable = true;
       silent = true;
     };
-    # `, <tool>` runs anything in nixpkgs once without installing it.
-    programs.nix-index-database.comma.enable = true;
 
     # --- Git ------------------------------------------------------------------
     programs.git = {

@@ -16,6 +16,20 @@
     # Headless boxes: the GPU shim alone is over 1 GB of mesa.
     gpu.enable = false;
   };
+  # Every locale is 222 MB that each Boat start downloads again; these two are used.
+  i18n.glibcLocales = pkgs.glibcLocales.override {
+    allLocales = false;
+    locales = [
+      "en_US.UTF-8/UTF-8"
+      "C.UTF-8/UTF-8"
+    ];
+  };
+
+  # Boat restores /home/user through a FUSE layer that it swaps for the local disk once
+  # the download ends. A socket made before the swap stops answering, so herdr's live
+  # in /tmp, which Boat never restores. herdr creates the directory.
+  home.sessionVariables.HERDR_SOCKET_PATH = "/tmp/herdr-user/herdr.sock";
+
   # Standalone home-manager manages its own CLI.
   programs.home-manager.enable = true;
 

@@ -109,26 +109,51 @@ new() {
     gh auth status >/dev/null
     git config -f ~/.gitconfig.local user.name $(printf %q "$(git config user.name)")
     git config -f ~/.gitconfig.local user.email $(printf %q "$(git config user.email)")
-    # Boat restores the disk lazily, so at boot systemd has not loaded the Nix units and
-    # the daemon starts late or not at all: nix commands are refused. Wait for it, then
-    # restart it once; it creates its own socket.
-    nix_up() {
-      for _ in \$(seq \$1); do
-        /nix/var/nix/profiles/default/bin/nix store ping >/dev/null 2>&1 && return
-        sleep 2
-      done
-      return 1
-    }
-    if ! nix_up 15; then
-      sudo systemctl daemon-reload
-      sudo systemctl restart nix-daemon.service
-      nix_up 30 || echo 'bx: warning: the nix daemon is still down' >&2
-    fi
   " || die "could not log gh in on $id. Delete: bx rm $id"
   wait "$extend" || log "could not extend auto-stop; run: boat extend $id --hours $AUTO_STOP_HOURS"
   wait "$herdr" || log "herdr machine add failed; run: herdr machine add $id --label $name"
+  wait_hydrated "$id"
+  ready_check "$id" "$env" || die "$id is not ready (see above). Inspect: ssh $id. Delete: bx rm $id"
   echo "$id"
-  log "ready: ssh $id (full speed once bx ls stops showing it as hydrating)"
+  log "ready: ssh $id"
+}
+
+# Boat restores a sandbox's disk in the background after `ready`, and what starts during
+# that window can break when it ends (see bootstrap/nix-after-restore.service). Boat's
+# signal for the end is `hydrated`. It took 1 to 8 minutes in our measurements.
+wait_hydrated() {
+  local info i=0
+  while [ $i -lt 200 ]; do
+    info=$(boat info "$1" --json)
+    [ "$(echo "$info" | jq -r .sandbox.hydrated)" = true ] && return
+    [ $((i % 10)) -eq 0 ] && log "$1: restoring the disk ($(echo "$info" | jq -r '.sandbox.hydration.percent // 0 | floor')%)"
+    sleep 3
+    i=$((i + 1))
+  done
+  die "$1 was still restoring after 10 minutes. Delete: bx rm $1"
+}
+
+# What `ready` means for a task sandbox. Run after the restore has ended, so a pass here
+# stays a pass. Prints each failure.
+ready_check() {
+  ssh -o BatchMode=yes "$1" "
+    fails=0
+    check() { name=\$1; shift; \"\$@\" >/dev/null 2>&1 || { echo \"bx: not ready: \$name\" >&2; fails=1; }; }
+    nix_up() {
+      for _ in \$(seq 15); do /nix/var/nix/profiles/default/bin/nix store ping && return; sleep 2; done
+      return 1
+    }
+    check 'nix daemon answers' nix_up
+    check 'gh is logged in' gh auth status
+    for repo in ~/$2/*/; do
+      [ -d \"\$repo/.git\" ] || continue
+      check \"git fetch in \$repo\" git -C \"\$repo\" fetch --quiet origin
+      if [ -f \"\$repo/pnpm-lock.yaml\" ]; then
+        check \"pnpm install --offline in \$repo\" sh -c \"cd '\$repo' && pnpm install --frozen-lockfile --offline\"
+      fi
+    done
+    exit \$fails
+  "
 }
 
 list_envs() {
@@ -240,12 +265,18 @@ wait_setup() {
 bake() {
   local env=$1 id snapshot=$1-base
   if [ "$env" = dev ]; then
-    local setup
+    local setup commit
+    # By commit, not `main`: GitHub caches raw files for 5 minutes after a push.
+    commit=$(git ls-remote https://github.com/enitrat/skill-issue main | cut -f1)
+    [ -n "$commit" ] || die "cannot read the skill-issue main commit"
+    log "baking skill-issue ${commit:0:7}"
     setup=$(mktemp)
     # shellcheck disable=SC2016 # $HOME expands on the sandbox, not here.
     printf '%s\n' '#!/bin/bash' 'set -euo pipefail' \
-      'curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/main/bootstrap/linux.sh | bash' \
-      '"$HOME/skill-issue/bootstrap/check.sh"' >"$setup"
+      "curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/$commit/bootstrap/linux.sh | bash" \
+      '"$HOME/skill-issue/bootstrap/check.sh"' \
+      '# Each byte left in the store is downloaded again at every start.' \
+      '/nix/var/nix/profiles/default/bin/nix-collect-garbage -d' >"$setup"
     log "creating a bare sandbox"
     id=$(create --name "bake-$snapshot" --setup-file "$setup")
     rm -f "$setup"

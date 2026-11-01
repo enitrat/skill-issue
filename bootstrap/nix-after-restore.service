@@ -1,0 +1,15 @@
+# Boat restores /nix through a FUSE layer and swaps it for the local disk once the
+# download ends. The Nix daemon, started during the download, keeps listening on a
+# socket that the swap removed, and every nix command is refused. Boat starts enabled
+# services again after each restore (new from a snapshot, fork, resume), so this waits
+# for the swap and restarts the daemon, which then makes its socket on the local disk.
+[Unit]
+Description=Restart the Nix daemon once Boat has restored /nix
+After=nix-daemon.service
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c 'while grep -q " /nix fuse" /proc/mounts; do sleep 2; done; systemctl daemon-reload; systemctl restart nix-daemon.service'
+
+[Install]
+WantedBy=multi-user.target

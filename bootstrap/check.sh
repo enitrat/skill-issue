@@ -17,9 +17,11 @@ check() { local name=$1; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else
 # Every CLI the flake installs. Each must exist and resolve into the Nix store:
 # a leftover Homebrew, mise or curl-installed copy earlier on PATH would win in
 # every shell without anyone noticing.
-for tool in rg fd jq bat eza fzf zoxide starship atuin carapace direnv delta mergiraf \
-    gh git git-lfs node pnpm bun uv herdr agent-browser aws ffmpeg forge cast anvil \
-    linear bw tmux nh nvd , nix-locate; do
+tools=(rg fd jq bat eza fzf zoxide starship atuin carapace direnv delta mergiraf
+    gh git git-lfs node pnpm bun uv herdr agent-browser ffmpeg forge cast anvil
+    linear tmux nh nvd)
+[[ $OSTYPE == darwin* ]] && tools+=(aws bw , nix-locate)
+for tool in $tools; do
     check "$tool: installed, from nix" eval '[[ ${commands[$tool]:A} == /nix/store/* ]]'
 done
 
@@ -37,6 +39,10 @@ check "ssh: config.local included" eval 'grep -q "^Include .*~/.ssh/config.local
 check "ssh: sockets dir" test -d ~/.ssh/sockets
 check "rg: config file in use" test -r "$RIPGREP_CONFIG_PATH"
 check "repo tools linked" test -x ~/.local/bin/git-id
+if [[ $OSTYPE == linux* ]]; then
+    check "herdr: socket outside the restored disk" eval '[[ $HERDR_SOCKET_PATH == /tmp/* ]]'
+    check "nix: daemon restarts after a Boat restore" systemctl is-enabled nix-after-restore.service
+fi
 
 print
 if (( fails )); then print -r -- "$fails check(s) failed"; return 1; fi
