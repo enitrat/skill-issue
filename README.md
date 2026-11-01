@@ -5,30 +5,16 @@ rules, and small local tools.
 
 ## Quick Start
 
-Bootstrap a fresh machine with chezmoi:
+Machines are configured by the Nix flake in this repo: [`flake.nix`](flake.nix)
+and [`nix/`](nix/). Two kinds of machine, one shared definition:
 
-```bash
-sh -c "$(curl -fsLS https://get.chezmoi.io)" -- init --apply enitrat/skill-issue
-```
+| Machine | Output | First setup | Later changes |
+| - | - | - | - |
+| macOS laptop (client) | `darwinConfigurations.mac` | see [Fresh Mac](#fresh-mac) | `rebuild` (alias for `sudo darwin-rebuild switch --flake …#mac`) |
+| Linux dev box (Boat sandbox, Ubuntu) | `homeConfigurations."user@<arch>-linux"` | `curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/main/bootstrap/linux.sh \| bash` | `rebuild` (alias for `nh home switch ~/skill-issue -c user@<arch>-linux`) |
 
-Run the same bootstrap over SSH:
-
-```bash
-ssh user@server.example.com 'sh -c "$(curl -fsLS https://get.chezmoi.io)" -- init --apply enitrat/skill-issue'
-```
-
-Update an initialized machine:
-
-```bash
-chezmoi update
-```
-
-Preview changes:
-
-```bash
-chezmoi diff
-chezmoi apply --dry-run --verbose
-```
+Check a machine: `~/skill-issue/bootstrap/check.sh` (on the Mac, use the checkout
+path).
 
 ## Install Skills
 
@@ -50,7 +36,7 @@ into `skills/external/<name>/` from [`skills-external.json`](skills-external.jso
 Both are then exposed by the normal `npx skills add enitrat/skill-issue` flow.
 
 The bundled launchers from the Telegram, one-conv, and Slack skills
-are also linked through `tools/`, so `chezmoi apply` exposes `tg`, `one-conv`,
+are also linked through `tools/`, so a switch exposes `tg`, `one-conv`,
 and `slack-user` on `$PATH`. Their credentials remain outside the repository in
 the locations documented by each skill.
 
@@ -80,69 +66,57 @@ claude plugin enable pstack@skill-issue --scope local   # on for one repo only
 
 | Area | Source of truth | Applied by | Target |
 |------|-----------------|------------|--------|
-| Dotfiles and machine provisioning | `dotfiles/` | `chezmoi init --apply` / `chezmoi update` | `~/.zshrc`, `~/.config/starship.toml`, `~/.tmux.conf`, `~/.ssh/config`, `~/.config/homebrew/Brewfile`, installed tools |
+| Machine setup | `flake.nix`, `nix/` | `darwin-rebuild switch` / `home-manager switch` | Shell, CLI tools, dotfiles, macOS settings and apps |
 | Agent skills | `skills/` + `skills-external.json` | `make skill-install` | Claude/Codex/Cursor skill directories |
 | Claude rules | `rules/` | Local Claude configuration | `~/.claude/rules/` |
 | Subagents/prompts | `subagents/` | Local Claude/Codex configuration | `~/.claude/agents/`, `~/.codex/prompts/` |
-| Custom CLIs | `tools/` | Shell `PATH` from `dotfiles/dot_zshrc.tmpl` | Local commands |
+| Custom CLIs | `tools/` | Symlinks in `~/.local/bin`, from `nix/home/common.nix` | Local commands |
 | Raycast commands | `raycast-scripts/` | Raycast script-command directory | Raycast |
 
 ## Machine Setup
 
-The recommended bootstrap path is direct chezmoi, not a custom SSH wrapper. This
-matches chezmoi's documented one-command install flow: install chezmoi, clone the
-repo, apply the target state, and run scripts.
+```text
+nix/home/common.nix   both machines: zsh, git, ssh client, CLI tools
+nix/home/darwin.nix   Mac only: iTerm, key bindings, editor defaults
+nix/home/linux.nix    dev box only: the cwd fix for restored sandboxes
+nix/darwin/           Mac system: macOS defaults, Homebrew casks, App Store apps
+```
 
-This repo uses `.chezmoiroot` to point chezmoi at `dotfiles/`. The provisioning
-logic lives in `dotfiles/.chezmoiscripts/`, which keeps setup versioned,
-idempotent, and testable without a repo-specific transport script.
+Put a tool in `common.nix` unless it truly belongs to one kind of machine.
+Project toolchains (a pinned Node, Foundry or Terraform version) go in the
+project's own `devShell` with direnv, not here.
 
-Installed baseline:
+Outside Nix on purpose:
 
-- Xcode Command Line Tools (macOS): required for compiling native extensions
-  (e.g. `uv`/pip packages with C/C++ sources). Verified for health, not just
-  presence — a CLT install can be silently corrupted by a racing background
-  macOS Software Update, leaving `clang++` unable to find `<string>` and
-  other C++ standard headers even though `xcode-select -p` reports success.
-- Shell: native zsh, pinned autosuggestions/syntax-highlighting plugins,
-  Starship, and MesloLGS Nerd Font config.
-- Runtime/tool manager: `mise` instead of separate `nvm`, `asdf`, or `pyenv`
-  shell setup.
-- CLI tools: `atuin`, `bat`, `carapace`, `delta`, `difftastic`, `eza`, `fd`,
-  `fzf`, `gh`, `git-lfs`, `git-spice`, `mergiraf`, `ripgrep`, `sesh`, `tmux`,
-  `uv`, `zoxide`.
-- Configs: `~/.tmux.conf` (remote-friendly, sesh popup) and `~/.ssh/config`
-  (connection multiplexing + keepalives; personal hosts go in the unmanaged
-  `~/.ssh/config.local`).
-- Remote helpers: Tailscale, mosh, Cursor remote-server cache cleanup, iTerm2
-  shell integration.
-- macOS: GUI apps are declared in a `Brewfile` (`~/.config/homebrew/Brewfile`):
-  iTerm2, Raycast, Cursor, OrbStack, Tailscale, Hidden Bar, plus the Nerd Font.
-  OrbStack is the container runtime; removing Docker Desktop is an opt-in host
-  policy. Raycast's Spotlight Cmd+Space binding is freed up automatically. See
-  [config/others/macos-settings.md](config/others/macos-settings.md) for the
-  one manual step this needs (Raycast's own hotkey preference).
+- Self-updating agent CLIs: `claude`, `codex`, `boat`. Boat sandboxes ship them;
+  on a Mac, use their official installers.
+- Files the apps rewrite: `~/.claude/settings.json` is copied from
+  `nix/home/files/claude-settings.json` on each switch, not linked.
+- Secrets and identity: `~/.gitconfig.local` (written by `git-id`),
+  `~/.ssh/config.local`, and 1Password. The Nix store is world-readable.
+- Mac apps installed by hand: Grok Bot, Scrawl, Canon Utilities, darktable, Blender
+  (reasons in `nix/darwin/default.nix`).
 
-Manual post-setup stays manual by design:
+### Fresh Mac
 
-- `gh auth login`
-- `atuin login`
-- `tailscale up`
-- `git-id add ...`
+1. Install Nix: `curl -fsSL https://install.determinate.systems/nix | sh -s -- install`
+2. Clone this repo to `~/workspace/skill-issue`.
+3. `sudo nix run nix-darwin -- switch --flake ~/workspace/skill-issue#mac`
 
-Secrets are not copied into the repo or persisted onto remote machines. Run
-interactive auth commands on each machine that needs them.
+Homebrew runs with `cleanup = "check"`: a switch fails while something
+installed is not declared in `nix/darwin/default.nix`. Declare it or uninstall
+it; nothing is removed silently.
 
-More detail: [config/others/shell-setup.md](config/others/shell-setup.md).
+Manual steps that stay manual: `gh auth login`, `atuin login`, `git-id add ...`,
+and Raycast's own Cmd+Space hotkey (see
+[config/others/macos-settings.md](config/others/macos-settings.md)).
 
 ## Repository Layout
 
 ```text
-.chezmoiroot                    # Tells chezmoi to use dotfiles/ as source root
-dotfiles/                       # chezmoi source root
-  .chezmoiscripts/              # Provisioning and convergence scripts
-  dot_zshrc.tmpl
-  dot_config/starship.toml
+flake.nix, flake.lock           # Machine setup entry point
+nix/                            # Nix modules (see Machine Setup)
+bootstrap/                      # linux.sh for a fresh dev box, check.sh for any machine
 skills/                         # Agent skills, segmented by ownership
   external/                     # Downloaded third-party skills
 skills-external.json            # Upstream references and download sources
@@ -172,16 +146,12 @@ Add a third-party skill:
 2. Keep the upstream URL specific to the skill directory when possible.
 3. Run `make skill-install` to download and install it.
 
-Add a machine setup step:
+Add a tool or setting:
 
-1. Put the behavior in `dotfiles/.chezmoiscripts/` with the appropriate
-   `run_`, `run_once_`, or `run_onchange_` attributes.
-2. Keep it idempotent and return non-zero when incomplete work must be retried.
-3. Test with `chezmoi diff`, `chezmoi apply --dry-run --verbose`, or a
-   disposable remote/container.
-
-After changing the package inventory, run `scripts/update-mise-lock` before
-applying or committing it.
+1. Edit the module it belongs in (see Machine Setup).
+2. Switch, then run `bootstrap/check.sh`. Add a line there if the change is
+   something a future edit could silently break.
+3. To update every pinned input: `nix flake update`, switch, check.
 
 Add a local CLI:
 
@@ -191,11 +161,8 @@ Add a local CLI:
 
 ## Cleanup Principles
 
-- Keep machine setup in chezmoi scripts, not in SSH transport wrappers.
-- Keep `dotfiles/` as the executable source of truth; docs should summarize,
-  not duplicate install scripts.
-- Prefer `mise` for language/runtime tools unless a tool cannot reasonably be
-  managed there.
+- One definition per tool. Platform modules hold only real differences.
+- Secrets never enter the flake.
 - Avoid committing generated caches such as `.codex/`, `.tldr/`, and
   `__pycache__/` inside skills.
 

@@ -4,7 +4,7 @@ Configuration tweaks for macOS system behavior and appearance.
 
 ## Menu Bar Icon Spacing
 
-Applied automatically by `run_once_after_40-system-defaults-macos`, which sets
+Applied by `system.defaults` in `nix/darwin/default.nix`, which sets
 spacing and padding to 6 so icons stop sliding behind the notch.
 
 The keys must go under `com.apple.controlcenter`. The `NSGlobalDomain`
@@ -73,8 +73,8 @@ Flags:
 
 ## Raycast Replacing Spotlight (Cmd+Space)
 
-Raycast is declared in `dotfiles/.chezmoidata/packages.toml`.
-`run_once_after_40-system-defaults-macos` then disables Spotlight's Cmd+Space
+Raycast is declared in `nix/darwin/default.nix`.
+`nix/darwin/scripts/spotlight-hotkey.sh` then disables Spotlight's Cmd+Space
 binding (`AppleSymbolicHotKeys` key `64`) so Raycast can claim it.
 
 ### Manual step required

@@ -2,33 +2,34 @@
 #   prek install     # once, to wire up .git/hooks/pre-commit
 #   prek run --all-files
 #
-# prek and shellcheck are provisioned by this repo, see .chezmoidata/packages.toml.
+# prek, shellcheck and nixfmt come from this repo's devShell (direnv loads it).
 
 repos:
   - repo: local
     hooks:
-      - id: chezmoi-templates
-        name: chezmoi templates render and parse
-        entry: scripts/check-chezmoi
+      - id: nixfmt
+        name: nixfmt
+        entry: nixfmt --check
         language: system
-        pass_filenames: false
-        files: ^dotfiles/
+        files: \.nix$
 
-      - id: shellcheck-tools
-        name: shellcheck (tools, scripts)
+      - id: shellcheck
+        name: shellcheck (tools, scripts, bootstrap, nix)
         entry: shellcheck
         language: system
         types: [shell]
-        files: ^(tools|scripts)/
+        # shellcheck does not parse zsh.
+        exclude_types: [zsh]
+        files: ^(tools|scripts|bootstrap|nix)/
 
       - id: tools-executable
         name: tools are executable
         entry: >-
-          bash -c 'bad=$(find tools scripts -type f ! -perm -u+x);
+          bash -c 'bad=$(find tools scripts bootstrap -type f ! -perm -u+x);
           [ -z "$bad" ] || { echo "not executable:"; echo "$bad"; exit 1; }'
         language: system
         pass_filenames: false
-        files: ^(tools|scripts)/
+        files: ^(tools|scripts|bootstrap)/
 
   # Scoped to the machine-setup surface on purpose. Run repo-wide these rewrite
   # a few hundred lines of skills/ prose, which buries the changes that matter.
@@ -36,11 +37,9 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        files: ^(dotfiles|tools|scripts)/
-        # chezmoi trim markers ({{- -}}) make templates whitespace-sensitive.
-        exclude: \.tmpl$
+        files: ^(nix|tools|scripts|bootstrap)/
       - id: end-of-file-fixer
-        files: ^(dotfiles|tools|scripts)/
+        files: ^(nix|tools|scripts|bootstrap)/
       - id: check-yaml
       - id: check-merge-conflict
       - id: check-executables-have-shebangs

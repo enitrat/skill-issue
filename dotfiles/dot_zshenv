@@ -1,8 +1,0 @@
-# ~/.zshenv — managed by chezmoi (skill-issue). Edits here are overwritten.
-#
-# Sourced by every zsh, including non-interactive ones. Nothing that costs time
-# or assumes a terminal belongs here; put it in ~/.config/zsh/*.zsh instead.
-
-# Ubuntu initializes completion globally before user configuration can add its
-# completion paths. This must be set in .zshenv to keep one user-owned pass.
-skip_global_compinit=1

@@ -1,0 +1,55 @@
+#!/bin/bash
+# Turn a fresh Ubuntu dev box (a Boat sandbox) into a configured one:
+#
+#   curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/main/bootstrap/linux.sh | bash
+#
+# Safe to re-run. Needs passwordless sudo, which Boat sandboxes have.
+set -euo pipefail
+
+# Fixed, not configurable: nix/home/linux.nix links ~/.local/bin tools into this
+# exact checkout, and the flake only defines the `user` account Boat uses.
+repo_url=https://github.com/enitrat/skill-issue.git
+repo_dir=$HOME/skill-issue
+flake_output="user@$(uname -m)-linux"
+
+log() { printf '[bootstrap] %s\n' "$*"; }
+
+[ "$(id -un)" = user ] || { log "run this as the user account, the only one the flake defines"; exit 1; }
+
+# zsh comes from apt so the login shell works even if Nix is broken; its plugins
+# and config come from home-manager. Minimal images ship no generated locale,
+# which makes zsh warn on every start and mangles the prompt's glyphs.
+if ! command -v zsh >/dev/null || ! locale -a 2>/dev/null | grep -qi '^en_US.utf8$'; then
+    log "installing zsh and the en_US.UTF-8 locale"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    # Keep any config file the image already changed (Boat's /etc/zsh/zshrc)
+    # instead of stopping at dpkg's interactive prompt.
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        zsh git locales >/dev/null
+    sudo locale-gen en_US.UTF-8 >/dev/null
+fi
+
+if [ ! -e /nix/var/nix/profiles/default/bin/nix ]; then
+    log "installing Determinate Nix"
+    curl -fsSL https://install.determinate.systems/nix | sh -s -- install --no-confirm
+fi
+# shellcheck source=/dev/null
+. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+
+if [ ! -e "$repo_dir/flake.nix" ]; then
+    log "cloning $repo_url into $repo_dir"
+    git clone --quiet "$repo_url" "$repo_dir"
+fi
+
+log "switching home-manager to $flake_output"
+# -b moves files that home-manager would overwrite (a stock .zshrc) aside.
+nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$flake_output" -b pre-nix
+
+zsh_path=$(command -v zsh)
+if [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$zsh_path" ]; then
+    log "making zsh the login shell"
+    sudo chsh -s "$zsh_path" "$(id -un)"
+fi
+
+log "done. Open a new shell."

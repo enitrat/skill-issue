@@ -10,21 +10,18 @@ subagent prompts, Claude rules, and small local tools.
 ## Directory Structure
 
 ```text
-.chezmoiroot         # Points chezmoi at dotfiles/ as its source root
-dotfiles/            # chezmoi source state - dotfiles + provisioning scripts
-  .chezmoidata/
-    packages.toml    # THE package inventory; mise config + Brewfile derive from it
-    host.toml        # Host-class flags, all defaulting off (see Host Classes)
-  .chezmoiexternal.toml # Checksum-pinned third-party shell files
-  .chezmoitemplates/
-    lib.sh           # log/warn/have/mise_path, included by every script
-  .chezmoiscripts/   # Provisioning scripts with normal run_* attributes
-  .chezmoiignore     # Per-OS and per-host-class file selection
-  dot_zshenv         # -> ~/.zshenv; pre-.zshrc setup only, sourced by every zsh
-  dot_zshrc          # -> ~/.zshrc; a loop over the fragments below
-  dot_config/
-    zsh/NN-*.zsh     # Shell config fragments, sourced in numeric order
-    mise/, homebrew/ # Generated inventory configs and mise lockfile
+flake.nix            # Machine setup: darwinConfigurations.mac (macOS clients),
+                     # homeConfigurations."user@<arch>-linux" (Linux dev boxes)
+nix/
+  home/common.nix    # Shared by both: zsh, git, ssh client, CLI tools
+  home/darwin.nix    # macOS-only home config
+  home/linux.nix     # Linux-dev-box-only home config
+  home/zsh/, files/  # Shell fragments and config files the modules read
+  darwin/            # macOS system: defaults, Homebrew casks, App Store apps
+  pkgs/              # Packages nixpkgs lacks
+bootstrap/
+  linux.sh           # Fresh Ubuntu dev box to configured, one command
+  check.sh           # Asserts a machine has what the flake promises
 
 skills/              # Agent skills, one directory per skill
   <skill-name>/
@@ -47,64 +44,35 @@ raycast-scripts/     # Raycast script commands
 config/others/       # Human docs for third-party setup
 ```
 
-## Machine Provisioning
+## Machine Setup
 
-Use chezmoi directly. Do not reintroduce a custom SSH bootstrap wrapper.
+Nix owns machine setup. README.md has the commands; the rules:
 
-```bash
-sh -c "$(curl -fsLS https://get.chezmoi.io)" -- init --apply enitrat/skill-issue
-chezmoi update
-```
-
-Provisioning belongs in `dotfiles/.chezmoiscripts/run_*.sh.tmpl`. Keep those
-scripts idempotent and OS-aware — via the `-macos.sh` / `-linux.sh` suffix that `.chezmoiignore`
-filters on, not via a template conditional that renders down to `exit 0`.
-
-Pick the prefix by re-run semantics, not by habit:
-
-- `run_once_` — genuinely one-time host setup. Never use it for anything
-  derived from a file it doesn't contain: the state key is the script's own
-  hash, so editing the data file will not re-trigger it.
-- `run_onchange_` — anything driven by `packages.toml`. Embed the data hash in
-  a comment (`{{ .cask | toJson | sha256sum }}`) so a package edit re-runs it.
-- `run_` — cheap operations that should reconcile on every apply.
-
-Scripts start with `{{ template "lib.sh" . }}` and use `log`/`warn`/`have`.
-Never swallow an install failure with `|| echo skipping` — that is how a tool
-silently goes missing for months.
-
-## Host Classes
-
-A workaround that only one machine needs does not belong in the shared config.
-Scope it instead: add a flag to `.chezmoidata/host.toml` defaulting to `false`,
-put the whole workaround in one file, and select that file from
-`.chezmoiignore` — the same pattern the `-macos.sh` / `-linux.sh` suffixes use.
-The machine that needs it opts in from its own chezmoi config, which this repo
-does not track:
-
-```toml
-# ~/.config/chezmoi/chezmoi.toml
-[data]
-ephemeral_host = true
-```
-
-Two properties are the reason to bother: `grep -r <flag>` lists everything
-currently scoped that way, and retiring the machine needs no cleanup here,
-because the default was already off.
-
-Prefer this over a runtime `case $(hostname)` — hostnames on exactly these
-throwaway hosts tend not to be stable, which is usually the thing being worked
-around in the first place.
+- One definition per tool. Put it in `nix/home/common.nix`; use `darwin.nix` or
+  `linux.nix` only for something that truly differs between a macOS client and
+  a Linux dev box.
+- Project toolchains (pinned Node, Foundry, Terraform versions) belong in that
+  project's devShell, not in the machine config.
+- Read home-manager and nix-darwin option definitions from their source before
+  using an option. Options get renamed (`programs.fzf.fileWidget.*`,
+  `programs.ssh.settings`), and a rename is a warning you will otherwise miss.
+- Nothing secret goes in the flake. The Nix store is world-readable.
+- A file an app rewrites itself (`~/.claude/settings.json`, editor settings,
+  iTerm prefs) is copied or merged by an activation script, never linked.
+- Homebrew uses `cleanup = "check"`. Never change it to `"uninstall"` or
+  `"zap"`: those delete apps and their data for anything not declared.
 
 ## Checks
 
-`prek` runs the hooks in `.pre-commit-config.yaml`. Install once with
-`prek install`; run everything with `prek run --all-files`.
+`prek` runs the hooks in `.pre-commit-config.yaml` (nixfmt, shellcheck,
+whitespace). Its tools come from the repo devShell, which direnv loads. Install
+once with `prek install`; run everything with `prek run --all-files`.
 
-`scripts/check-chezmoi` renders every template with `-S .` and syntax-checks
-the result. Run it after touching anything under `dotfiles/` — chezmoi uses
-`missingkey=error`, so a template reading an optional key from `packages.toml`
-unguarded looks fine in review and fails on someone's fresh machine.
+After a machine-setup change, verify on a real machine, not only by evaluating:
+`<repo>/bootstrap/check.sh`. For Linux, a fresh Boat sandbox
+with `bootstrap/linux.sh` is the test. `nix eval
+.#darwinConfigurations.mac.config.system.build.toplevel.drvPath` catches option
+errors in the macOS config from any machine.
 
 ## Adding Content
 
@@ -155,20 +123,9 @@ Guidelines:
 3. Include `--help` and `--version` flags.
 4. Make executable: `chmod +x tools/<tool-name>`.
 
-They reach PATH as symlinks in `~/.local/bin`, placed on every apply. Never put
-the repo checkout on PATH — it has been at three different paths already.
-
-### Dotfiles
-
-1. Put managed files under `dotfiles/` using chezmoi naming.
-2. To add a package, edit `.chezmoidata/packages.toml`, refresh the generated
-   mise lockfile with `scripts/update-mise-lock`, and apply. The mise config and Brewfile are generated;
-   `mise use -g` is reverted on the next apply.
-3. Put scripts in `.chezmoiscripts/` and choose the `run_*` prefix by re-run
-   semantics (see Machine Provisioning).
-4. Test with `chezmoi execute-template -S .`, then `chezmoi diff`. Note that
-   `chezmoi`'s configured source dir may be a *different clone* than the one
-   you are editing — check `chezmoi source-path` before trusting a diff.
+They reach PATH as symlinks in `~/.local/bin`, created by `nix/home/common.nix`
+and pointing into the live checkout, so edits need no switch. Never put the repo
+checkout on PATH.
 
 ### Config Docs
 
@@ -177,22 +134,13 @@ executable source of truth rather than duplicating long install scripts.
 
 ## Anti-Patterns
 
-Each of these looks reasonable in a diff and is wrong for a reason stated
-elsewhere in this file. Collected here because they are what actually gets
-tried.
-
-- Editing a file under `~` that chezmoi manages. The next apply overwrites it —
-  edit the source in `dotfiles/` instead.
-- Hand-editing `dot_config/mise/config.toml.tmpl` or the Brewfile to add a
-  package. Both are generated from `.chezmoidata/packages.toml`.
-- `run_once_` for anything driven by a data file. The state key is the script's
-  own hash, so editing the data will not re-trigger it — use `run_onchange_`
-  with the data hash embedded in a comment.
-- A template conditional that renders to `exit 0` on the other OS. Use the
-  `-macos.sh` / `-linux.sh` suffix and let `.chezmoiignore` filter it.
-- A runtime `case $(hostname)` for a one-machine workaround. Use a host-class
-  flag (see Host Classes).
+- Editing a file under `~` that home-manager links. It is read-only; edit the
+  module or file under `nix/` and switch.
+- Defining a tool twice, once per platform.
+- Installing a CLI with brew, `npm -g`, `cargo install` or a curl script when
+  nixpkgs has it. `check.sh` fails when such a copy shadows the Nix one.
+- A runtime `case $(hostname)` for a one-machine workaround. Hostnames on
+  dev boxes are not stable; scope it to `linux.nix` or `darwin.nix`.
 - Putting the repo checkout on PATH. Tools reach PATH as symlinks in
   `~/.local/bin`.
-- Swallowing an install failure with `|| echo skipping`.
 - Editing anything under `skills/external/` as if it were authored here.
