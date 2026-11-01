@@ -8,6 +8,8 @@ VERSION="0.2.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
+# How long a sandbox from `bx new` stays on before Boat stops it.
+AUTO_STOP_HOURS=4
 
 usage() {
   cat <<'EOF'
@@ -50,7 +52,7 @@ log() { echo "bx: $*" >&2; }
 
 # Every sandbox, in any state, as JSON lines: {id, name, state, createdAt, stoppedAt}.
 sandboxes() {
-  boat list --all --json | jq -c '.sandboxes[] | {id, name, state, createdAt, stoppedAt}'
+  boat list --all --json | jq -c '.sandboxes[] | {id, name, state, hydrated, createdAt, stoppedAt}'
 }
 
 # herdr machine entries that point at a Boat sandbox, as JSON lines.
@@ -87,13 +89,26 @@ new() {
   log "starting $name from $env-base"
   id=$(boat new --from "$env-base" --name "$name" --json | jq -r 'select(.event == "ready") | .id' | grep .) \
     || die "could not create $name from $env-base"
-  log "$id: logging gh in and setting your git identity"
+  # The three steps below are independent. Each is slow only because it is the first to
+  # read its files from the lazily restored disk, so they run at once.
+  log "$id: logging gh in, adding to herdr as $name, keeping it on ${AUTO_STOP_HOURS}h"
+  # Boat's auto-stop counts from the create, not from activity: without this, an agent
+  # still working after an hour is stopped mid-task.
+  boat extend "$id" --hours "$AUTO_STOP_HOURS" >/dev/null &
+  local extend=$!
+  herdr machine add "$id" --label "$name" >/dev/null &
+  local herdr=$!
   # The token travels on stdin only, never in a command line or Boat's variables. It goes
   # straight into hosts.yml: `gh auth login` also rewrites config.yml, which home-manager
   # owns read-only.
   gh auth token | ssh -o BatchMode=yes "$id" "
     set -e
     read -r token
+    mkdir -p ~/.config/gh
+    (umask 077; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: %s\n' \"\$token\" $(printf %q "$(gh api user -q .login)") > ~/.config/gh/hosts.yml)
+    gh auth status >/dev/null
+    git config -f ~/.gitconfig.local user.name $(printf %q "$(git config user.name)")
+    git config -f ~/.gitconfig.local user.email $(printf %q "$(git config user.email)")
     # Boat restores the disk lazily, so at boot systemd has not loaded the Nix units and
     # the daemon starts late or not at all: nix commands are refused. Wait for it, then
     # restart it once; it creates its own socket.
@@ -109,16 +124,11 @@ new() {
       sudo systemctl restart nix-daemon.service
       nix_up 30 || echo 'bx: warning: the nix daemon is still down' >&2
     fi
-    mkdir -p ~/.config/gh
-    (umask 077; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: %s\n' \"\$token\" $(printf %q "$(gh api user -q .login)") > ~/.config/gh/hosts.yml)
-    gh auth status >/dev/null
-    git config -f ~/.gitconfig.local user.name $(printf %q "$(git config user.name)")
-    git config -f ~/.gitconfig.local user.email $(printf %q "$(git config user.email)")
   " || die "could not log gh in on $id. Delete: bx rm $id"
-  log "$id: adding to herdr as $name"
-  herdr machine add "$id" --label "$name" >/dev/null || log "herdr machine add failed; run it yourself: herdr machine add $id --label $name"
+  wait "$extend" || log "could not extend auto-stop; run: boat extend $id --hours $AUTO_STOP_HOURS"
+  wait "$herdr" || log "herdr machine add failed; run: herdr machine add $id --label $name"
   echo "$id"
-  log "ready: ssh $id"
+  log "ready: ssh $id (full speed once bx ls stops showing it as hydrating)"
 }
 
 list_envs() {
@@ -147,7 +157,9 @@ ls_boxes() {
   sandboxes | jq -r --arg herdr " $herdr_ids" '
     def age: (now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 3600
       | if . < 48 then "\(floor)h" else "\(. / 24 | floor)d" end;
-    .id as $id | [.name, .id, .state, age, (if ($herdr | contains(" \($id) ")) then "herdr" else "" end)] | @tsv' \
+    # A restored disk streams in after the start: until then, reads are slower.
+    .id as $id
+    | [.name, .id, (if .hydrated == false and .state != "stopped" then "\(.state), hydrating" else .state end), age, (if ($herdr | contains(" \($id) ")) then "herdr" else "" end)] | @tsv' \
     | (printf 'NAME\tID\tSTATE\tAGE\tHERDR\n'; cat) | column -t -s "$(printf '\t')"
 }
 
