@@ -4,7 +4,7 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
@@ -16,9 +16,10 @@ usage() {
 bx - Boat sandboxes for development
 
 USAGE
-    bx new --snapshot <snapshot> --name <name>
+    bx new --snapshot <snapshot> --name <name> [--type <size>]
                             Start a sandbox from <snapshot>, log gh in with your token,
-                            and add it to herdr under <name>
+                            and add it to herdr under <name>. <size> is small, default,
+                            large or xlarge (see `boat new --help`); default if omitted
     bx ls                   List sandboxes: name, id, state, age, whether herdr has them
     bx list                 List snapshots to start from: built or not, age, size, repos
     bx rm <name|id>         Remove a sandbox from herdr and delete it
@@ -85,15 +86,15 @@ herdr_forget() {
 }
 
 new() {
-  local snapshot=$1 name=$2 id
+  local snapshot=$1 name=$2 type=$3 id
   if ! boat snapshots --json | jq -e --arg n "$snapshot" '.named[] | select(.name == $n)' >/dev/null; then
     die "no snapshot $snapshot. See bx list"
   fi
   if sandboxes | jq -e --arg n "$name" 'select(.name == $n)' >/dev/null; then
     die "a sandbox named $name exists; pick another name or bx rm $name"
   fi
-  log "starting $name from $snapshot"
-  id=$(boat new --from "$snapshot" --name "$name" --json | jq -r 'select(.event == "ready") | .id' | grep .) \
+  log "starting $name from $snapshot ($type)"
+  id=$(boat new --from "$snapshot" --name "$name" --type "$type" --json | jq -r 'select(.event == "ready") | .id' | grep .) \
     || die "could not create $name from $snapshot"
   # The three steps below are independent. Each is slow only because it is the first to
   # read its files from the lazily restored disk, so they run at once.
@@ -344,16 +345,18 @@ case ${1:-} in
   --version) echo "bx $VERSION" ;;
   new)
     shift
-    snapshot='' name=''
+    snapshot='' name='' type=default
     while [ $# -gt 0 ]; do
       case $1 in
-        --snapshot) snapshot=${2:-}; shift 2 || true ;;
-        --name) name=${2:-}; shift 2 || true ;;
-        *) die "unknown argument $1. Usage: bx new --snapshot <snapshot> --name <name>" ;;
+        --snapshot | --name | --type)
+          [ $# -ge 2 ] || die "$1 needs a value"
+          case $1 in --snapshot) snapshot=$2 ;; --name) name=$2 ;; --type) type=$2 ;; esac
+          shift 2 ;;
+        *) die "unknown argument $1. Usage: bx new --snapshot <snapshot> --name <name> [--type <size>]" ;;
       esac
     done
     [ -n "$snapshot" ] && [ -n "$name" ] || die "usage: bx new --snapshot <snapshot> --name <name>"
-    new "$snapshot" "$name"
+    new "$snapshot" "$name" "$type"
     ;;
   ls) ls_boxes ;;
   list) list_snapshots ;;

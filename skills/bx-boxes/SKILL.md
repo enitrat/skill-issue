@@ -48,6 +48,8 @@ most of their time starting.
   pieces one after another, inside its box.
 - At most 30 new boxes per minute (the account's start limit). Up to 300 can run at once.
 - Name boxes `<task>-<n>`. Names must be unique; `bx ls` shows them.
+- Size: `bx new --type large` (8 vCPU, 16 GB, twice the rate) when one shard saturates the
+  default 4 vCPU, such as a stack plus a browser plus an agent. Otherwise keep the default.
 
 ```bash
 for n in 1 2 3 4; do bx new --snapshot zama --name eval-$n > /tmp/eval-$n.id & done; wait
