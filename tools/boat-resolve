@@ -41,51 +41,57 @@ mode=$1
 alias=$2
 id=${alias%.wake}
 
-token() {
-  security find-generic-password -s boat-resolve -w 2>/dev/null \
-    || die "no API key in the Keychain under service boat-resolve"
-}
+key=$(security find-generic-password -s boat-resolve -w 2>/dev/null) \
+  || die "no API key in the Keychain under service boat-resolve"
 
-call() { # METHOD PATH [JSON_BODY]
+call() { # METHOD PATH [JSON_BODY]. Prints the response body, also on an HTTP error.
   curl -sS --fail-with-body --max-time 30 -X "$1" "$api$2" \
-    -H "Authorization: Bearer $(token)" -H 'Content-Type: application/json' ${3:+-d "$3"}
+    -H "Authorization: Bearer $key" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
 
-state() { call GET "/sandboxes/$id" | jq -er .sandbox.state; }
+# Authorizes our key (safe to repeat) and caches where to connect and which host key to
+# trust. On failure, prints Boat's error body and returns non-zero.
+authorize() {
+  umask 077
+  mkdir -p "$cache"
+  if call POST "/sandboxes/$id/sshkey" "$(jq -nc --arg k "$(cat "$pubkey")" '{key: $k}')" >"$cache/$id.json.$$" 2>/dev/null; then
+    mv "$cache/$id.json.$$" "$cache/$id.json"
+  else
+    cat "$cache/$id.json.$$"
+    rm -f "$cache/$id.json.$$"
+    return 1
+  fi
+}
 
-ensure_running() {
-  s=$(state) || die "cannot read $id"
-  case $s in
-    ready | idle | running) return ;;
-    archived | archiving | error)
-      [ "$alias" != "$id" ] || die "$id is $s. Connect to $id.wake to resume it, or run: boat resume $id"
-      echo "boat-resolve: resuming $id" >&2
-      call POST "/sandboxes/$id/resume" '{}' >/dev/null || die "resume of $id failed"
-      ;;
-  esac
-  # Starting states, or a resume we just asked for: Boat holds commands up to 60 s, we allow 3 min.
+# One call when the sandbox runs. When it does not, Boat says why and in which state.
+# Plain aliases never resume; .wake resumes a stopped sandbox. Starting states are
+# waited for: Boat holds commands up to 60 s, we allow 3 min.
+connect() {
   i=0
   while [ $i -lt 90 ]; do
-    case $(state) in ready | idle | running) return ;; esac
+    err=$(authorize) && return
+    code=$(printf '%s' "$err" | jq -r '.error.code // .code // "unknown"' 2>/dev/null) || code=unknown
+    state=$(printf '%s' "$err" | jq -r '.error.details.state // empty' 2>/dev/null) || state=
+    [ "$code" = machine_not_running ] || die "cannot reach $id: $code"
+    case $state in
+      error) die "$id is in an error state. Run: boat recover $id" ;;
+      archived | archiving | stopped | stopping)
+        [ "$alias" != "$id" ] || die "$id is $state. Connect to $id.wake to resume it, or run: boat resume $id"
+        if [ $i -eq 0 ]; then
+          echo "boat-resolve: resuming $id" >&2
+          call POST "/sandboxes/$id/resume" '{}' >/dev/null || die "resume of $id failed"
+        fi
+        ;;
+    esac
     sleep 2
     i=$((i + 1))
   done
   die "$id did not become ready in 3 minutes"
 }
 
-# Authorizes our key (safe to repeat) and returns where to connect and which host key to trust.
-authorize() {
-  mkdir -p "$cache"
-  umask 077
-  call POST "/sandboxes/$id/sshkey" "$(jq -nc --arg k "$(cat "$pubkey")" '{key: $k}')" >"$cache/$id.json.$$" \
-    || die "could not authorize the SSH key on $id"
-  mv "$cache/$id.json.$$" "$cache/$id.json"
-}
-
 case $mode in
   connect)
-    ensure_running
-    authorize
+    connect
     endpoint=$(jq -er '.sshEndpoint // (.machineIp + ":22")' "$cache/$id.json") || die "no address for $id"
     exec nc "${endpoint%:*}" "${endpoint##*:}"
     ;;
@@ -97,7 +103,7 @@ case $mode in
     # missing file is fine: ssh only uses this to order key types.
     if [ -z "$(find "$file" -mmin -2 2>/dev/null)" ]; then
       [ "$reason" = ORDER ] && exit 0
-      authorize
+      authorize >/dev/null || die "could not authorize the SSH key on $id"
     fi
     printf '%s %s\n' "$known_name" "$(jq -er .hostKey "$file")"
     ;;

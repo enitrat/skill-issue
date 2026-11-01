@@ -230,10 +230,10 @@ bake() {
     log "creating a sandbox from dev-base"
     id=$(create --from dev-base --name "bake-$snapshot")
     log "$id: cloning ${repos[*]}"
-    env_script | ssh -o BatchMode=yes "$id" 'cat > /tmp/bx-env.sh'
-    gh auth token | ssh -o BatchMode=yes "$id" bash /tmp/bx-env.sh "$env" "${repos[@]}" \
+    # One connection: the script travels quoted in the command line, the token on stdin.
+    gh auth token | ssh -o BatchMode=yes "$id" \
+      "bash -c $(printf %q "$(env_script)") bx-env $(printf '%q ' "$env" "${repos[@]}")" \
       || die "env setup failed on $id. Inspect: ssh $id. Delete: boat delete $id"
-    ssh -o BatchMode=yes "$id" rm /tmp/bx-env.sh
   fi
   log "$id: saving as $snapshot"
   boat snapshot "$id" "$snapshot" --json | jq -e 'select(.event == "saved")' >/dev/null \
