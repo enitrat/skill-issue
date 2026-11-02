@@ -39,6 +39,7 @@ check "ssh: config.local included" eval 'grep -q "^Include .*~/.ssh/config.local
 check "ssh: sockets dir" test -d ~/.ssh/sockets
 check "rg: config file in use" test -r "$RIPGREP_CONFIG_PATH"
 check "repo tools linked" test -x ~/.local/bin/git-id
+check "claude: repo skills installed" test -r ~/.claude/skills/bx-boxes/SKILL.md
 if [[ $OSTYPE == linux* ]]; then
     check "herdr: socket outside the restored disk" eval '[[ $HERDR_SOCKET_PATH == /tmp/* ]]'
     check "playwright: browsers outside ~/.cache" eval '[[ $PLAYWRIGHT_BROWSERS_PATH == $HOME/.local/* ]]'

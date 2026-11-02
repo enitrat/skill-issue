@@ -48,6 +48,11 @@ log "switching home-manager to $flake_output"
 # would leave its build links there.
 env -u WORK_DIR nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$flake_output" -b pre-nix
 
+# This repo's skills, for Claude Code. The Nix npx by path: Boat's image puts an nvm
+# Node earlier on this script's PATH.
+log "installing skill-issue skills for Claude Code"
+"$HOME/.nix-profile/bin/npx" -y skills add enitrat/skill-issue -g -y -a claude-code -s '*' </dev/null >/dev/null
+
 log "installing nix-after-restore.service"
 sudo install -m 644 "$repo_dir/bootstrap/nix-after-restore.service" /etc/systemd/system/
 sudo systemctl daemon-reload
