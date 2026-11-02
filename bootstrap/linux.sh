@@ -40,6 +40,9 @@ fi
 if [ ! -e "$repo_dir/flake.nix" ]; then
     log "cloning $repo_url into $repo_dir"
     git clone --quiet "$repo_url" "$repo_dir"
+else
+    log "updating $repo_dir"
+    git -C "$repo_dir" pull --quiet --ff-only
 fi
 
 log "switching home-manager to $flake_output"
@@ -52,6 +55,21 @@ env -u WORK_DIR nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$f
 # Node earlier on this script's PATH.
 log "installing skill-issue skills for Claude Code"
 "$HOME/.nix-profile/bin/npx" -y skills add enitrat/skill-issue -g -y -a claude-code -s '*' </dev/null >/dev/null
+
+# skills add never removes a skill the repo dropped. Remove the ones it installed
+# from this repo whose SKILL.md is no longer in the checkout.
+lock=$HOME/.agents/.skill-lock.json
+if [ -r "$lock" ]; then
+    "$HOME/.nix-profile/bin/jq" -r '.skills | to_entries[]
+        | select(.value.source == "enitrat/skill-issue")
+        | "\(.key)\t\(.value.skillPath)"' "$lock" |
+        while IFS=$'\t' read -r name path; do
+            if [ ! -e "$repo_dir/$path" ]; then
+                log "removing skill $name, which skill-issue no longer has"
+                "$HOME/.nix-profile/bin/npx" -y skills remove -g -y "$name" </dev/null >/dev/null
+            fi
+        done
+fi
 
 log "installing nix-after-restore.service"
 sudo install -m 644 "$repo_dir/bootstrap/nix-after-restore.service" /etc/systemd/system/

@@ -4,7 +4,7 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.6.0"
+VERSION="0.7.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
@@ -35,6 +35,9 @@ USAGE
     bx bake <snapshot>      Build <snapshot> from `dev`: clone the repos listed in
                             ~/.config/bx/<snapshot> into ~/<snapshot>/ and install their
                             dependencies
+    bx update <snapshot>    Bring <snapshot> to skill-issue's current main in minutes, without
+                            a bake: re-run the bootstrap on a sandbox from it and save it
+                            under the same name. Its repos keep their baked commit
     bx --help | --version
 
 Sandbox names are unique, so a name works wherever an id does. `ssh` and herdr use the id
@@ -343,12 +346,43 @@ bake() {
       "bash -c $(printf %q "$(bake_script)") bx-bake $(printf '%q ' "$snapshot" "$setup" "${repos[@]}")" \
       || die "snapshot setup failed on $id. Inspect: ssh $id. Delete: boat delete $id"
   fi
+  save "$id" "$snapshot"
+}
+
+# Saves build sandbox $1 as snapshot $2, without the logins Boat wrote, then deletes it.
+save() {
+  local id=$1 snapshot=$2
   scrub_logins "$id" || die "could not delete the logins on $id. Delete: boat delete $id"
   log "$id: saving as $snapshot"
   boat snapshot "$id" "$snapshot" --json | jq -e 'select(.event == "saved")' >/dev/null \
     || die "could not save $snapshot from $id"
   boat delete "$id" --yes >/dev/null
   log "saved $snapshot. Start from it: boat new --from $snapshot"
+}
+
+# Brings a saved snapshot to skill-issue's current main without rebuilding it: re-runs the
+# bootstrap on a sandbox started from the snapshot, which pulls the checkout, switches
+# home-manager and reinstalls the skills, then saves it under the same name. Its repos stay
+# at the commit they were baked at.
+update() {
+  local snapshot=$1 id commit
+  boat snapshots --json | jq -e --arg n "$snapshot" '.named[] | select(.name == $n)' >/dev/null \
+    || die "no snapshot $snapshot. See bx list"
+  # By commit, not `main`: GitHub caches raw files for 5 minutes after a push.
+  commit=$(git ls-remote https://github.com/enitrat/skill-issue main | cut -f1)
+  [ -n "$commit" ] || die "cannot read the skill-issue main commit"
+  log "creating a sandbox from $snapshot"
+  id=$(create --from "$snapshot" --name "update-$snapshot")
+  wait_hydrated "$id"
+  log "$id: re-running the bootstrap at skill-issue ${commit:0:7}"
+  ssh -o BatchMode=yes "$id" "set -euo pipefail
+    curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/$commit/bootstrap/linux.sh | bash
+    . \"\$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh\"
+    export PATH=\"\$HOME/.nix-profile/bin:\$HOME/.local/bin:\$PATH\"
+    \"\$HOME/skill-issue/bootstrap/check.sh\"
+    /nix/var/nix/profiles/default/bin/nix-collect-garbage -d >/dev/null" \
+    || die "update failed on $id. Inspect: ssh $id. Delete: boat delete $id"
+  save "$id" "$snapshot"
 }
 
 # Linux side of a teleport. The pack (code, transcript, scratchpad) is in ~/.bx-teleport.
@@ -576,6 +610,10 @@ case ${1:-} in
   bake)
     [ $# -eq 2 ] || die "usage: bx bake <dev|snapshot>"
     bake "$2"
+    ;;
+  update)
+    [ $# -eq 2 ] || die "usage: bx update <snapshot>"
+    update "$2"
     ;;
   *) usage >&2; exit 1 ;;
 esac
