@@ -66,9 +66,9 @@ most of their time starting.
   machine label you steer the box by, so a space or a stray suffix makes every later command
   awkward. Write each name out; never build it by splitting a string, because zsh does not
   word-split `$var` and `set -- $spec` puts the whole string in `$1`.
-- Size: `bx new --type large` (8 vCPU, 16 GB, twice the rate) when one shard saturates the
-  default 4 vCPU, 8 GB, such as a stack plus a browser plus an agent. Otherwise keep the
-  default.
+- Size: `bx new` starts `large` boxes (8 vCPU, 16 GB): a stack plus a browser plus an agent
+  saturates `default` (4 vCPU, 8 GB, half the rate). Pass `--type default` only for light
+  work such as a test shard with no browser.
 
 ```bash
 for name in eval-1 eval-2 eval-3 eval-4; do bx new --snapshot zama --name "$name" > "/tmp/$name.id" & done; wait
@@ -171,7 +171,7 @@ boxes and `compare` sets two runs side by side.
 
 1. Snapshot `zama`. Code: the branch fetched, plus a patch of local changes (section 2).
 2. Shards: one box per task and condition (for example full guidance vs guidance removed),
-   `--concurrency 1`, created with `--type large`. One trial runs Next, Chrome and an agent at
+   `--concurrency 1`, on `large` boxes (the `bx new` default). One trial runs Next, Chrome and an agent at
    once; on the default 4 vCPU, 8 GB box that pushed load past 50, stalled SSH for minutes and
    made trials slower than the shards on lighter tasks.
 3. On box 1 first: `bun tools/ds-eval/eval.ts check`, a dry `run`, and one throwaway checkout.

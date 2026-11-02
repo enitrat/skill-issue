@@ -4,7 +4,7 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.4.0"
+VERSION="0.5.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
@@ -19,7 +19,7 @@ USAGE
     bx new --snapshot <snapshot> --name <name> [--type <size>]
                             Start a sandbox from <snapshot>, log gh in with your token,
                             and add it to herdr under <name>. <size> is small, default,
-                            large or xlarge (see `boat new --help`); default if omitted
+                            large or xlarge (see `boat new --help`); large if omitted
     bx ls                   List sandboxes: name, id, state, age, whether herdr has them
     bx list                 List snapshots to start from: built or not, age, size, repos
     bx rm <name|id>         Remove a sandbox from herdr and delete it
@@ -345,7 +345,7 @@ case ${1:-} in
   --version) echo "bx $VERSION" ;;
   new)
     shift
-    snapshot='' name='' type=default
+    snapshot='' name='' type=large
     while [ $# -gt 0 ]; do
       case $1 in
         --snapshot | --name | --type)
