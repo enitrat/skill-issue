@@ -114,7 +114,7 @@ Each section below appears only when it has something important to say:
    - Direct statements. Drop throat-clearing, hedges, stacked clauses and
      ornamental phrasing ("note that", "in order to", "this ensures that").
    - A sentence that survives losing a word loses it. Recheck the length target.
-8. Run `/unslop` on the result.
+8. Run `/pstack:unslop` on the result.
 9. Publish with `gh pr edit --body-file` (or `gh pr create`) without asking. Report
    the corrections to the previous body, and any doc or comment in the diff that
    contradicts the code, to the user.

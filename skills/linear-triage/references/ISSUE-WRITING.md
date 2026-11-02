@@ -53,7 +53,7 @@ the issue exists to ask for.
 2. Draft to the shape. Check every claim against a source; cut what you can't link.
 3. **Prune**: for each line, would the reader get the problem wrong without it?
    If not, delete. Then halve the How.
-4. Tighten with `/pstack:technical-writing`, then `/unslop`.
+4. Tighten with `/pstack:technical-writing`, then `/pstack:unslop`.
 5. Present the body with title, project, assignee and labels. Create on approval.
 
 ## Examples

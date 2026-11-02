@@ -306,6 +306,25 @@ in
       fi
     '';
 
+    # pstack marks every skill user-invoked only, and no Claude Code setting lifts
+    # that for a plugin. Strip the flag from the skills our own skills call, so the
+    # model can run them. A plugin update brings it back until the next switch.
+    home.activation.pstackModelInvocable = lib.hm.dag.entryAfter [ "claudePlugins" ] ''
+      plugins="$HOME/.claude/plugins/installed_plugins.json"
+      if [ -r "$plugins" ]; then
+        for root in $(${lib.getExe pkgs.jq} -r \
+          '.plugins["pstack@cursor-plugins"] // [] | .[].installPath' "$plugins"); do
+          for skill in unslop technical-writing; do
+            file="$root/skills/$skill/SKILL.md"
+            if [ -f "$file" ]; then
+              run ${lib.getExe pkgs.gnused} -i \
+                '1,/^---$/{/^disable-model-invocation:/d}' "$file"
+            fi
+          done
+        done
+      fi
+    '';
+
     # agent-browser drives its own Chrome for Testing, downloaded once per version.
     home.activation.agentBrowserChrome = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       stamp="${config.xdg.stateHome}/agent-browser-chrome"

@@ -35,7 +35,7 @@ with another convention): `<type>(<scope>): <description>`, e.g.
 
 Cut implementation plans, edge-case lists, acceptance-criteria and testing-plan
 checklists, facts the reader can't check, and history. Prune each line: would the
-reader get the problem wrong without it? Then tighten with `/unslop`.
+reader get the problem wrong without it? Then tighten with `/pstack:unslop`.
 
 ## Script
 
