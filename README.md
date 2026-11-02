@@ -48,15 +48,18 @@ as a unit instead of installed flat. It sits outside the repo root so
 
 ```bash
 claude plugin marketplace add ~/workspace/skill-issue/plugins
-claude plugin install pstack@skill-issue            # user scope, on everywhere
 claude plugin install emil@skill-issue
-claude plugin disable pstack@skill-issue            # off by default
-claude plugin enable pstack@skill-issue --scope local   # on for one repo only
+claude plugin disable emil@skill-issue              # off by default
+claude plugin enable emil@skill-issue --scope local     # on for one repo only
 ```
 
-`plugins/pstack/` vendors [pstack](https://github.com/cursor/plugins/tree/main/pstack).
-`make pstack-sync` refreshes it; `plugins/pstack/UPSTREAM` pins the commit.
-`hooks/claude-code.md` maps its Cursor-specific instructions to Claude Code.
+[pstack](https://github.com/cursor/plugins/tree/main/pstack) is not vendored. It
+installs from upstream's own Claude Code build, `pstack@cursor-plugins`, which
+`nix/home/files/claude-settings.json` declares. Claude Code does not auto-update
+third-party marketplaces, so refresh it with
+`claude plugin marketplace update cursor-plugins`. `rules/pstack-models.md` sets
+every pstack role to Opus (rewrite it with `/pstack:setup-pstack`), and
+`rules/pstack-local.md` holds this machine's pstack policy.
 
 `plugins/emil/` vendors the [Emil Kowalski](https://emilkowal.ski/skill) skills
 (design engineering, animation, Apple design, mobile/Swift, UI library picker).

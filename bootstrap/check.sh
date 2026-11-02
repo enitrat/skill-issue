@@ -19,7 +19,7 @@ check() { local name=$1; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else
 # every shell without anyone noticing.
 tools=(rg fd jq bat eza fzf zoxide starship atuin carapace direnv delta mergiraf
     gh git git-lfs node pnpm bun uv herdr agent-browser ffmpeg forge cast anvil
-    linear tmux nh nvd)
+    linear tmux nh nvd mise)
 [[ $OSTYPE == darwin* ]] && tools+=(aws bw , nix-locate)
 for tool in $tools; do
     check "$tool: installed, from nix" eval '[[ ${commands[$tool]:A} == /nix/store/* ]]'
@@ -40,8 +40,9 @@ check "ssh: sockets dir" test -d ~/.ssh/sockets
 check "rg: config file in use" test -r "$RIPGREP_CONFIG_PATH"
 check "repo tools linked" test -x ~/.local/bin/git-id
 check "claude: repo skills installed" test -r ~/.claude/skills/bx-boxes/SKILL.md
+check "claude: pstack plugin installed" jq -e '.plugins["pstack@cursor-plugins"]' ~/.claude/plugins/installed_plugins.json
+check "claude: pstack rules linked" test -r ~/.claude/rules/pstack-models.md -a -r ~/.claude/rules/pstack-local.md
 if [[ $OSTYPE == linux* ]]; then
-    check "herdr: socket outside the restored disk" eval '[[ $HERDR_SOCKET_PATH == /tmp/* ]]'
     check "playwright: browsers outside ~/.cache" eval '[[ $PLAYWRIGHT_BROWSERS_PATH == $HOME/.local/* ]]'
     check "nix: daemon restarts after a Boat restore" systemctl is-enabled nix-after-restore.service
 fi

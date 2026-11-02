@@ -31,6 +31,7 @@ in
       pnpm
       bun
       uv
+      mise # pstack's /statechart installs TLC and Java with it
 
       # Agents and their tooling
       herdr
@@ -265,7 +266,12 @@ in
       lib.nameValuePair ".local/bin/${name}" {
         source = config.lib.file.mkOutOfStoreSymlink "${repo}/tools/${name}";
       }
-    ) (builtins.readDir ../../tools);
+    ) (builtins.readDir ../../tools)
+    # pstack's Claude Code adapter reads its model roles from ~/.claude/rules.
+    // lib.genAttrs [ "pstack-models.md" "pstack-local.md" ] (name: {
+      target = ".claude/rules/${name}";
+      source = config.lib.file.mkOutOfStoreSymlink "${repo}/rules/${name}";
+    });
 
     # Claude Code rewrites its own settings file, so it cannot be a read-only store
     # link. Each switch copies the repo version over it, keeping the previous one.
@@ -275,6 +281,20 @@ in
         run mkdir -p "$HOME/.claude"
         [ -e "$target" ] && run cp "$target" "$target.bak"
         run install -m 644 ${./files/claude-settings.json} "$target"
+      fi
+    '';
+
+    # The settings above enable pstack@cursor-plugins, which does nothing until the
+    # plugin is downloaded. Claude Code itself comes from its own installer, not Nix.
+    home.activation.claudePlugins = lib.hm.dag.entryAfter [ "claudeSettings" ] ''
+      claude=$(command -v claude || echo "$HOME/.local/bin/claude")
+      if [ ! -x "$claude" ]; then
+        echo "claude not installed; skipping the pstack plugin" >&2
+      elif ! ${lib.getExe pkgs.jq} -e '.plugins["pstack@cursor-plugins"]' \
+        "$HOME/.claude/plugins/installed_plugins.json" >/dev/null 2>&1; then
+        run "$claude" plugin marketplace add cursor/plugins || true
+        run "$claude" plugin install pstack@cursor-plugins --scope user \
+          || echo "pstack plugin install failed; re-run the switch when online" >&2
       fi
     '';
 
