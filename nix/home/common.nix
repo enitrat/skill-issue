@@ -45,6 +45,10 @@ in
       foundry
       linear-cli
 
+      # Git hooks. prek-generated hooks in every repo exec `prek` from PATH, so it
+      # cannot live in one repo's devShell.
+      prek
+
       # Nix itself: `nh` switches with a diff, `nvd` diffs two generations.
       nh
       nvd

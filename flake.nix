@@ -93,7 +93,6 @@
         {
           default = pkgs.mkShellNoCC {
             packages = with pkgs; [
-              prek
               shellcheck
               nixfmt
             ];
