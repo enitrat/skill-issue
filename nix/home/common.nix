@@ -293,7 +293,9 @@ in
     '';
 
     # The settings above enable pstack@cursor-plugins, which does nothing until the
-    # plugin is downloaded. By store path: activation runs with a fixed PATH.
+    # plugin is downloaded. By store path: activation runs with a fixed PATH, which
+    # also lacks the git that `marketplace add` clones with.
+    home.extraActivationPath = [ pkgs.git ];
     home.activation.claudePlugins = lib.hm.dag.entryAfter [ "claudeSettings" ] ''
       claude=${lib.getExe pkgs.claude-code}
       if ! ${lib.getExe pkgs.jq} -e '.plugins["pstack@cursor-plugins"]' \
