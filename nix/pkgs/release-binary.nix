@@ -10,6 +10,8 @@
   version,
   # Executable name inside the archive, also the name installed in bin/.
   bin ? pname,
+  # Extra executables to install from the same archive.
+  extraBins ? [ ],
   # Nix system -> fetchurl arguments ({ url; hash; }).
   sources,
   meta ? { },
@@ -30,7 +32,9 @@ stdenvNoCC.mkDerivation {
   dontPatchELF = true;
   installPhase = ''
     runHook preInstall
-    install -Dm755 "$(find . -type f -name ${bin} -print -quit)" $out/bin/${bin}
+    for b in ${bin} ${builtins.concatStringsSep " " extraBins}; do
+      install -Dm755 "$(find . -type f -name "$b" -print -quit)" "$out/bin/$b"
+    done
     runHook postInstall
   '';
   meta = meta // {

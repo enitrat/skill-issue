@@ -90,4 +90,38 @@ in
       };
       meta.description = "Bitwarden password manager CLI";
     };
+
+  # Pinned: the testkit requires exactly this version, and nixpkgs moves ahead.
+  foundry =
+    let
+      version = "1.7.1";
+      url =
+        platform:
+        "https://github.com/foundry-rs/foundry/releases/download/v${version}/foundry_v${version}_${platform}.tar.gz";
+    in
+    releaseBinary {
+      pname = "foundry";
+      inherit version;
+      bin = "forge";
+      extraBins = [
+        "cast"
+        "anvil"
+        "chisel"
+      ];
+      sources = {
+        aarch64-darwin = {
+          url = url "darwin_arm64";
+          hash = "sha256-6s3Gdxj6yFfK2eGcf2cp3YDecx0J34GFY5HQk8/KtUc=";
+        };
+        x86_64-linux = {
+          url = url "linux_amd64";
+          hash = "sha256-z35ojtDExIrf/KeItJYHbjEGC2esWv4eQ9u1SZwgyIs=";
+        };
+        aarch64-linux = {
+          url = url "linux_arm64";
+          hash = "sha256-yP6PoJrjq6LIG1EMb52jqdRoApuVgOaQskWz8K6mh64=";
+        };
+      };
+      meta.description = "Foundry Ethereum toolkit (forge, cast, anvil, chisel)";
+    };
 }
