@@ -58,7 +58,7 @@ installs from upstream's own Claude Code build, `pstack@cursor-plugins`, which
 `nix/home/files/claude-settings.json` declares. Claude Code does not auto-update
 third-party marketplaces, so refresh it with
 `claude plugin marketplace update cursor-plugins`. `rules/pstack-models.md` sets
-every pstack role to Opus (rewrite it with `/pstack:setup-pstack`), and
+every pstack role to Opus at medium effort (rewrite it with `/pstack:setup-pstack`), and
 `rules/pstack-local.md` holds this machine's pstack policy.
 
 `plugins/emil/` vendors the [Emil Kowalski](https://emilkowal.ski/skill) skills
