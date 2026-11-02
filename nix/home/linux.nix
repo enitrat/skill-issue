@@ -25,11 +25,6 @@
     ];
   };
 
-  # Boat restores /home/user through a FUSE layer that it swaps for the local disk once
-  # the download ends. A socket made before the swap stops answering, so herdr's live
-  # in /tmp, which Boat never restores. herdr creates the directory.
-  home.sessionVariables.HERDR_SOCKET_PATH = "/tmp/herdr-user/herdr.sock";
-
   # Playwright's default, ~/.cache/ms-playwright, is not kept in a Boat snapshot, so a
   # box would download its browsers again.
   home.sessionVariables.PLAYWRIGHT_BROWSERS_PATH = "$HOME/.local/share/ms-playwright";

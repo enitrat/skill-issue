@@ -4,7 +4,7 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.5.0"
+VERSION="0.6.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
@@ -20,6 +20,12 @@ USAGE
                             Start a sandbox from <snapshot>, log gh in with your token,
                             and add it to herdr under <name>. <size> is small, default,
                             large or xlarge (see `boat new --help`); large if omitted
+    bx teleport --session <id> [--name <name>] [--snapshot <snapshot>] [--type <size>]
+                            Move Claude Code session <id> to a new sandbox and resume it
+                            in herdr: its repo as it is on disk (local commits and
+                            uncommitted changes included, nothing pushed), the transcript
+                            and the scratchpad, at the same paths as on this Mac. The
+                            snapshot defaults to the one whose repo list has the repo
     bx ls                   List sandboxes: name, id, state, age, whether herdr has them
     bx list                 List snapshots to start from: built or not, age, size, repos
     bx rm <name|id>         Remove a sandbox from herdr and delete it
@@ -96,15 +102,13 @@ new() {
   log "starting $name from $snapshot ($type)"
   id=$(boat new --from "$snapshot" --name "$name" --type "$type" --json | jq -r 'select(.event == "ready") | .id' | grep .) \
     || die "could not create $name from $snapshot"
-  # The three steps below are independent. Each is slow only because it is the first to
+  # The two steps below are independent. Each is slow only because it is the first to
   # read its files from the lazily restored disk, so they run at once.
-  log "$id: logging gh in, adding to herdr as $name, keeping it on ${AUTO_STOP_HOURS}h"
+  log "$id: logging gh in, keeping it on ${AUTO_STOP_HOURS}h"
   # Boat's auto-stop counts from the create, not from activity: without this, an agent
   # still working after an hour is stopped mid-task.
   boat extend "$id" --hours "$AUTO_STOP_HOURS" >/dev/null &
   local extend=$!
-  herdr machine add "$id" --label "$name" >/dev/null &
-  local herdr=$!
   # The token travels on stdin only, never in a command line or Boat's variables. It goes
   # straight into hosts.yml: `gh auth login` also rewrites config.yml, which home-manager
   # owns read-only.
@@ -118,8 +122,13 @@ new() {
     git config -f ~/.gitconfig.local user.email $(printf %q "$(git config user.email)")
   " || die "could not log gh in on $id. Delete: bx rm $id"
   wait "$extend" || log "could not extend auto-stop; run: boat extend $id --hours $AUTO_STOP_HOURS"
-  wait "$herdr" || log "herdr machine add failed; run: herdr machine add $id --label $name"
   wait_hydrated "$id"
+  # Only after the restore: `machine add` starts the box's herdr server, and a server
+  # started earlier listens on ~/.config/herdr/herdr.sock inside the FUSE layer that the
+  # restore removes, so `herdr --machine` gets ConnectionRefused.
+  log "$id: adding to herdr as $name"
+  herdr machine add "$id" --label "$name" >/dev/null \
+    || log "herdr machine add failed; run: herdr machine add $id --label $name"
   ready_check "$id" "$snapshot" || die "$id is not ready (see above). Inspect: ssh $id. Delete: bx rm $id"
   echo "$id"
   log "ready: ssh $id"
@@ -152,7 +161,9 @@ ready_check() {
     }
     check 'nix daemon answers' nix_up
     check 'gh is logged in' gh auth status
-    for repo in ~/$2/*/; do
+    # find, not a glob: the remote shell is zsh, which fails on a glob that matches
+    # nothing, and dev has no ~/dev.
+    for repo in \$(find ~/$2 -mindepth 1 -maxdepth 1 -type d 2>/dev/null); do
       [ -d \"\$repo/.git\" ] || continue
       check \"git fetch in \$repo\" git -C \"\$repo\" fetch --quiet origin
       if [ -f \"\$repo/pnpm-lock.yaml\" ]; then
@@ -340,6 +351,188 @@ bake() {
   log "saved $snapshot. Start from it: boat new --from $snapshot"
 }
 
+# Linux side of a teleport. The pack (code, transcript, scratchpad) is in ~/.bx-teleport.
+# Arguments: box checkout, Mac repo root, Mac cwd, owner/repo, branch (empty when detached),
+# commit, Claude project key, session id, Mac Claude temp dir (<tmp>/claude-<uid>).
+teleport_script() {
+  cat <<'EOF'
+set -euo pipefail
+. "$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh"
+export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
+dir=$1 top=$2 cwd=$3 repo=$4 branch=$5 sha=$6 key=$7 sid=$8 mac_tmp=$9
+pack=$HOME/.bx-teleport
+data=$HOME/.local/share/bx-teleport
+
+echo "== $repo at ${sha:0:7} in $dir"
+[ -d "$dir/.git" ] || gh repo clone "$repo" "$dir" -- --quiet
+cd "$dir"
+git fetch --quiet origin
+# Local commits that origin lacks travel as a bundle; it needs origin's history first.
+[ ! -f "$pack/head.bundle" ] || git fetch --quiet "$pack/head.bundle" HEAD
+if [ -n "$branch" ]; then
+  git checkout --quiet -B "$branch" "$sha"
+  if git rev-parse --quiet --verify "refs/remotes/origin/$branch" >/dev/null; then
+    git branch --quiet --set-upstream-to "origin/$branch"
+  fi
+else
+  git checkout --quiet --detach "$sha"
+fi
+git submodule update --init --recursive --quiet
+[ ! -s "$pack/work.patch" ] || git apply --binary "$pack/work.patch"
+if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile --prefer-offline --reporter=silent; fi
+
+echo "== session $sid"
+mkdir -p "$HOME/.claude/projects/$key" "$HOME/.claude/file-history" "$data/claude-tmp/$key"
+cp -R "$pack/claude/projects/$key/." "$HOME/.claude/projects/$key/"
+[ ! -d "$pack/claude/file-history/$sid" ] || cp -R "$pack/claude/file-history/$sid" "$HOME/.claude/file-history/"
+[ ! -d "$pack/tmp/$sid" ] || cp -R "$pack/tmp/$sid" "$data/claude-tmp/$key/"
+# The user asked to move a session they already run in this repo: trust it here too.
+f=$HOME/.claude.json
+[ -s "$f" ] || echo '{}' >"$f"
+jq --arg top "$top" --arg cwd "$cwd" \
+  '.projects[$top].hasTrustDialogAccepted = true | .projects[$cwd].hasTrustDialogAccepted = true' \
+  "$f" >"$f.bx" && mv "$f.bx" "$f"
+
+echo "== same paths as the Mac"
+# Claude keys a session by its resolved cwd, and the transcript names Mac paths, so the
+# checkout and the scratchpads appear at those exact paths. Bind mounts, not symlinks:
+# Claude resolves symlinks. The data stays under /home/user, which Boat saves.
+mounts=$(mktemp)
+{
+  printf '%s\t%s\n' "$dir" "$top"
+  printf '%s\t%s\n' "$data/claude-tmp" "$mac_tmp"
+  printf '%s\t%s\n' "$data/claude-tmp" "${mac_tmp%/*}/claude-$(id -u)"
+} >"$mounts"
+touch "$mounts.old"
+[ ! -f /etc/bx-teleport.mounts ] || cp /etc/bx-teleport.mounts "$mounts.old"
+sort -u "$mounts.old" "$mounts" | sudo tee /etc/bx-teleport.mounts >/dev/null
+rm -f "$mounts" "$mounts.old"
+# Mounts are not saved, and a bind made while Boat restores /home/user points at the FUSE
+# layer it removes afterwards: wait for the swap, as nix-after-restore.service does.
+sudo tee /usr/local/sbin/bx-teleport-mounts >/dev/null <<'SCRIPT'
+#!/bin/sh
+while grep -q ' /home/user fuse' /proc/mounts; do sleep 2; done
+tab=$(printf '\t')
+while IFS=$tab read -r src dst; do
+  mkdir -p "$dst"
+  mountpoint -q "$dst" || mount --bind "$src" "$dst"
+done </etc/bx-teleport.mounts
+SCRIPT
+sudo chmod 755 /usr/local/sbin/bx-teleport-mounts
+sudo /usr/local/sbin/bx-teleport-mounts
+sudo tee /etc/systemd/system/bx-teleport-mounts.service >/dev/null <<'UNIT'
+[Unit]
+Description=Bind bx teleport paths once Boat has restored /home/user
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/bx-teleport-mounts
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable --quiet bx-teleport-mounts.service
+rm -rf "$pack"
+EOF
+}
+
+# Moves Claude Code session $1, its repository as it is on disk and its scratchpad to a
+# new box, and resumes it there in herdr.
+teleport() {
+  local sid=$1 name=$2 type=$3 snapshot=$4
+  case $sid in '' | *[!0-9a-f-]*) die "not a session id: $sid" ;; esac
+  local file key cwd mode top url repo branch sha mac_tmp dir id tmp
+  file=$(find "$HOME/.claude/projects" -mindepth 2 -maxdepth 2 -name "$sid.jsonl" | head -1)
+  [ -n "$file" ] || die "no transcript for session $sid in ~/.claude/projects"
+  key=$(basename "$(dirname "$file")")
+  cwd=$(jq -rn 'first(inputs | objects | select(.cwd) | .cwd) // empty' "$file")
+  [ -n "$cwd" ] || die "$file names no working directory"
+  mode=$(jq -rn '[inputs | objects | select(.type == "permission-mode") | .permissionMode] | last // empty' "$file")
+  top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || die "$cwd is not in a git repository"
+  url=$(git -C "$top" remote get-url origin 2>/dev/null) || die "$top has no origin remote"
+  repo=$(printf '%s\n' "$url" | sed -E 's#^(git@github\.com:|ssh://git@github\.com/|https://github\.com/)##; s#\.git$##')
+  case $repo in */*/* | *:* | '') die "origin is not a GitHub repository: $url" ;; esac
+  branch=$(git -C "$top" symbolic-ref --quiet --short HEAD || true)
+  sha=$(git -C "$top" rev-parse HEAD)
+  mac_tmp=$(cd "${CLAUDE_CODE_TMPDIR:-/tmp}" && pwd -P)/claude-$(id -u)
+
+  if [ -z "$snapshot" ]; then
+    snapshot=dev
+    local built f
+    built=$(boat snapshots --json | jq -r '.named[].name')
+    for f in "$HOME"/.config/bx/*; do
+      case $f in *.sh) continue ;; esac
+      if [ -f "$f" ] && grep -qxF "$repo" "$f" && printf '%s\n' "$built" | grep -qxF "$(basename "$f")"; then
+        snapshot=$(basename "$f")
+        break
+      fi
+    done
+  fi
+  if [ "$snapshot" = dev ]; then dir=/home/user/work/${repo#*/}; else dir=/home/user/$snapshot/${repo#*/}; fi
+  [ -n "$name" ] || name=tp-$(basename "$top" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | cut -c1-20)-${sid:0:4}
+
+  log "teleporting session $sid ($repo, ${branch:-detached} at ${sha:0:7}) to $name from $snapshot"
+  id=$(new "$snapshot" "$name" "$type") || exit 1
+
+  # Packed after the box is ready, so the transcript holds everything up to this command.
+  tmp=$(mktemp -d)
+  # shellcheck disable=SC2064 # $tmp is fixed now.
+  trap "rm -rf '$tmp'" EXIT
+  mkdir -p "$tmp/pack/claude/projects/$key" "$tmp/pack/tmp"
+  if [ -n "$(git -C "$top" rev-list -n 1 HEAD --not --remotes)" ]; then
+    git -C "$top" bundle create "$tmp/pack/head.bundle" HEAD --not --remotes 2>/dev/null
+  fi
+  # The working tree against HEAD, untracked files included, the real index untouched.
+  cp "$(git -C "$top" rev-parse --path-format=absolute --git-path index)" "$tmp/index"
+  GIT_INDEX_FILE=$tmp/index git -C "$top" add -A
+  GIT_INDEX_FILE=$tmp/index git -C "$top" diff --cached --binary HEAD >"$tmp/pack/work.patch"
+  cp -Rp "$file" "$tmp/pack/claude/projects/$key/"
+  [ ! -d "${file%.jsonl}" ] || cp -Rp "${file%.jsonl}" "$tmp/pack/claude/projects/$key/"
+  if [ -d "$HOME/.claude/file-history/$sid" ]; then
+    mkdir -p "$tmp/pack/claude/file-history"
+    cp -Rp "$HOME/.claude/file-history/$sid" "$tmp/pack/claude/file-history/"
+  fi
+  [ ! -d "$mac_tmp/$key/$sid" ] || cp -Rp "$mac_tmp/$key/$sid" "$tmp/pack/tmp/"
+  log "$id: copying $(du -sh "$tmp/pack" | cut -f1) of code and session"
+  COPYFILE_DISABLE=1 tar czf - -C "$tmp/pack" . | ssh -o BatchMode=yes "$id" \
+    'rm -rf ~/.bx-teleport && mkdir ~/.bx-teleport && tar xzf - --warning=no-unknown-keyword -C ~/.bx-teleport' \
+    || die "could not copy the session to $id. Delete: bx rm $name"
+  ssh -o BatchMode=yes "$id" "bash -c $(printf %q "$(teleport_script)") bx-teleport $(printf '%q ' \
+    "$dir" "$top" "$cwd" "$repo" "$branch" "$sha" "$key" "$sid" "$mac_tmp")" \
+    || die "setting up the session on $id failed (see above). Inspect: ssh $id. Delete: bx rm $name"
+
+  local pane='' i=0
+  # The first calls right after `machine add` can be refused while its bridge starts.
+  while [ $i -lt 10 ] && [ -z "$pane" ]; do
+    pane=$(herdr --machine "$name" pane list 2>/dev/null | jq -r '.result.panes[0].pane_id // empty') || true
+    [ -n "$pane" ] || sleep 3
+    i=$((i + 1))
+  done
+  [ -n "$pane" ] || die "herdr on $name does not answer; see bx-boxes. Inspect: ssh $id"
+  i=0
+  herdr --machine "$name" pane run "$pane" \
+    "cd $(printf %q "$cwd") && export CLAUDE_CODE_TMPDIR=$(printf %q "${mac_tmp%/*}")" >/dev/null
+  while [ $i -lt 15 ] && [ "$(herdr --machine "$name" pane list | jq -r --arg p "$pane" '.result.panes[] | select(.pane_id == $p) | .cwd')" != "$cwd" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  log "$id: resuming the session in herdr pane $pane"
+  local args=(--resume "$sid")
+  [ -z "$mode" ] || args+=(--permission-mode "$mode")
+  if ! herdr --machine "$name" agent start claude --kind claude --pane "$pane" --timeout 120000 -- "${args[@]}" >/dev/null; then
+    log "Claude did not reach its prompt; a dialog may be waiting. Read it:"
+    log "  herdr --machine $name agent read claude --source visible"
+    exit 3
+  fi
+  # The copied transcript ends inside the command that ran this teleport. Tell the resumed
+  # session it finished, so it does not run it again.
+  herdr --machine "$name" agent prompt claude "This session was teleported to the Boat box $name ($id) by bx teleport, which completed. The repository, its uncommitted changes and the scratchpad are at the same paths as on the Mac; this machine is Linux. Do not run bx teleport again. Reply with one short line, then wait for the user." \
+    --wait --timeout 300000 >/dev/null || log "the first prompt did not settle; check: herdr --machine $name agent read claude"
+  echo "$id"
+  log "resumed in herdr. Attach: herdr --remote $id (or pick $name in the herdr machine list). Delete: bx rm $name"
+}
+
 case ${1:-} in
   -h | --help) usage ;;
   --version) echo "bx $VERSION" ;;
@@ -357,6 +550,21 @@ case ${1:-} in
     done
     [ -n "$snapshot" ] && [ -n "$name" ] || die "usage: bx new --snapshot <snapshot> --name <name>"
     new "$snapshot" "$name" "$type"
+    ;;
+  teleport)
+    shift
+    session='' name='' type=large snapshot=''
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --session | --name | --type | --snapshot)
+          [ $# -ge 2 ] || die "$1 needs a value"
+          case $1 in --session) session=$2 ;; --name) name=$2 ;; --type) type=$2 ;; --snapshot) snapshot=$2 ;; esac
+          shift 2 ;;
+        *) die "unknown argument $1. Usage: bx teleport --session <id> [--name <name>] [--snapshot <snapshot>] [--type <size>]" ;;
+      esac
+    done
+    [ -n "$session" ] || die "usage: bx teleport --session <id>"
+    teleport "$session" "$name" "$type" "$snapshot"
     ;;
   ls) ls_boxes ;;
   list) list_snapshots ;;

@@ -7,7 +7,7 @@ description: Run work on short-lived Boat sandboxes with the `bx` CLI and steer 
 
 `bx` starts Boat sandboxes ("boxes") from saved snapshots and saves each one as a herdr machine
 labelled with the box name. `bx --help` and `herdr --skill` are the references. This skill is
-the procedure.
+the procedure. To move the current Claude Code session itself to a box, use `bx-teleport`.
 
 ## 1. Pick the snapshot
 
@@ -104,10 +104,21 @@ herdr --machine <box> pane read w1:p1 --source recent-unwrapped --lines 200
 
 Always `cd` to an absolute path first: a restored box's pane starts in a stale directory.
 
-Check herdr on every box before relying on it: `herdr --machine <box> pane list`. A restored
-box can run its herdr server on `/tmp/herdr-user/herdr.sock` while `--machine` dials a stale
-`~/.config/herdr/herdr.sock`, which fails with `ConnectionRefused`. Forwarding never starts or
-repairs a server. On that box, detach over SSH instead, so a dropped connection does not kill
+Check herdr on every box before relying on it: `herdr --machine <box> pane list`. Right after
+`bx new` the first call can be refused for a few seconds; retry. A herdr server started while
+Boat restores the disk (after `boat resume`, the Mac's herdr may reconnect and start one)
+listens on a socket the restore then removes, and `--machine` fails with `ConnectionRefused`
+for good. Forwarding never starts or repairs a server. Nothing survives a resume, so a fresh
+server loses nothing: once `boat info <id>` says `"hydrated": true`, stop the old one and
+re-add the machine, which starts a new one:
+
+```bash
+ssh <id> 'pkill -x herdr'   # -x matches the process name, not this shell's command line
+herdr machine remove "$(herdr machine list --json | jq -r '.[] | select(.label == "<box>") | .id')"
+herdr machine add <id> --label <box>
+```
+
+If herdr still does not answer, detach over SSH instead, so a dropped connection does not kill
 the run, and poll for the exit file:
 
 ```bash
