@@ -31,7 +31,6 @@ in
       pnpm
       bun
       uv
-      mise # pstack's /statechart installs TLC and Java with it
 
       # Agents and their tooling
       herdr
