@@ -32,7 +32,10 @@ in
       bun
       uv
 
-      # Agents and their tooling
+      # Agents and their tooling. Claude Code from Nix, not its installer or Boat's
+      # npm copy: one version on the Mac and every box, so a teleported session
+      # resumes on the Claude that wrote it. Updates come with `nix flake update`.
+      claude-code
       herdr
       agent-browser
 
@@ -51,6 +54,8 @@ in
       EDITOR = "vim";
       LANG = "en_US.UTF-8";
       CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1";
+      # A Nix-installed Claude Code cannot replace itself in the store.
+      DISABLE_AUTOUPDATER = "1";
       # ripgrep reads no config file unless this points at one. Exported (not an
       # alias) so the rg that agents and editors spawn picks it up too.
       RIPGREP_CONFIG_PATH = "${config.xdg.configHome}/ripgrep/config";
@@ -284,12 +289,10 @@ in
     '';
 
     # The settings above enable pstack@cursor-plugins, which does nothing until the
-    # plugin is downloaded. Claude Code itself comes from its own installer, not Nix.
+    # plugin is downloaded. By store path: activation runs with a fixed PATH.
     home.activation.claudePlugins = lib.hm.dag.entryAfter [ "claudeSettings" ] ''
-      claude=$(command -v claude || echo "$HOME/.local/bin/claude")
-      if [ ! -x "$claude" ]; then
-        echo "claude not installed; skipping the pstack plugin" >&2
-      elif ! ${lib.getExe pkgs.jq} -e '.plugins["pstack@cursor-plugins"]' \
+      claude=${lib.getExe pkgs.claude-code}
+      if ! ${lib.getExe pkgs.jq} -e '.plugins["pstack@cursor-plugins"]' \
         "$HOME/.claude/plugins/installed_plugins.json" >/dev/null 2>&1; then
         run "$claude" plugin marketplace add cursor/plugins || true
         run "$claude" plugin install pstack@cursor-plugins --scope user \

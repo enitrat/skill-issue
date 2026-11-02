@@ -19,7 +19,7 @@ check() { local name=$1; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else
 # every shell without anyone noticing.
 tools=(rg fd jq bat eza fzf zoxide starship atuin carapace direnv delta mergiraf
     gh git git-lfs node pnpm bun uv herdr agent-browser ffmpeg forge cast anvil
-    linear tmux nh nvd)
+    linear tmux nh nvd claude)
 [[ $OSTYPE == darwin* ]] && tools+=(aws bw , nix-locate)
 for tool in $tools; do
     check "$tool: installed, from nix" eval '[[ ${commands[$tool]:A} == /nix/store/* ]]'

@@ -30,6 +30,9 @@
     let
       overlay = import ./nix/pkgs;
 
+      # Unfree packages allowed by name, on both kinds of machine.
+      allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "claude-code" ];
+
       # Everything both kinds of machine get. Platform files add only what differs.
       sharedHome = [
         ./nix/home/common.nix
@@ -42,6 +45,7 @@
           pkgs = import nixpkgs {
             inherit system;
             overlays = [ overlay ];
+            config = { inherit allowUnfreePredicate; };
           };
           modules = sharedHome ++ [ ./nix/home/linux.nix ];
         };
@@ -53,6 +57,7 @@
           {
             nixpkgs.hostPlatform = "aarch64-darwin";
             nixpkgs.overlays = [ overlay ];
+            nixpkgs.config = { inherit allowUnfreePredicate; };
           }
           ./nix/darwin
           nix-homebrew.darwinModules.nix-homebrew
