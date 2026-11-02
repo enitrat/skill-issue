@@ -2,14 +2,17 @@
 
 import {
   cpSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +30,28 @@ function run(args, cwd = repoRoot) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+// `skills add --copy` replaces symlinks with copies. A launcher in bin/ that
+// links to a script at the skill root then runs from bin/ and cannot import
+// the package beside the script, so turn such copies back into symlinks.
+function restoreBinLinks(skillDir) {
+  const binDir = join(skillDir, "bin");
+  if (!existsSync(binDir)) return;
+  const rootFiles = readdirSync(skillDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+  for (const entry of readdirSync(binDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const launcher = join(binDir, entry.name);
+    const contents = readFileSync(launcher);
+    const target = rootFiles.find((file) =>
+      readFileSync(join(skillDir, file)).equals(contents),
+    );
+    if (!target) continue;
+    rmSync(launcher);
+    symlinkSync(join("..", target), launcher);
+  }
 }
 
 mkdirSync(externalRoot, { recursive: true });
@@ -60,6 +85,7 @@ for (const skill of manifest.skills ?? []) {
     }
     rmSync(destination, { recursive: true, force: true });
     cpSync(fetched, destination, { recursive: true });
+    restoreBinLinks(destination);
 
     if (skill.modelInvocable) {
       const skillFile = join(destination, "SKILL.md");
@@ -78,3 +104,14 @@ for (const skill of manifest.skills ?? []) {
 
 console.log("\nInstalling local and external skills");
 run(["add", ".", ...argv]);
+
+// The install copies again, so repair the installed skills the same way.
+for (const root of [
+  join(homedir(), ".agents", "skills"),
+  join(repoRoot, ".agents", "skills"),
+]) {
+  if (!existsSync(root)) continue;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isDirectory()) restoreBinLinks(join(root, entry.name));
+  }
+}
