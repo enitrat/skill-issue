@@ -1,0 +1,34 @@
+// The tailnet policy. Change it here, then run `tailnet policy apply`: an edit made in
+// the admin console is overwritten by the next apply.
+{
+	// Boat boxes join with keys tagged tag:box, minted by the OAuth client `tailnet` uses.
+	"tagOwners": {
+		"tag:box": ["autogroup:admin"],
+	},
+
+	"grants": [
+		// Your own devices (Mac, phone) reach each other on every port.
+		{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]},
+		// Your devices reach boxes on every port: 7443 for Herdr Remote, plus dev servers.
+		{"src": ["autogroup:member"], "dst": ["tag:box"], "ip": ["*"]},
+		// No grant has tag:box as a source: a box reaches neither your devices nor other boxes.
+	],
+
+	// No Tailscale SSH. Box SSH goes through Boat.
+	"ssh": [],
+
+	// Only for the tests below.
+	"hosts": {
+		"mac":   "100.x.y.z",
+		"phone": "100.x.y.z",
+	},
+
+	"tests": [
+		{"src": "phone", "accept": ["mac:7443"]},
+		{"src": "mac", "accept": ["tag:box:8000", "tag:box:7443", "phone:8000"]},
+		{
+			"src":  "tag:box",
+			"deny": ["mac:22", "mac:7443", "phone:8000", "tag:box:8000"],
+		},
+	],
+}

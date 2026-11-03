@@ -1,0 +1,104 @@
+#!/bin/bash
+# tailnet: every Tailscale API call this repo makes. The tailnet policy lives in
+# tailscale/policy.hujson; bx mints box keys and removes box nodes through here.
+set -euo pipefail
+
+VERSION="1.0.0"
+
+usage() {
+  cat <<'EOF'
+tailnet - the tailnet policy and box nodes, through the Tailscale API
+
+USAGE
+    tailnet policy check [<file>]   Validate the policy and run its tests on Tailscale's side
+    tailnet policy apply [<file>]   Check, show the change, then set it. Refused when the
+                                    policy changes between the read and the write
+    tailnet api <METHOD> <PATH> [curl args...]
+                                    Call https://api.tailscale.com/api/v2<PATH>
+    tailnet --help | --version
+
+<file> defaults to tailscale/policy.hujson in this repository.
+
+The OAuth client secret is read from the login Keychain, service "tailscale-oauth". The
+client needs the scopes policy_file (write), auth_keys (write, tag:box) and devices:core
+(write, tag:box). Store it once:
+    security add-generic-password -U -s tailscale-oauth -a "$USER" -w '<secret>'
+EOF
+}
+
+die() { echo "tailnet: $*" >&2; exit 1; }
+
+repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+
+case ${1:-} in
+  -h | --help) usage; exit 0 ;;
+  --version) echo "tailnet $VERSION"; exit 0 ;;
+  '') usage >&2; exit 1 ;;
+esac
+
+# The client id is the third field of a tskey-client-<id>-<secret> secret.
+token() {
+  local secret
+  secret=$(security find-generic-password -s tailscale-oauth -w 2>/dev/null) \
+    || die "no OAuth client secret in the Keychain under service tailscale-oauth"
+  printf 'client_id=%s&client_secret=%s' "$(echo "$secret" | cut -d- -f3)" "$secret" \
+    | curl -sS --fail-with-body --max-time 30 --data-binary @- https://api.tailscale.com/api/v2/oauth/token \
+    | jq -er .access_token
+}
+tok=$(token) || die "could not get an API token"
+
+# METHOD PATH [curl args...]. Prints the response body, also on an HTTP error. The token
+# goes in through a file descriptor, never on a command line.
+api() {
+  local method=$1 path=$2
+  shift 2
+  curl -sS --fail-with-body --max-time 30 -X "$method" "https://api.tailscale.com/api/v2$path" \
+    -H @<(printf 'Authorization: Bearer %s\n' "$tok") "$@"
+}
+
+# Validation answers 200 either way; a failure carries a message.
+policy_check() {
+  local out
+  out=$(api POST /tailnet/-/acl/validate -H 'Content-Type: application/hujson' --data-binary @"$1") \
+    || die "validate failed: $out"
+  if echo "$out" | jq -e '.message' >/dev/null; then
+    echo "$out" | jq . >&2
+    die "$1 does not pass"
+  fi
+  echo "tailnet: $1 passes its tests" >&2
+}
+
+policy_apply() {
+  local file=$1 live etag
+  live=$(mktemp)
+  # shellcheck disable=SC2064 # $live is fixed now.
+  trap "rm -f '$live' '$live.h'" EXIT
+  api GET /tailnet/-/acl -H 'Accept: application/hujson' -D "$live.h" >"$live"
+  etag=$(tr -d '\r' <"$live.h" | awk 'tolower($1) == "etag:" { print $2 }')
+  [ -n "$etag" ] || die "the policy came without an ETag"
+  policy_check "$file"
+  if diff -u --label live --label "$file" "$live" "$file" >&2; then
+    echo "tailnet: no change" >&2
+    return
+  fi
+  api POST /tailnet/-/acl -H 'Content-Type: application/hujson' -H "If-Match: $etag" \
+    --data-binary @"$file" >/dev/null || die "not applied; did the policy change meanwhile?"
+  echo "tailnet: applied $file" >&2
+}
+
+case $1 in
+  policy)
+    file=${3:-$repo/tailscale/policy.hujson}
+    case ${2:-} in
+      check) policy_check "$file" ;;
+      apply) policy_apply "$file" ;;
+      *) die "usage: tailnet policy check|apply [<file>]" ;;
+    esac
+    ;;
+  api)
+    [ $# -ge 3 ] || die "usage: tailnet api <METHOD> <PATH> [curl args...]"
+    shift
+    api "$@"
+    ;;
+  *) usage >&2; exit 1 ;;
+esac
