@@ -267,6 +267,9 @@ in
       # Herdr UI is a GUI app without the shell's PATH, and `herdr --remote` probes
       # this path on the other host: both find herdr at its default install location.
       ".local/bin/herdr".source = lib.getExe pkgs.herdr;
+      # Claude Code's native installer links its own copy here, ahead of Nix's on PATH,
+      # even with DISABLE_AUTOUPDATER set. Owning the path keeps it pointing at Nix's.
+      ".local/bin/claude".source = lib.getExe pkgs.claude-code;
     }
     # Repo tools stay live-linked to the checkout, so editing one needs no switch.
     // lib.mapAttrs' (
