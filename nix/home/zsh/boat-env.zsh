@@ -8,4 +8,14 @@ if [[ -r ~/.bashrc ]] && grep -q '^# ASCII TOKEN START' ~/.bashrc; then
         -e '/^# ASCII SECRET ENV LOADER START/,/^# ASCII SECRET ENV LOADER END/p' \
         -e '/^# ASCII TOKEN START/,/^# ASCII TOKEN END/p' \
         ~/.bashrc)"
+    # Boat's loader drops CLAUDE_CODE_OAUTH_TOKEN whenever ~/.claude/.credentials.json
+    # is non-empty, taking that as a Claude login. Claude Code also keeps MCP OAuth
+    # logins (Figma) in that file, so one MCP login left new shells with no Claude
+    # login at all. Keep Boat's token unless the file holds a real Claude login.
+    creds=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json
+    if [[ -z ${CLAUDE_CODE_OAUTH_TOKEN-} && -r /run/ascii-secrets/env.sh ]] \
+        && ! grep -qs '"claudeAiOauth"' "$creds"; then
+        . /run/ascii-secrets/env.sh
+    fi
+    unset creds
 fi
