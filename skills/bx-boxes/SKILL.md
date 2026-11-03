@@ -161,8 +161,7 @@ To show the user a dev server or preview running on a box, bind it to `0.0.0.0` 
 them `http://<box-name>:<port>`. `bx new` joins each box to their tailnet under its name, so
 that URL opens on their phone and Mac, and nothing on the box can reach those devices. If
 `bx new` printed that the box stayed off the tailnet, the URL does not work: use
-`ssh -L <port>:localhost:<port> <id>` from the Mac instead. Check the name with
-`ssh <id> tailscale status --self`: a reused name gets a suffix (`<name>-1`).
+`ssh -L <port>:localhost:<port> <id>` from the Mac instead.
 
 ## 5. Bring results back, then delete
 

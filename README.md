@@ -96,8 +96,9 @@ Outside Nix on purpose:
 - Files the apps rewrite: `~/.claude/settings.json` is copied from
   `nix/home/files/claude-settings.json` on each switch, not linked.
 - Secrets and identity: `~/.gitconfig.local` (written by `git-id`),
-  `~/.ssh/config.local`, the Boat API key in the Keychain (`boat-resolve --help`
-  shows how to create it), and 1Password. The Nix store is world-readable.
+  `~/.ssh/config.local`, the Boat API key and the Tailscale OAuth client in the
+  Keychain (`boat-resolve --help` and `tailnet --help` show how to store them),
+  and 1Password. The Nix store is world-readable.
 - Mac apps installed by hand: Grok Bot, Scrawl, Canon Utilities, darktable, Blender
   (reasons in `nix/darwin/default.nix`).
 
@@ -129,6 +130,7 @@ Makefile                        # Skill commands
 rules/                          # Claude Code behavior rules
 subagents/                      # Claude/Codex agent definitions and prompts
 tools/                          # Local executable CLIs
+tailscale/policy.hujson         # The tailnet policy, applied by `tailnet policy apply`
 raycast-scripts/                # Raycast script commands
 config/others/                  # Human docs for third-party setup
 ```
@@ -156,6 +158,11 @@ Add a tool or setting:
 2. Switch, then run `bootstrap/check.sh`. Add a line there if the change is
    something a future edit could silently break.
 3. To update every pinned input: `nix flake update`, switch, check.
+
+Change the tailnet policy: edit `tailscale/policy.hujson`, then run `tailnet
+policy apply`. It runs the file's tests on Tailscale's side, shows the change,
+then sets it. The file wins over the admin console: an edit made there is lost at
+the next apply.
 
 Add a local CLI:
 

@@ -50,11 +50,10 @@ USAGE
 Sandbox names are unique, so a name works wherever an id does. `ssh` and herdr use the id
 (`ssh bx_<id>`, or `bx_<id>.wake` to resume a stopped one).
 
-A box from `bx new` joins your tailnet under its name, tagged tag:box, with the auth key
-in the Keychain item `tailscale-box-authkey`. Your devices reach its ports there, such as
-a dev server at http://<name>:3000 from your phone; the box cannot reach them. The key
-is ephemeral, so Tailscale removes a deleted box's entry after it has been offline a
-while; until then a new box with the same name gets a suffix (<name>-1).
+A box from `bx new` joins your tailnet under its name, tagged tag:box, with a single-use
+key that `tailnet key` mints for it. Your devices reach its ports there, such as a dev
+server at http://<name>:3000 from your phone; the box cannot reach them or other boxes
+(tailscale/policy.hujson). `bx rm` and `bx gc` delete the box's node from the tailnet.
 
 Snapshots hold no credentials. A sandbox from `bx new` gets Boat's agent logins from your
 default Boat environment, plus your `gh auth token` and git name and email, so agents can
