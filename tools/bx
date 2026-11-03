@@ -219,6 +219,8 @@ ready_check() {
 
 # When bx last saved each snapshot. Boat's createdAt is when the name was first used: a
 # save under the same name replaces the snapshot and keeps that date.
+# TODO: reported to Boat with `boat feedback` on 2026-11-03. Once `boat snapshots --json`
+# shows a replaced snapshot's save time, delete SAVED_DIR and read Boat's date again.
 SAVED_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/bx/saved
 
 # bx's snapshots are `dev` and one per repo list in ~/.config/bx.
