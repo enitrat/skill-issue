@@ -4,12 +4,15 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.7.0"
+VERSION="0.9.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
 # How long a sandbox from `bx new` stays on before Boat stops it.
 AUTO_STOP_HOURS=4
+# The Keychain item that holds the Tailscale auth key boxes join with: reusable,
+# ephemeral, tagged tag:box. Without it, boxes stay off the tailnet.
+TAILNET_KEY=tailscale-box-authkey
 
 usage() {
   cat <<'EOF'
@@ -26,15 +29,20 @@ USAGE
                             uncommitted changes included, nothing pushed), the transcript
                             and the scratchpad, at the same paths as on this Mac. The
                             snapshot defaults to the one whose repo list has the repo
-    bx ls                   List sandboxes: name, id, state, age, whether herdr has them
+    bx ls                   List sandboxes: name, id, state, age, machine time cost so
+                            far, whether herdr has them
     bx list                 List snapshots to start from: built or not, age, size, repos
     bx rm <name|id>         Remove a sandbox from herdr and delete it
-    bx gc                   Find sandboxes stopped for over 3 days and herdr entries whose
-                            sandbox is gone; delete them after asking
+    bx tailnet <name|id>    Join a sandbox to the tailnet again. Tailscale drops a box
+                            that stays stopped for long; `bx new` joins it the first time
+    bx gc [--yes]           Find sandboxes stopped for over 3 days and herdr entries whose
+                            sandbox is gone; delete them after asking, or at once with --yes
     bx bake dev             Build the `dev` snapshot: bare Ubuntu plus bootstrap/linux.sh
     bx bake <snapshot>      Build <snapshot> from `dev`: clone the repos listed in
                             ~/.config/bx/<snapshot> into ~/<snapshot>/ and install their
                             dependencies
+    bx bake --all           Build every snapshot that has a repo list, one after another.
+                            A failed one is named at the end and does not stop the rest
     bx update <snapshot>    Bring <snapshot> to skill-issue's current main in minutes, without
                             a bake: re-run the bootstrap on a sandbox from it and save it
                             under the same name. Its repos keep their baked commit
@@ -42,6 +50,12 @@ USAGE
 
 Sandbox names are unique, so a name works wherever an id does. `ssh` and herdr use the id
 (`ssh bx_<id>`, or `bx_<id>.wake` to resume a stopped one).
+
+A box from `bx new` joins your tailnet under its name, tagged tag:box, with the auth key
+in the Keychain item `tailscale-box-authkey`. Your devices reach its ports there, such as
+a dev server at http://<name>:3000 from your phone; the box cannot reach them. The key
+is ephemeral, so Tailscale removes a deleted box's entry after it has been offline a
+while; until then a new box with the same name gets a suffix (<name>-1).
 
 Snapshots hold no credentials. A sandbox from `bx new` gets Boat's agent logins from your
 default Boat environment, plus your `gh auth token` and git name and email, so agents can
@@ -94,6 +108,36 @@ herdr_forget() {
   done
 }
 
+# Joins sandbox $1 to the tailnet as $2. The key travels on stdin into a root-only file
+# in /run, which is memory, and is deleted once used: never in a command line or on disk.
+# A missing key or a failed join leaves the box usable, off the tailnet.
+tailnet_join() {
+  local id=$1 name=$2 key
+  key=$(security find-generic-password -a "$USER" -s "$TAILNET_KEY" -w 2>/dev/null) || key=''
+  if [ -z "$key" ]; then
+    log "$id: no Tailscale key in the Keychain item $TAILNET_KEY; staying off the tailnet"
+    return 0
+  fi
+  log "$id: joining the tailnet as $name"
+  local status=0
+  # shellcheck disable=SC2016 # Expanded on the sandbox.
+  printf '%s\n' "$key" | ssh -o BatchMode=yes "$id" "
+    set -e
+    ts=\$HOME/.nix-profile/bin/tailscale
+    systemctl cat tailscaled.service >/dev/null 2>&1 || exit 3
+    # tailscaled starts once Boat has restored /nix.
+    for _ in \$(seq 60); do [ -S /run/tailscale/tailscaled.sock ] && break; sleep 2; done
+    trap 'sudo rm -f /run/tailscale/authkey' EXIT
+    sudo install -m 600 /dev/stdin /run/tailscale/authkey
+    sudo \$ts up --auth-key=file:/run/tailscale/authkey --hostname=$(printf %q "$name") --timeout=60s >/dev/null
+  " || status=$?
+  case $status in
+    0) ;;
+    3) log "$id: its snapshot predates Tailscale; staying off the tailnet. Rebuild it: bx update <snapshot>" ;;
+    *) log "could not join $id to the tailnet; run: bx tailnet $name" ;;
+  esac
+}
+
 new() {
   local snapshot=$1 name=$2 type=$3 id
   if ! boat snapshots --json | jq -e --arg n "$snapshot" '.named[] | select(.name == $n)' >/dev/null; then
@@ -132,6 +176,7 @@ new() {
   log "$id: adding to herdr as $name"
   herdr machine add "$id" --label "$name" >/dev/null \
     || log "herdr machine add failed; run: herdr machine add $id --label $name"
+  tailnet_join "$id" "$name"
   ready_check "$id" "$snapshot" || die "$id is not ready (see above). Inspect: ssh $id. Delete: bx rm $id"
   echo "$id"
   log "ready: ssh $id"
@@ -202,15 +247,21 @@ list_snapshots() {
 }
 
 ls_boxes() {
-  local herdr_ids
+  local herdr_ids costs
   herdr_ids=$(herdr_boxes | jq -r '.target' | tr '\n' ' ')
-  sandboxes | jq -r --arg herdr " $herdr_ids" '
+  # One API call per sandbox, so eight at a time. A sandbox whose usage cannot be read
+  # shows "-".
+  costs=$(sandboxes | jq -r .id | xargs -P 8 -I{} boat usage {} --json 2>/dev/null \
+    | jq -s 'map({(.sandboxId): .dollars}) | add // {}')
+  sandboxes | jq -r --arg herdr " $herdr_ids" --argjson costs "$costs" '
     def age: (now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 3600
       | if . < 48 then "\(floor)h" else "\(. / 24 | floor)d" end;
     # A restored disk streams in after the start: until then, reads are slower.
     .id as $id
-    | [.name, .id, (if .hydrated == false and .state != "stopped" then "\(.state), hydrating" else .state end), age, (if ($herdr | contains(" \($id) ")) then "herdr" else "" end)] | @tsv' \
-    | (printf 'NAME\tID\tSTATE\tAGE\tHERDR\n'; cat) | column -t -s "$(printf '\t')"
+    | [.name, .id, (if .hydrated == false and .state != "stopped" then "\(.state), hydrating" else .state end), age,
+       (if $costs[$id] == null then "-" else "$\($costs[$id] * 100 | round / 100)" end),
+       (if ($herdr | contains(" \($id) ")) then "herdr" else "" end)] | @tsv' \
+    | (printf 'NAME\tID\tSTATE\tAGE\tCOST\tHERDR\n'; cat) | column -t -s "$(printf '\t')"
 }
 
 rm_box() {
@@ -223,7 +274,7 @@ rm_box() {
 }
 
 gc() {
-  local stale gone line answer
+  local yes=$1 stale gone line answer=y
   stale=$(sandboxes | jq -r --argjson days "$GC_DAYS" '
     select(.state == "stopped" and .stoppedAt != null)
     | select((now - (.stoppedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) > $days * 86400)
@@ -235,8 +286,10 @@ gc() {
   if [ -z "$stale" ] && [ -z "$gone" ]; then log "nothing to clean"; return; fi
   [ -z "$stale" ] || { echo "Sandboxes stopped for over $GC_DAYS days, to delete:"; printf '  %s\n' "$stale"; }
   [ -z "$gone" ] || { echo "herdr entries whose sandbox is gone, to remove:"; printf '  %s\n' "$gone"; }
-  printf 'Proceed? [y/N] '
-  read -r answer
+  if [ "$yes" != yes ]; then
+    printf 'Proceed? [y/N] '
+    read -r answer
+  fi
   [ "$answer" = y ] || { log "nothing changed"; return; }
   for line in $(printf '%s\n' "$stale" | cut -f1); do rm_box "$line"; done
   for line in $gone; do herdr_forget "$line"; done
@@ -283,8 +336,14 @@ create() {
 # Deletes the logins Boat writes to a sandbox's disk (docs.boat.dev/environments/access),
 # so a snapshot holds none. Tokens in /run/ascii-secrets are never snapshotted.
 scrub_logins() {
+  # Tailscale's state holds the machine key tailscaled made at its first start, joined or
+  # not: kept, every box from the snapshot would be the same node. Each box makes its own
+  # when the service starts there.
   ssh -o BatchMode=yes "$1" 'rm -f ~/.claude/.credentials.json ~/.codex/auth.json \
-    ~/.config/gh/hosts.yml ~/.config/ascii/boat/config.json'
+    ~/.config/gh/hosts.yml ~/.config/ascii/boat/config.json
+    if systemctl cat tailscaled.service >/dev/null 2>&1; then
+      sudo systemctl stop tailscaled.service && sudo rm -rf /var/lib/tailscale
+    fi'
 }
 
 # Waits for the setup script that `boat new --setup-file` started. The bootstrap takes
@@ -347,6 +406,20 @@ bake() {
       || die "snapshot setup failed on $id. Inspect: ssh $id. Delete: boat delete $id"
   fi
   save "$id" "$snapshot"
+}
+
+# Bakes every snapshot with a repo list. Each bake runs in a subshell, so the `die` of a
+# failed one ends that bake only.
+bake_all() {
+  local f snapshot failed=''
+  for f in "$HOME"/.config/bx/*; do
+    case $f in *.sh) continue ;; esac
+    [ -f "$f" ] || continue
+    snapshot=$(basename "$f")
+    log "== $snapshot"
+    (bake "$snapshot") || failed="$failed $snapshot"
+  done
+  [ -z "$failed" ] || die "failed to bake:$failed"
 }
 
 # Saves build sandbox $1 as snapshot $2, without the logins Boat wrote, then deletes it.
@@ -606,10 +679,21 @@ case ${1:-} in
     [ $# -eq 2 ] || die "usage: bx rm <name|id>"
     rm_box "$2"
     ;;
-  gc) gc ;;
+  tailnet)
+    [ $# -eq 2 ] || die "usage: bx tailnet <name|id>"
+    id=$(resolve "$2")
+    tailnet_join "$id" "$(sandboxes | jq -r --arg id "$id" 'select(.id == $id) | .name')"
+    ;;
+  gc)
+    case ${2:-} in
+      '') gc no ;;
+      --yes) gc yes ;;
+      *) die "usage: bx gc [--yes]" ;;
+    esac
+    ;;
   bake)
-    [ $# -eq 2 ] || die "usage: bx bake <dev|snapshot>"
-    bake "$2"
+    [ $# -eq 2 ] || die "usage: bx bake <dev|snapshot|--all>"
+    if [ "$2" = --all ]; then bake_all; else bake "$2"; fi
     ;;
   update)
     [ $# -eq 2 ] || die "usage: bx update <snapshot>"

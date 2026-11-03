@@ -75,6 +75,15 @@ in
   '';
 
   home.file = {
+    # The Tailscale cask's CLI is its app binary, which works only when run from inside
+    # the bundle, so a wrapper rather than a symlink. Herdr UI finds the app itself.
+    ".local/bin/tailscale" = {
+      executable = true;
+      text = ''
+        #!/bin/sh
+        exec /Applications/Tailscale.app/Contents/MacOS/Tailscale "$@"
+      '';
+    };
     # Emacs-style word movement in every Cocoa text field.
     "Library/KeyBindings/DefaultKeyBinding.dict".source = ../darwin/files/DefaultKeyBinding.dict;
     # A dynamic profile, so iTerm picks it up without its preferences being edited.

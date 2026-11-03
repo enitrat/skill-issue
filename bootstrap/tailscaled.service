@@ -1,0 +1,24 @@
+# Tailscale on a Boat box, so a phone or laptop on the tailnet reaches the box's ports
+# (dev servers, Herdr Remote) directly. Not joined here: `bx new` joins each box with an
+# ephemeral key tagged tag:box, and snapshots are saved without the state this writes.
+#
+# The binary is the home-manager one, so the flake pins it like every other tool. It is
+# read from /nix, which Boat restores through a FUSE layer and then swaps for the local
+# disk: wait for the swap, as nix-after-restore.service does, so the daemon never runs
+# from a mount that disappears under it.
+[Unit]
+Description=Tailscale node agent
+Wants=network-online.target
+After=network-online.target nix-after-restore.service
+
+[Service]
+ExecStartPre=/bin/sh -c 'while grep -q " /nix fuse" /proc/mounts; do sleep 2; done'
+ExecStart=/home/user/.nix-profile/bin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --port=41641
+ExecStopPost=/home/user/.nix-profile/bin/tailscaled --cleanup
+RuntimeDirectory=tailscale
+StateDirectory=tailscale
+Restart=on-failure
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

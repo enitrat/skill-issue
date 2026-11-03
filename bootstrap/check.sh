@@ -42,9 +42,18 @@ check "repo tools linked" test -x ~/.local/bin/git-id
 check "claude: repo skills installed" test -r ~/.claude/skills/bx-boxes/SKILL.md
 check "claude: pstack plugin installed" jq -e '.plugins["pstack@cursor-plugins"]' ~/.claude/plugins/installed_plugins.json
 check "claude: pstack rules linked" test -r ~/.claude/rules/pstack-models.md -a -r ~/.claude/rules/pstack-local.md
+if [[ $OSTYPE == darwin* ]]; then
+    # Herdr UI's phone remote and its device list reach this Mac through Tailscale.
+    check "tailscale: connected to the tailnet" eval 'tailscale status --json | jq -e ".BackendState == \"Running\""'
+    # Runs .herdr/automations/bx-refresh.luau, which keeps the Boat snapshots current.
+    check "herdr-automate: daemon running as a service" eval '/Applications/Herdr.app/Contents/MacOS/herdr-automate status --json | jq -e ".daemon.running and .daemon.service"'
+    check "herdr-automate: bx-refresh approved" eval '/Applications/Herdr.app/Contents/MacOS/herdr-automate status --json | jq -e "any(.scripts[]; .name == \"bx-refresh\" and .state != \"awaiting-approval\")"'
+fi
 if [[ $OSTYPE == linux* ]]; then
     check "playwright: browsers outside ~/.cache" eval '[[ $PLAYWRIGHT_BROWSERS_PATH == $HOME/.local/* ]]'
     check "nix: daemon restarts after a Boat restore" systemctl is-enabled nix-after-restore.service
+    check "tailscale: installed, from nix" eval '[[ ${commands[tailscale]:A} == /nix/store/* ]]'
+    check "tailscaled: enabled with this repo's unit" eval 'systemctl is-enabled tailscaled.service && cmp -s ~/skill-issue/bootstrap/tailscaled.service /etc/systemd/system/tailscaled.service'
     check "earlyoom: running with this repo's config" eval 'systemctl is-active earlyoom.service && cmp -s ~/skill-issue/bootstrap/earlyoom.default /etc/default/earlyoom'
 fi
 

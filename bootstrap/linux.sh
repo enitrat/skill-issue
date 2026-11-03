@@ -76,6 +76,14 @@ sudo install -m 644 "$repo_dir/bootstrap/nix-after-restore.service" /etc/systemd
 sudo systemctl daemon-reload
 sudo systemctl enable nix-after-restore.service
 
+if ! cmp -s "$repo_dir/bootstrap/tailscaled.service" /etc/systemd/system/tailscaled.service; then
+    log "installing tailscaled.service"
+    sudo install -m 644 "$repo_dir/bootstrap/tailscaled.service" /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl restart tailscaled.service
+fi
+sudo systemctl enable --quiet tailscaled.service
+
 if ! dpkg -s earlyoom >/dev/null 2>&1; then
     log "installing earlyoom"
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq earlyoom >/dev/null \

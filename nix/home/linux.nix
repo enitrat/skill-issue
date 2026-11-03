@@ -25,6 +25,9 @@
     ];
   };
 
+  # Run as root by bootstrap/tailscaled.service. On the Mac, Tailscale is the cask app.
+  home.packages = [ pkgs.tailscale ];
+
   # Playwright's default, ~/.cache/ms-playwright, is not kept in a Boat snapshot, so a
   # box would download its browsers again.
   home.sessionVariables.PLAYWRIGHT_BROWSERS_PATH = "$HOME/.local/share/ms-playwright";
