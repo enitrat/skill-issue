@@ -16,6 +16,12 @@ in
     description = "Absolute path of this repository's checkout on the machine. tools/ is linked from it, so edits there are live.";
   };
 
+  options.skillIssue.claudeSettings = lib.mkOption {
+    type = lib.types.attrs;
+    default = { };
+    description = "Settings merged over files/claude-settings.json on this platform only.";
+  };
+
   config = {
     home.stateVersion = "26.05";
 
@@ -286,14 +292,20 @@ in
 
     # Claude Code rewrites its own settings file, so it cannot be a read-only store
     # link. Each switch copies the repo version over it, keeping the previous one.
-    home.activation.claudeSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      target="$HOME/.claude/settings.json"
-      if ! cmp -s ${./files/claude-settings.json} "$target"; then
-        run mkdir -p "$HOME/.claude"
-        [ -e "$target" ] && run cp "$target" "$target.bak"
-        run install -m 644 ${./files/claude-settings.json} "$target"
-      fi
-    '';
+    home.activation.claudeSettings =
+      let
+        settings = (pkgs.formats.json { }).generate "claude-settings.json" (
+          lib.recursiveUpdate (lib.importJSON ./files/claude-settings.json) config.skillIssue.claudeSettings
+        );
+      in
+      lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        target="$HOME/.claude/settings.json"
+        if ! cmp -s ${settings} "$target"; then
+          run mkdir -p "$HOME/.claude"
+          [ -e "$target" ] && run cp "$target" "$target.bak"
+          run install -m 644 ${settings} "$target"
+        fi
+      '';
 
     # The settings above enable pstack@cursor-plugins, which does nothing until the
     # plugin is downloaded. By store path: activation runs with a fixed PATH, which

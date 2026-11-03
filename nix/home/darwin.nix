@@ -16,6 +16,29 @@ in
 {
   skillIssue.repo = "/Users/msaug/workspace/skill-issue";
 
+  # The Mac holds every secret, so Claude's file tools stay out of them. Boxes do not:
+  # they are throwaway and hold only what bx puts there. These rules cover the Read,
+  # Edit and Write tools, not Bash.
+  skillIssue.claudeSettings.permissions = {
+    blockReadsOutsideWorkingDirectories = true;
+    blockWritesOutsideWorkingDirectories = true;
+    # Skills read their own reference files, repos read their siblings, and sessions
+    # keep their scratchpad under /private/tmp/claude-<uid>.
+    additionalDirectories = [
+      "~/.claude/skills"
+      "~/.agents/skills"
+      "~/workspace"
+      "/private/tmp"
+    ];
+    deny = [
+      "Read(~/.ssh/**)"
+      "Read(~/.aws/**)"
+      "Read(~/.gnupg/**)"
+      "Read(~/.config/op/**)"
+      "Read(~/Library/Keychains/**)"
+    ];
+  };
+
   programs.zsh.profileExtra = ''
     # Homebrew provides the casks' CLIs (op, adb). Appended, so a stray Homebrew
     # copy of a tool can never shadow the Nix one.
