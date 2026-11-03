@@ -38,6 +38,7 @@ in
       "1password-cli"
       "bitwarden"
       "cursor"
+      "visual-studio-code"
       "iterm2"
       "orbstack" # free for personal use; commercial use needs a paid license
       "raycast"
