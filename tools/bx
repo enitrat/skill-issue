@@ -258,10 +258,16 @@ ls_boxes() {
     | (printf 'NAME\tID\tSTATE\tAGE\tCOST\tHERDR\n'; cat) | column -t -s "$(printf '\t')"
 }
 
+name_of() {
+  sandboxes | jq -r --arg id "$1" 'select(.id == $id) | .name'
+}
+
 rm_box() {
   local id
   id=$(resolve "$1")
   herdr_forget "$id"
+  # Else the node lingers offline for a while, and a new box with this name gets <name>-1.
+  "$tailnet" forget "$(name_of "$id")" || log "could not remove $id from the tailnet"
   boat delete "$id" --yes >/dev/null
   rm -f "${XDG_CACHE_HOME:-$HOME/.cache}/boat-resolve/$id.json"
   log "deleted $id"
@@ -277,9 +283,12 @@ gc() {
   live=" $(sandboxes | jq -r .id | tr '\n' ' ')"
   gone=$(herdr_boxes | jq -r --arg live "$live " \
     '.target as $t | select($live | contains(" \($t) ") | not) | $t')
-  if [ -z "$stale" ] && [ -z "$gone" ]; then log "nothing to clean"; return; fi
-  [ -z "$stale" ] || { echo "Sandboxes stopped for over $GC_DAYS days, to delete:"; printf '  %s\n' "$stale"; }
-  [ -z "$gone" ] || { echo "herdr entries whose sandbox is gone, to remove:"; printf '  %s\n' "$gone"; }
+  local nodes
+  nodes=$("$tailnet" boxes | sort -u | grep -vxF -f <(sandboxes | jq -r .name)) || nodes=''
+  if [ -z "$stale" ] && [ -z "$gone" ] && [ -z "$nodes" ]; then log "nothing to clean"; return; fi
+  [ -z "$stale" ] || { echo "Sandboxes stopped for over $GC_DAYS days, to delete:"; printf '%s\n' "$stale" | sed 's/^/  /'; }
+  [ -z "$gone" ] || { echo "herdr entries whose sandbox is gone, to remove:"; printf '%s\n' "$gone" | sed 's/^/  /'; }
+  [ -z "$nodes" ] || { echo "tag:box nodes on the tailnet whose sandbox is gone, to delete:"; printf '%s\n' "$nodes" | sed 's/^/  /'; }
   if [ "$yes" != yes ]; then
     printf 'Proceed? [y/N] '
     read -r answer
@@ -287,6 +296,8 @@ gc() {
   [ "$answer" = y ] || { log "nothing changed"; return; }
   for line in $(printf '%s\n' "$stale" | cut -f1); do rm_box "$line"; done
   for line in $gone; do herdr_forget "$line"; done
+  # shellcheck disable=SC2086 # One hostname per word.
+  [ -z "$nodes" ] || "$tailnet" forget $nodes
 }
 
 # Linux side of a snapshot build. stdin: the GitHub token. Arguments: the snapshot, the
@@ -676,7 +687,7 @@ case ${1:-} in
   tailnet)
     [ $# -eq 2 ] || die "usage: bx tailnet <name|id>"
     id=$(resolve "$2")
-    tailnet_join "$id" "$(sandboxes | jq -r --arg id "$id" 'select(.id == $id) | .name')"
+    tailnet_join "$id" "$(name_of "$id")"
     ;;
   gc)
     case ${2:-} in

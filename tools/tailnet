@@ -15,6 +15,10 @@ USAGE
                                     policy changes between the read and the write
     tailnet key                     Mint an auth key for one box and print it: single use,
                                     ephemeral, preauthorized, tag:box, valid 10 minutes
+    tailnet boxes                   Print the hostname of each tag:box node
+    tailnet forget <hostname>...    Delete the tag:box nodes with these hostnames, the ones
+                                    Tailscale renamed <hostname>-1 included. Untagged
+                                    devices are never touched
     tailnet api <METHOD> <PATH> [curl args...]
                                     Call https://api.tailscale.com/api/v2<PATH>
     tailnet --help | --version
@@ -88,6 +92,19 @@ policy_apply() {
   echo "tailnet: applied $file" >&2
 }
 
+tag_box_nodes() {
+  api GET /tailnet/-/devices | jq -c '.devices[] | select(.tags // [] | index("tag:box"))'
+}
+
+# The hostname is the one the box asked for. Tailscale renames a clash only in .name.
+forget() {
+  local node
+  for node in $(tag_box_nodes | jq -r '"\(.nodeId)/\(.name)" as $n | select(.hostname | IN($ARGS.positional[])) | $n' --args "$@"); do
+    api DELETE "/device/${node%%/*}" >/dev/null
+    echo "tailnet: deleted ${node#*/}" >&2
+  done
+}
+
 case $1 in
   policy)
     file=${3:-$repo/tailscale/policy.hujson}
@@ -102,6 +119,12 @@ case $1 in
       "capabilities": {"devices": {"create":
         {"reusable": false, "ephemeral": true, "preauthorized": true, "tags": ["tag:box"]}}},
       "expirySeconds": 600, "description": "bx box"}' | jq -er .key
+    ;;
+  boxes) tag_box_nodes | jq -r .hostname ;;
+  forget)
+    [ $# -ge 2 ] || die "usage: tailnet forget <hostname>..."
+    shift
+    forget "$@"
     ;;
   api)
     [ $# -ge 3 ] || die "usage: tailnet api <METHOD> <PATH> [curl args...]"
