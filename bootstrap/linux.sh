@@ -42,7 +42,10 @@ if [ ! -e "$repo_dir/flake.nix" ]; then
     git clone --quiet "$repo_url" "$repo_dir"
 else
     log "updating $repo_dir"
-    git -C "$repo_dir" pull --quiet --ff-only
+    # Reset, not pull: the checkout is a deployment copy, and main's history has been
+    # rewritten once, which a fast-forward cannot follow.
+    git -C "$repo_dir" fetch --quiet origin main
+    git -C "$repo_dir" reset --quiet --hard FETCH_HEAD
 fi
 
 log "switching home-manager to $flake_output"
