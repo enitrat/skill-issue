@@ -4,7 +4,7 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.7.0"
+VERSION="0.8.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
@@ -19,7 +19,9 @@ USAGE
     bx new --snapshot <snapshot> --name <name> [--type <size>]
                             Start a sandbox from <snapshot>, log gh in with your token,
                             and add it to herdr under <name>. <size> is small, default,
-                            large or xlarge (see `boat new --help`); large if omitted
+                            large or xlarge (see `boat new --help`); large if omitted.
+                            Boat never snapshots it, so stopping it, by hand or by the
+                            4-hour auto-stop, erases it: extend it with `boat extend`
     bx teleport --session <id> [--name <name>] [--snapshot <snapshot>] [--type <size>]
                             Move Claude Code session <id> to a new sandbox and resume it
                             in herdr: its repo as it is on disk (local commits and
@@ -41,7 +43,7 @@ USAGE
     bx --help | --version
 
 Sandbox names are unique, so a name works wherever an id does. `ssh` and herdr use the id
-(`ssh bx_<id>`, or `bx_<id>.wake` to resume a stopped one).
+(`ssh bx_<id>`). Sandboxes from bx have no snapshots, so a stopped one cannot be resumed.
 
 Snapshots hold no credentials. A sandbox from `bx new` gets Boat's agent logins from your
 default Boat environment, plus your `gh auth token` and git name and email, so agents can
@@ -103,7 +105,10 @@ new() {
     die "a sandbox named $name exists; pick another name or bx rm $name"
   fi
   log "starting $name from $snapshot ($type)"
-  id=$(boat new --from "$snapshot" --name "$name" --type "$type" --json | jq -r 'select(.event == "ready") | .id' | grep .) \
+  # --no-snapshots: Boat's background capture froze a large box running a Postgres and
+  # anvil stack, killing SSH and herdr. The cost: a stop, including the auto-stop below,
+  # erases the sandbox instead of keeping it to resume.
+  id=$(boat new --from "$snapshot" --name "$name" --type "$type" --no-snapshots --json | jq -r 'select(.event == "ready") | .id' | grep .) \
     || die "could not create $name from $snapshot"
   # The two steps below are independent. Each is slow only because it is the first to
   # read its files from the lazily restored disk, so they run at once.

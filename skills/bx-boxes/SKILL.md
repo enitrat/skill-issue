@@ -152,8 +152,7 @@ On the first box only, check the assumptions your run makes before starting ever
 5-second command that exercises the same tools (a dry run, a check mode, one tiny trial).
 Fixing a wrong assumption costs one box, not twenty.
 
-A box under load answers SSH and herdr slowly. Next, Chrome and an agent together fill 8 GB,
-and Boat's own background snapshot (`ascii-capture` in `ps`) adds a load spike. A
+A box under load answers SSH and herdr slowly. Next, Chrome and an agent together fill 8 GB. A
 `boat-resolve … Request timeout` while `boat info <id>` says `"health":"ok"` means busy, not
 dead: retry before deleting anything.
 
@@ -169,6 +168,8 @@ bx rm <task>-<n>
 
 Always `bx rm`, failed runs included: wrap the run in `trap 'bx rm <name>' EXIT`. It deletes
 the box and its herdr machine. A box left alone runs, and bills, until its 4-hour auto-stop.
+`bx new` turns Boat's snapshots off, so a stop, by hand or by the auto-stop, erases the box
+and everything on it. Bring results back before then, or `boat extend <id> --hours <n>`.
 `bx gc` offers to delete boxes stopped for more than 3 days.
 
 Never `boat snapshot` a task box. It holds your gh and Claude logins, and a saved snapshot
