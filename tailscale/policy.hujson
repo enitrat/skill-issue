@@ -17,11 +17,9 @@
 	// No Tailscale SSH. Box SSH goes through Boat.
 	"ssh": [],
 
-	// Only for the tests below.
-	"hosts": {
-		"mac":   "100.x.y.z",
-		"phone": "100.x.y.z",
-	},
+	// Only for the tests below. `tailnet` fills it from ~/.config/tailnet/hosts, so the
+	// devices' tailnet addresses stay out of this public repository.
+	"hosts": {},
 
 	"tests": [
 		{"src": "phone", "accept": ["mac:7443"]},

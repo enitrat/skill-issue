@@ -23,7 +23,11 @@ USAGE
                                     Call https://api.tailscale.com/api/v2<PATH>
     tailnet --help | --version
 
-<file> defaults to tailscale/policy.hujson in this repository.
+<file> defaults to tailscale/policy.hujson in this repository. Its empty "hosts" block
+is filled from ~/.config/tailnet/hosts before Tailscale sees it, so the addresses never
+reach the public repository. That file holds the block's lines, one alias per line:
+		"mac":   "100.x.y.z",
+		"phone": "100.x.y.z",
 
 The OAuth client secret is read from the login Keychain, service "tailscale-oauth". The
 client needs the scopes policy_file (write), auth_keys (write, tag:box) and devices:core
@@ -62,6 +66,15 @@ api() {
     -H @<(printf 'Authorization: Bearer %s\n' "$tok") "$@"
 }
 
+# Prints policy $1 with its empty "hosts" block filled from the local hosts file.
+render() {
+  local hosts=$HOME/.config/tailnet/hosts
+  [ -r "$hosts" ] || die "no $hosts; see tailnet --help"
+  awk -v hosts="$hosts" '
+    /^\t"hosts": \{\},/ { print "\t\"hosts\": {"; while ((getline line < hosts) > 0) print line; print "\t},"; next }
+    { print }' "$1"
+}
+
 # Validation answers 200 either way; a failure carries a message.
 policy_check() {
   local out
@@ -69,27 +82,24 @@ policy_check() {
     || die "validate failed: $out"
   if echo "$out" | jq -e '.message' >/dev/null; then
     echo "$out" | jq . >&2
-    die "$1 does not pass"
+    die "$src does not pass"
   fi
-  echo "tailnet: $1 passes its tests" >&2
+  echo "tailnet: $src passes its tests" >&2
 }
 
 policy_apply() {
-  local file=$1 live etag
-  live=$(mktemp)
-  # shellcheck disable=SC2064 # $live is fixed now.
-  trap "rm -f '$live' '$live.h'" EXIT
+  local file=$1 live=$tmp/live etag
   api GET /tailnet/-/acl -H 'Accept: application/hujson' -D "$live.h" >"$live"
   etag=$(tr -d '\r' <"$live.h" | awk 'tolower($1) == "etag:" { print $2 }')
   [ -n "$etag" ] || die "the policy came without an ETag"
   policy_check "$file"
-  if diff -u --label live --label "$file" "$live" "$file" >&2; then
+  if diff -u --label live --label "$src" "$live" "$file" >&2; then
     echo "tailnet: no change" >&2
     return
   fi
   api POST /tailnet/-/acl -H 'Content-Type: application/hujson' -H "If-Match: $etag" \
     --data-binary @"$file" >/dev/null || die "not applied; did the policy change meanwhile?"
-  echo "tailnet: applied $file" >&2
+  echo "tailnet: applied $src" >&2
 }
 
 tag_box_nodes() {
@@ -107,7 +117,11 @@ forget() {
 
 case $1 in
   policy)
-    file=${3:-$repo/tailscale/policy.hujson}
+    src=${3:-$repo/tailscale/policy.hujson}
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    file=$tmp/policy.hujson
+    render "$src" >"$file"
     case ${2:-} in
       check) policy_check "$file" ;;
       apply) policy_apply "$file" ;;

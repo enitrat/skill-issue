@@ -162,7 +162,9 @@ Add a tool or setting:
 Change the tailnet policy: edit `tailscale/policy.hujson`, then run `tailnet
 policy apply`. It runs the file's tests on Tailscale's side, shows the change,
 then sets it. The file wins over the admin console: an edit made there is lost at
-the next apply.
+the next apply. The tests address the Mac and phone through `hosts`, which
+`tailnet` fills from `~/.config/tailnet/hosts` on this Mac, so their tailnet
+addresses stay out of the repository.
 
 Add a local CLI:
 
