@@ -146,16 +146,13 @@ new() {
   if sandboxes | jq -e --arg n "$name" 'select(.name == $n)' >/dev/null; then
     die "a sandbox named $name exists; pick another name or bx rm $name"
   fi
-  log "starting $name from $snapshot ($type)"
-  id=$(boat new --from "$snapshot" --name "$name" --type "$type" --json | jq -r 'select(.event == "ready") | .id' | grep .) \
+  log "starting $name from $snapshot ($type), on for ${AUTO_STOP_HOURS}h"
+  # Boat's auto-stop counts from the create, not from activity: with its default hour, an
+  # agent still working after an hour is stopped mid-task.
+  id=$(boat new --from "$snapshot" --name "$name" --type "$type" --ttl $((AUTO_STOP_HOURS * 3600)) --json \
+    | jq -r 'select(.event == "ready") | .id' | grep .) \
     || die "could not create $name from $snapshot"
-  # The two steps below are independent. Each is slow only because it is the first to
-  # read its files from the lazily restored disk, so they run at once.
-  log "$id: logging gh in, keeping it on ${AUTO_STOP_HOURS}h"
-  # Boat's auto-stop counts from the create, not from activity: without this, an agent
-  # still working after an hour is stopped mid-task.
-  boat extend "$id" --hours "$AUTO_STOP_HOURS" >/dev/null &
-  local extend=$!
+  log "$id: logging gh in"
   # The token travels on stdin only, never in a command line or Boat's variables. It goes
   # straight into hosts.yml: `gh auth login` also rewrites config.yml, which home-manager
   # owns read-only.
@@ -168,7 +165,6 @@ new() {
     git config -f ~/.gitconfig.local user.name $(printf %q "$(git config user.name)")
     git config -f ~/.gitconfig.local user.email $(printf %q "$(git config user.email)")
   " || die "could not log gh in on $id. Delete: bx rm $id"
-  wait "$extend" || log "could not extend auto-stop; run: boat extend $id --hours $AUTO_STOP_HOURS"
   wait_hydrated "$id"
   # Only after the restore: `machine add` starts the box's herdr server, and a server
   # started earlier listens on ~/.config/herdr/herdr.sock inside the FUSE layer that the
