@@ -13,6 +13,8 @@ USAGE
     tailnet policy check [<file>]   Validate the policy and run its tests on Tailscale's side
     tailnet policy apply [<file>]   Check, show the change, then set it. Refused when the
                                     policy changes between the read and the write
+    tailnet key                     Mint an auth key for one box and print it: single use,
+                                    ephemeral, preauthorized, tag:box, valid 10 minutes
     tailnet api <METHOD> <PATH> [curl args...]
                                     Call https://api.tailscale.com/api/v2<PATH>
     tailnet --help | --version
@@ -94,6 +96,12 @@ case $1 in
       apply) policy_apply "$file" ;;
       *) die "usage: tailnet policy check|apply [<file>]" ;;
     esac
+    ;;
+  key)
+    api POST /tailnet/-/keys -H 'Content-Type: application/json' --data-binary '{
+      "capabilities": {"devices": {"create":
+        {"reusable": false, "ephemeral": true, "preauthorized": true, "tags": ["tag:box"]}}},
+      "expirySeconds": 600, "description": "bx box"}' | jq -er .key
     ;;
   api)
     [ $# -ge 3 ] || die "usage: tailnet api <METHOD> <PATH> [curl args...]"
