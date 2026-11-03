@@ -1,0 +1,18 @@
+# /etc/default/earlyoom, installed by bootstrap/linux.sh.
+#
+# Without it, a box that runs out of memory swaps until sshd, herdr and Boat's own agent
+# stop answering, and the kernel's OOM killer acts minutes later, if at all. earlyoom
+# kills one process first, so the box loses a dev server instead of freezing.
+#
+# -m 10,5   SIGTERM at 10% of memory available, SIGKILL at 5%.
+# -s 100,100  Ignore swap, for both signals. earlyoom's default acts only when memory and
+#           swap are both low; a box froze with 6.8% of memory available and half its swap
+#           free.
+# --prefer  Kill first: Next dev servers, Turbopack's Node workers (MainThread), Chrome.
+#           The biggest of them goes first.
+# --avoid   Never kill: sshd, herdr, Claude, Boat's processes (ascii-lazyfs serves the
+#           disk), systemd, nix-daemon, and the stack's Postgres and anvil.
+# Names are matched against the 15-character process name, as `ps -o comm` prints it.
+# No quotes or backslashes in the regexes: systemd splits this value on spaces, keeps
+# quotes and drops backslashes.
+EARLYOOM_ARGS="-m 10,5 -s 100,100 -r 3600 --prefer ^(next-server.*|MainThread|chrome)$ --avoid ^(sshd|herdr|claude|.claude-wrapp.*|ascii-.*|systemd.*|nix-daemon|postgres|anvil)$"

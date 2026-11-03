@@ -45,6 +45,7 @@ check "claude: pstack rules linked" test -r ~/.claude/rules/pstack-models.md -a 
 if [[ $OSTYPE == linux* ]]; then
     check "playwright: browsers outside ~/.cache" eval '[[ $PLAYWRIGHT_BROWSERS_PATH == $HOME/.local/* ]]'
     check "nix: daemon restarts after a Boat restore" systemctl is-enabled nix-after-restore.service
+    check "earlyoom: running with this repo's config" eval 'systemctl is-active earlyoom.service && cmp -s ~/skill-issue/bootstrap/earlyoom.default /etc/default/earlyoom'
 fi
 
 print

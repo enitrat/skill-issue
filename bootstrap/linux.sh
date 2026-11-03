@@ -76,6 +76,18 @@ sudo install -m 644 "$repo_dir/bootstrap/nix-after-restore.service" /etc/systemd
 sudo systemctl daemon-reload
 sudo systemctl enable nix-after-restore.service
 
+if ! dpkg -s earlyoom >/dev/null 2>&1; then
+    log "installing earlyoom"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq earlyoom >/dev/null \
+        || { sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq earlyoom >/dev/null; }
+fi
+if ! cmp -s "$repo_dir/bootstrap/earlyoom.default" /etc/default/earlyoom; then
+    log "configuring earlyoom"
+    sudo install -m 644 "$repo_dir/bootstrap/earlyoom.default" /etc/default/earlyoom
+    sudo systemctl restart earlyoom.service
+fi
+sudo systemctl enable --quiet earlyoom.service
+
 zsh_path=$(command -v zsh)
 if [ "$(getent passwd "$(id -un)" | cut -d: -f7)" != "$zsh_path" ]; then
     log "making zsh the login shell"
