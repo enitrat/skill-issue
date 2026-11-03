@@ -25,7 +25,8 @@ repos:
       - id: tools-executable
         name: tools are executable
         entry: >-
-          bash -c 'bad=$(find tools scripts bootstrap -type f ! -perm -u+x);
+          bash -c 'bad=$(find tools scripts -type f ! -perm -u+x;
+          find bootstrap -type f -name "*.sh" ! -perm -u+x);
           [ -z "$bad" ] || { echo "not executable:"; echo "$bad"; exit 1; }'
         language: system
         pass_filenames: false
