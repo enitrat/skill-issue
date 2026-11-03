@@ -217,10 +217,15 @@ ready_check() {
   "
 }
 
+# When bx last saved each snapshot. Boat's createdAt is when the name was first used: a
+# save under the same name replaces the snapshot and keeps that date.
+SAVED_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/bx/saved
+
 # bx's snapshots are `dev` and one per repo list in ~/.config/bx.
 list_snapshots() {
-  local built names=dev f snapshot repos
+  local built saved names=dev f snapshot repos
   built=$(boat snapshots --json | jq -c '.named')
+  saved=$(for f in "$SAVED_DIR"/*; do [ -f "$f" ] && jq -n --arg n "${f##*/}" --arg t "$(cat "$f")" '{($n): $t}'; done | jq -s 'add // {}')
   for f in "$HOME"/.config/bx/*; do
     case $f in *.sh) ;; *) [ -f "$f" ] && names="$names $(basename "$f")" ;; esac
   done
@@ -229,10 +234,10 @@ list_snapshots() {
     for snapshot in $names; do
       repos="(bootstrap only)"
       [ "$snapshot" = dev ] || repos=$(grep -v -e '^#' -e '^$' "$HOME/.config/bx/$snapshot" | paste -sd, -)
-      echo "$built" | jq -r --arg n "$snapshot" --arg r "$repos" '
+      echo "$built" | jq -r --arg n "$snapshot" --arg r "$repos" --argjson saved "$saved" '
         (map(select(.name == $n)) | first) as $s
         | if $s == null then [$n, "not built", "-", $r]
-          else [$n, ((now - ($s.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 86400
+          else [$n, ((now - ($saved[$n] // $s.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 86400
                      | if . < 1 then "today" else "\(floor)d ago" end),
                 "\($s.sizeBytes / 1e9 * 10 | round / 10) GB", $r] end | @tsv'
     done
@@ -433,6 +438,8 @@ save() {
   log "$id: saving as $snapshot"
   boat snapshot "$id" "$snapshot" --json | jq -e 'select(.event == "saved")' >/dev/null \
     || die "could not save $snapshot from $id"
+  mkdir -p "$SAVED_DIR"
+  date -u +%Y-%m-%dT%H:%M:%S.000Z >"$SAVED_DIR/$snapshot"
   boat delete "$id" --yes >/dev/null
   log "saved $snapshot. Start from it: boat new --from $snapshot"
 }
