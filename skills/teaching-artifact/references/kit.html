@@ -1,0 +1,247 @@
+<!--
+  Component kit for teaching artifacts. Copy the parts you need into the page.
+  Light theme only. Replace token values with the user's design system (SKILL.md section 4).
+  Every colour on the page reads a token; no literal colour appears outside :root.
+-->
+<title>Page name</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Proprietary display face, if the design system has one:
+@font-face{font-family:"Display";src:url(data:font/woff2;base64,...) format("woff2");font-weight:500;font-display:swap} */
+:root{
+  --bg:#fafafa;--card:#ffffff;--fg:#0e0e0e;--muted:#5f5f5f;--faint:#7e7e7e;--border:#e6e6e6;--secondary:#efefef;
+  --primary:#ffd208;--primary-fg:#0e0e0e;       /* brand accent: verdict highlight, focus ring */
+  --brand:#8a6500;--brand-tint:#fff6ce;          /* "ours" in diagrams, sensitive flows */
+  --bad:#c12828;--bad-tint:#fbdfdf;--warn:#8a5f00;--warn-tint:#f7e5c0;--ok:#066b1f;--ok-tint:#d9f0dc;--info:#1d51b5;--info-tint:#dde8fb;
+  --dot-high:#f26a6a;--dot-med:#e5a93a;--dot-low:#6b9bf2; /* severity dots on the dark verdict block */
+  --display:"Display","Figtree",ui-sans-serif,sans-serif;--sans:"Figtree",ui-sans-serif,system-ui,sans-serif;--mono:"Geist Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+.wrap{max-width:860px;margin:0 auto;padding-block:40px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:var(--display);font-weight:500;text-wrap:balance;margin:0;letter-spacing:-.01em}
+h1{font-size:clamp(34px,6vw,52px);line-height:1.05} h2{font-size:26px;line-height:1.15} h3{font-size:17px}
+p{margin:0} code{font-family:var(--mono);font-size:.88em}
+section{display:flex;flex-direction:column;gap:18px}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.lede{font-size:18px;color:var(--muted);max-width:60ch}
+.answer{font-size:17px;max-width:62ch}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+
+/* Header pills */
+header{display:flex;flex-direction:column;gap:14px}
+.meta{display:flex;flex-wrap:wrap;gap:8px}
+.pill{padding:4px 10px;border-radius:999px;font:500 12px/1.4 var(--sans);background:var(--secondary)}
+.pill.brand{background:var(--brand-tint);color:var(--brand)}
+
+/* Task cards */
+.task{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.task .card{display:flex;flex-direction:column;gap:6px;padding:16px}
+.task b{font:500 12px/1 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
+
+/* Short answer block + risk strip */
+.verdict{background:var(--fg);color:var(--bg);border-radius:16px;padding:28px;display:flex;flex-direction:column;gap:14px}
+.verdict h2{font-size:clamp(24px,4vw,32px)}
+.verdict mark{background:var(--primary);color:var(--primary-fg);padding:0 .2em;border-radius:4px}
+.verdict p{opacity:.75;max-width:60ch}
+.strip{display:flex;flex-wrap:wrap;gap:8px}
+.strip a{text-decoration:none;display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 8px;border-radius:999px;background:color-mix(in oklab,var(--bg) 12%,transparent);color:var(--bg);font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.dot.high{background:var(--dot-high)}.dot.med{background:var(--dot-med)}.dot.low{background:var(--dot-low)}
+
+/* Version or scope chip in a section head */
+.sechead{display:flex;align-items:center;gap:10px}
+.vtag{font:500 11px/1 var(--mono);letter-spacing:.06em;padding:5px 8px;border-radius:6px;background:var(--fg);color:var(--bg)}
+
+/* Stepper */
+.stepper{display:flex;flex-direction:column;gap:12px}
+.steps{display:flex;flex-wrap:wrap;gap:6px}
+.steps button,.tabs button{font:500 13px/1 var(--sans);padding:8px 12px;border-radius:999px;border:1px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer}
+.tabs button{border-radius:8px}
+.steps button[aria-pressed="true"],.tabs button[aria-selected="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+button:focus-visible,summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.canvas{overflow-x:auto;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px}
+.canvas svg{display:block;width:100%;height:auto}
+.caption{min-height:3em;max-width:62ch}
+svg text{font-family:var(--sans);fill:var(--fg)}
+svg .t-sm{font-size:11px;fill:var(--muted)}
+svg .t-mono{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+svg .box{fill:var(--card);stroke:var(--border);stroke-width:1.5}
+svg .box.ours{fill:var(--brand-tint);stroke:var(--brand)}
+svg .box.third{fill:var(--info-tint);stroke:var(--info)}
+svg .edge{stroke:var(--faint);stroke-width:1.5;fill:none;marker-end:url(#arw)}
+svg .edge.secret{stroke:var(--brand);stroke-dasharray:4 3}
+svg .mask{fill:var(--brand-tint);stroke:var(--brand);stroke-width:1}
+svg [data-s]{transition:opacity .35s ease}
+svg [data-s].off{opacity:0}
+@media (prefers-reduced-motion:reduce){svg [data-s]{transition:none}}
+
+/* Chips, tables, matrix */
+.chip{display:inline-block;align-self:flex-start;padding:3px 9px;border-radius:999px;font:500 12px/1.4 var(--sans);white-space:nowrap}
+.ok{background:var(--ok-tint);color:var(--ok)}.warn{background:var(--warn-tint);color:var(--warn)}.bad{background:var(--bad-tint);color:var(--bad)}.info{background:var(--info-tint);color:var(--info)}
+.tbl{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{font:500 12px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--faint);background:var(--bg)}
+td:first-child{font-weight:500}
+.matrix td,.matrix th{text-align:center}.matrix td:first-child,.matrix th:first-child{text-align:left}
+.cmp td:first-child{color:var(--muted)} .win{font-weight:600}
+
+/* Twin cards */
+.twin{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.twin .card{display:flex;flex-direction:column;gap:10px}
+.twin svg{width:100%;height:auto}
+
+/* Risk cards */
+.group-label{font:500 12px/1 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--faint);scroll-margin-top:16px}
+.risks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.risk{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.risk .top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.sev{font:500 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:5px 8px;border-radius:6px;flex:none}
+.sev.high{background:var(--bad-tint);color:var(--bad)}.sev.med{background:var(--warn-tint);color:var(--warn)}.sev.low{background:var(--info-tint);color:var(--info)}
+.risk p{font-size:14px}
+.fix{font-size:14px}.fix::before{content:"→ ";color:var(--faint)}
+.gauge{display:flex;flex-direction:column;gap:4px}
+.gauge .bar{height:6px;border-radius:3px;background:var(--secondary);overflow:hidden}
+.gauge .bar i{display:block;height:100%;background:var(--bad)}
+.gauge.warn .bar i{background:var(--warn)}.gauge.info .bar i{background:var(--info)}
+.gauge small{font:400 12px/1.3 var(--mono);color:var(--faint)}
+
+/* Folds */
+details{border-top:1px solid var(--border);padding-top:12px}
+summary{cursor:pointer;font-weight:500;color:var(--muted);list-style:none;display:flex;align-items:center;gap:8px}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"+";font-family:var(--mono);width:18px;height:18px;border-radius:5px;background:var(--secondary);display:inline-grid;place-items:center;font-size:13px;color:var(--fg)}
+details[open] summary::before{content:"–"}
+details>div{padding-top:14px;display:flex;flex-direction:column;gap:12px}
+
+/* Open decisions */
+.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.cols ul{margin:10px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:8px;font-size:14px}
+
+@media (max-width:640px){.task,.risks,.twin,.cols{grid-template-columns:minmax(0,1fr)}.wrap{gap:44px}}
+/* Outcome tables become stacked rows on phones: each row a block, each cell labelled by its column. */
+@media (max-width:600px){
+  .matrix tr:first-child{display:none}
+  .matrix tr{display:block;padding:10px 14px;border-bottom:1px solid var(--border)}
+  .matrix td{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border:0;text-align:left}
+  .matrix td:first-child{font-weight:600}
+  .matrix td[data-col]::before{content:attr(data-col);color:var(--muted);font-size:13px}
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">Research spike · Team</span>
+  <h1>Page name</h1>
+  <p class="lede">The reader's question, in one sentence.</p>
+  <div class="meta"><span class="pill brand">Research, nothing decided</span><span class="pill">Checked on 3 Nov 2026</span></div>
+</header>
+
+<section>
+  <div class="task">
+    <div class="card"><b>Goal</b><span>What we want to happen.</span></div>
+    <div class="card"><b>Question</b><span>What this spike must answer.</span></div>
+    <div class="card"><b>This page</b><span>What the reader leaves with.</span></div>
+  </div>
+</section>
+
+<section class="verdict">
+  <span class="eyebrow" style="color:inherit;opacity:.6">The short answer</span>
+  <h2>Do the thing, with <mark>one key choice</mark>.</h2>
+  <p>Two sentences of why.</p>
+  <div class="strip">
+    <a href="#a-risks"><span class="dot high"></span>A · biggest risk</a>
+    <a href="#shared-risks"><span class="dot low"></span>Both · minor risk</a>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><span class="vtag">OPTION A</span><span class="eyebrow">3 · Context</span></div>
+  <h2>How it works</h2>
+  <p class="answer">One sentence the reader can stop at.</p>
+  <div class="stepper" data-stepper="flow">
+    <div class="steps" role="group" aria-label="Steps"></div>
+    <div class="canvas">
+      <svg viewBox="0 0 560 200" role="img" aria-label="Flow">
+        <defs><marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--faint)"/></marker></defs>
+        <g data-s="1"><rect class="box" x="4" y="70" width="140" height="60" rx="10"/><text x="74" y="106" text-anchor="middle" font-size="16">User</text></g>
+        <g data-s="2"><rect class="box ours" x="208" y="70" width="140" height="60" rx="10"/><text x="278" y="106" text-anchor="middle" font-size="16">Ours</text><path class="edge secret" d="M144 100H206"/></g>
+        <g data-s="3"><rect class="box third" x="412" y="70" width="140" height="60" rx="10"/><text x="482" y="106" text-anchor="middle" font-size="16">Theirs</text><path class="edge" d="M348 100H410"/></g>
+      </svg>
+    </div>
+    <p class="caption"></p>
+  </div>
+
+  <div class="tabs" role="tablist" data-tabs="a"><button role="tab" aria-selected="true" data-tab="m">State × flow</button><button role="tab" aria-selected="false" data-tab="c">Checked model</button></div>
+  <div data-panel="m" data-group="a" class="tbl"><table class="matrix">
+    <tr><th>They are…</th><th>Flow 1</th><th>Flow 2</th></tr>
+    <tr><td>Healthy</td><td data-col="Flow 1"><span class="chip ok">Settles</span></td><td data-col="Flow 2"><span class="chip ok">Settles</span></td></tr>
+    <tr><td>Degraded</td><td data-col="Flow 1"><span class="chip warn">Refunds</span></td><td data-col="Flow 2"><span class="chip bad">Stuck</span></td></tr>
+  </table></div>
+  <div data-panel="c" data-group="a" hidden>
+    <pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  s0: Waiting
+  s1: Done
+  [*] --> s0
+  s0 --> s1: it settles
+    </pre>
+  </div>
+
+  <span class="group-label" id="a-risks">Option A risks</span>
+  <div class="risks">
+    <article class="risk">
+      <div class="top"><h3>Risk title</h3><span class="sev high">High</span></div>
+      <div class="gauge"><div class="bar"><i style="width:94%"></i></div><small>live figure · as of date</small></div>
+      <p>What we lose, and who. What stays safe.</p>
+      <span class="fix">One mitigation line.</span>
+    </article>
+  </div>
+
+  <details><summary>Detail a first read skips</summary><div>
+    <p>Secondary mechanics, a table, or a list.</p>
+  </div></details>
+</section>
+
+<section>
+  <span class="eyebrow">5 · Side by side</span>
+  <h2>A or B</h2>
+  <div class="tbl"><table class="cmp">
+    <tr><th></th><th>A</th><th>B</th></tr>
+    <tr><td>Criterion</td><td class="win">Better value</td><td>Worse value</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <span class="eyebrow">7 · Open decisions</span>
+  <h2>What we still need to decide</h2>
+  <div class="cols">
+    <div class="card"><h3>Product</h3><ul><li>A call only product can make?</li></ul></div>
+    <div class="card"><h3>Engineering</h3><ul><li>A fact still to verify.</li></ul></div>
+  </div>
+</section>
+
+</div>
+
+<script>
+const CAPTIONS={flow:["A user starts.","Our contract takes it, privately.","Their protocol does the work."]};
+const LABELS={flow:["Start","Ours","Theirs"]};
+document.querySelectorAll("[data-stepper]").forEach(el=>{
+  const key=el.dataset.stepper,bar=el.querySelector(".steps"),cap=el.querySelector(".caption"),parts=el.querySelectorAll("svg [data-s]");
+  const show=n=>{parts.forEach(p=>p.classList.toggle("off",+p.dataset.s>n));cap.textContent=CAPTIONS[key][n-1];bar.querySelectorAll("button").forEach((b,i)=>b.setAttribute("aria-pressed",i+1===n))};
+  LABELS[key].forEach((l,i)=>{const b=document.createElement("button");b.type="button";b.textContent=(i+1)+" · "+l;b.onclick=()=>show(i+1);bar.append(b)});
+  show(LABELS[key].length);
+});
+document.querySelectorAll("[data-tabs]").forEach(tabs=>{
+  const g=tabs.dataset.tabs;
+  tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    tabs.querySelectorAll("button").forEach(x=>x.setAttribute("aria-selected",x===b));
+    document.querySelectorAll(`[data-panel][data-group="${g}"]`).forEach(p=>p.hidden=p.dataset.panel!==b.dataset.tab);
+  });
+});
+</script>
