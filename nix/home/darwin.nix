@@ -33,6 +33,20 @@ in
         "~/Library/Keychains"
       ];
 
+  # Subagents clear their session scratch folder without a prompt. Claude Code keeps it
+  # under /private/tmp/claude-<uid>; 501 is this Mac user's uid.
+  skillIssue.claudeSettings.permissions.allow =
+    let
+      scratch = "/private/tmp/claude-501";
+    in
+    [
+      "Bash(rm -rf ${scratch}/*)"
+      "Bash(rm -f ${scratch}/*)"
+      "Bash(rm -r ${scratch}/*)"
+      "Bash(rm ${scratch}/*)"
+      "Edit(/${scratch}/**)"
+    ];
+
   programs.zsh.profileExtra = ''
     # Homebrew provides the casks' CLIs (op, adb). Appended, so a stray Homebrew
     # copy of a tool can never shadow the Nix one.
