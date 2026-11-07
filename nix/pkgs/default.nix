@@ -33,6 +33,45 @@ in
       meta.description = "Shell history in a searchable database, optionally synced";
     };
 
+  # omp's flake builds from source (Bun, Rust, bun2nix); this is the same release's binary,
+  # hashes from its SHA256SUMS.txt. Linux only: on the Mac, Tern manages omp. The binary is a
+  # Bun executable that keeps its payload after the ELF image, so no strip, no patchelf: the
+  # loader it expects is there on Ubuntu.
+  omp =
+    let
+      version = "18.18.0";
+      url = target: "https://github.com/can1357/oh-my-pi/releases/download/v${version}/omp-${target}";
+      sources = {
+        x86_64-linux = {
+          url = url "linux-x64";
+          hash = "sha256:ec271e0d7df4c0f57acb6a7a28f8585d46bd050bcef8494f6d33db8a6c0dfbba";
+        };
+        aarch64-linux = {
+          url = url "linux-arm64";
+          hash = "sha256:b394bfbf7c0e0ba82e01913defb5fadf14a6ea5a71ee05348070ab5e40187144";
+        };
+      };
+      system = final.stdenvNoCC.hostPlatform.system;
+    in
+    final.stdenvNoCC.mkDerivation {
+      pname = "omp";
+      inherit version;
+      src = final.fetchurl (sources.${system} or (throw "omp: no release binary for ${system}"));
+      dontUnpack = true;
+      dontStrip = true;
+      dontPatchELF = true;
+      installPhase = ''
+        runHook preInstall
+        install -Dm755 "$src" "$out/bin/omp"
+        runHook postInstall
+      '';
+      meta = {
+        description = "Oh My Pi, a terminal coding agent";
+        mainProgram = "omp";
+        platforms = builtins.attrNames sources;
+      };
+    };
+
   # Not in nixpkgs.
   linear-cli =
     let

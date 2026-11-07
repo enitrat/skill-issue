@@ -26,7 +26,11 @@
   };
 
   # Run as root by bootstrap/tailscaled.service. On the Mac, Tailscale is the cask app.
-  home.packages = [ pkgs.tailscale ];
+  home.packages = [
+    pkgs.tailscale
+    # The release binary, so the box has omp as a Nix package: no installer, no source build.
+    pkgs.omp
+  ];
 
   # Playwright's default, ~/.cache/ms-playwright, is not kept in a Boat snapshot, so a
   # box would download its browsers again.

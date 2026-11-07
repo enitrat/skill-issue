@@ -53,6 +53,8 @@ if [[ $OSTYPE == linux* ]]; then
     check "playwright: browsers outside ~/.cache" eval '[[ $PLAYWRIGHT_BROWSERS_PATH == $HOME/.local/* ]]'
     check "nix: daemon restarts after a Boat restore" systemctl is-enabled nix-after-restore.service
     check "tailscale: installed, from nix" eval '[[ ${commands[tailscale]:A} == /nix/store/* ]]'
+    check "omp: installed, from nix" eval '[[ ${commands[omp]:A} == /nix/store/* ]] && omp --version >/dev/null'
+    check "bun: 1.4.4 or newer" eval '[[ $(printf "%s\n1.4.4\n" "$(bun --version)" | sort -V | head -1) == 1.4.4 ]]'
     check "tailscaled: enabled with this repo's unit" eval 'systemctl is-enabled tailscaled.service && cmp -s ~/skill-issue/bootstrap/tailscaled.service /etc/systemd/system/tailscaled.service'
     check "earlyoom: running with this repo's config" eval 'systemctl is-active earlyoom.service && cmp -s ~/skill-issue/bootstrap/earlyoom.default /etc/default/earlyoom'
 fi
