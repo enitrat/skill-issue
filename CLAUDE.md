@@ -40,7 +40,6 @@ subagents/           # Source-of-truth subagent configs/prompts
 
 tools/               # Local executable CLIs (symlinked into ~/.local/bin)
 scripts/             # Repo-internal dev scripts (not installed to PATH)
-raycast-scripts/     # Raycast script commands
 config/others/       # Human docs for third-party setup
 ```
 

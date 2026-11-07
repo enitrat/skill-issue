@@ -31,9 +31,16 @@ make skill-update
 make skill-list
 ```
 
-Personal skills live under `skills/<name>/`. Third-party skills are downloaded
-into `skills/external/<name>/` from [`skills-external.json`](skills-external.json).
-Both are then exposed by the normal `npx skills add enitrat/skill-issue` flow.
+Personal skills live under `skills/<name>/`. Third-party skills live under
+`skills/external/<name>/`. `make skill-install` installs the checked-in catalog.
+`make skill-update` fetches the sources in [`skills-external.json`](skills-external.json)
+so their changes can be reviewed before installation.
+
+For a Codex profile, run `make codex-setup` to install these skills globally and
+add the [pstack Codex port](https://github.com/michael-denyer/pstack-claude).
+The plugin is installed into the active `CODEX_HOME` profile; start a new Codex
+session to load it. Run the command again to refresh the skills; use
+`codex plugin marketplace upgrade pstack-claude` to refresh the marketplace.
 
 The bundled launchers from the Telegram, one-conv, and Slack skills
 are also linked through `tools/`, so a switch exposes `tg`, `one-conv`,
@@ -74,7 +81,6 @@ every pstack role to Opus at medium effort (rewrite it with `/pstack:setup-pstac
 | Claude rules | `rules/` | Local Claude configuration | `~/.claude/rules/` |
 | Subagents/prompts | `subagents/` | Local Claude/Codex configuration | `~/.claude/agents/`, `~/.codex/prompts/` |
 | Custom CLIs | `tools/` | Symlinks in `~/.local/bin`, from `nix/home/common.nix` | Local commands |
-| Raycast commands | `raycast-scripts/` | Raycast script-command directory | Raycast |
 
 ## Machine Setup
 
@@ -131,7 +137,6 @@ rules/                          # Claude Code behavior rules
 subagents/                      # Claude/Codex agent definitions and prompts
 tools/                          # Local executable CLIs
 tailscale/policy.hujson         # The tailnet policy, applied by `tailnet policy apply`
-raycast-scripts/                # Raycast script commands
 config/others/                  # Human docs for third-party setup
 ```
 
@@ -150,7 +155,7 @@ Add a third-party skill:
 1. Add its upstream source URL, skill name, and maintainer to
    `skills-external.json`.
 2. Keep the upstream URL specific to the skill directory when possible.
-3. Run `make skill-install` to download and install it.
+3. Run `make skill-update` and review the downloaded skill, then run `make skill-install`.
 
 Add a tool or setting:
 
