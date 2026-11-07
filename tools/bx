@@ -4,7 +4,7 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.9.0"
+VERSION="0.12.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
@@ -12,6 +12,12 @@ GC_DAYS=3
 AUTO_STOP_HOURS=4
 # Its sibling, which owns the Tailscale API; ~/.local/bin may not have it yet.
 tailnet=$(dirname "$(readlink -f "$0")")/tailnet
+# Tern is optional. `tern remote setup` cannot fetch the Linux build while this Mac's Tern is
+# signed out of Stencil, so the build comes from a tarball downloaded by hand from your
+# stencil.so account: Tern-<version>-linux-x86_64.tar.gz, one `tern/tern` binary inside.
+TERN_TARBALL=${BX_TERN_TARBALL:-$HOME/.config/bx/tern-linux-x86_64.tar.gz}
+# Where this Mac's Tern keeps its host list.
+TERN_DIR=${TERN_CONFIG_DIR:-$HOME/Library/Application Support/Tern}
 
 usage() {
   cat <<'EOF'
@@ -31,7 +37,15 @@ USAGE
     bx ls                   List sandboxes: name, id, state, age, machine time cost so
                             far, whether herdr has them
     bx list                 List snapshots to start from: built or not, age, size, repos
+    bx resume <name|id>     Start a stopped sandbox again for 4 hours and re-attach it:
+                            a fresh herdr server and machine entry, and the tailnet if
+                            Tailscale dropped it. On a running box, re-adds it to herdr
+                            only if herdr does not answer
     bx rm <name|id>         Remove a sandbox from herdr and delete it
+    bx tern <name|id>       Install Tern on a sandbox and add it to this Mac's Tern hosts,
+                            from the tarball in ~/.config/bx/tern-linux-x86_64.tar.gz
+                            (BX_TERN_TARBALL). `bx new` and `bx resume` do it when the
+                            tarball and the `tern` CLI are there; `bx rm` drops the host
     bx tailnet <name|id>    Join a sandbox to the tailnet again. Tailscale drops a box
                             that stays stopped for long; `bx new` joins it the first time
     bx gc [--yes]           Find sandboxes stopped for over 3 days and herdr entries whose
@@ -54,6 +68,9 @@ A box from `bx new` joins your tailnet under its name, tagged tag:box, with a si
 key that `tailnet key` mints for it. Your devices reach its ports there, such as a dev
 server at http://<name>:3000 from your phone; the box cannot reach them or other boxes
 (tailscale/policy.hujson). `bx rm` and `bx gc` delete the box's node from the tailnet.
+
+omp is a Nix package on every box (nix/pkgs). A box gets this Mac's omp config but no
+logins: run /login in omp on the box.
 
 Snapshots hold no credentials. A sandbox from `bx new` gets Boat's agent logins from your
 default Boat environment, plus your `gh auth token` and git name and email, so agents can
@@ -104,6 +121,70 @@ herdr_forget() {
   for profile in $(herdr_boxes | jq -r --arg id "$1" 'select(.target == $id) | .id'); do
     herdr machine remove "$profile" >/dev/null
   done
+}
+
+# Copies this Mac's omp config to sandbox $1 unless it has one. omp itself comes from the
+# flake (nix/pkgs): a box from a snapshot built before that has none until `bx update`. The
+# config holds no secrets; logins stay out, see `bx --help`. Never fails the box.
+omp_config() {
+  local id=$1
+  [ -r "$HOME/.omp/agent/config.yml" ] || return 0
+  # shellcheck disable=SC2016 # Expanded on the sandbox.
+  ssh -o BatchMode=yes "$id" '
+    command -v omp >/dev/null || exit 0
+    [ -e "$HOME/.omp/agent/config.yml" ] && exit 0
+    mkdir -p "$HOME/.omp/agent" && cat >"$HOME/.omp/agent/config.yml"' <"$HOME/.omp/agent/config.yml" \
+    || log "$id: could not copy omp's config"
+}
+
+# Installs Tern on sandbox $1 (named $2) and adds it to this Mac's Tern hosts. The box runs
+# `tern remote serve` as a user service, reached over UDP 8376 on the tailnet, and admits this
+# Mac's SSH key. Run after the tailnet join, so setup finds the tailnet address. It lives
+# outside the snapshot on purpose: the service writes a host key on first start, and a
+# snapshot would hand every box the same one. Never fails the box: Tern is optional.
+tern_setup() {
+  local id=$1 name=$2
+  command -v tern >/dev/null || { log "$id: no tern CLI on this Mac; skipping Tern"; return 0; }
+  [ -r "$TERN_TARBALL" ] || { log "$id: no Tern build at $TERN_TARBALL; skipping Tern"; return 0; }
+  # shellcheck disable=SC2016 # Expanded on the sandbox.
+  ssh -o BatchMode=yes "$id" '
+    set -e
+    [ -x "$HOME/.local/share/tern/tern" ] && exit 0
+    mkdir -p "$HOME/.local/share/tern" "$HOME/.local/bin"
+    tar -xz -C "$HOME/.local/share/tern" --strip-components=1
+    ln -sfn "$HOME/.local/share/tern/tern" "$HOME/.local/bin/tern"
+    "$HOME/.local/bin/tern" --version >/dev/null' <"$TERN_TARBALL" \
+    || { log "$id: could not install Tern. Retry: bx tern $name"; return 0; }
+  log "$id: setting Tern up"
+  tern remote setup "user@$id" </dev/null >/dev/null \
+    || { log "$id: tern remote setup failed. Retry: bx tern $name"; return 0; }
+  # Show the box by name in Tern's host list, not by its sandbox id.
+  local hosts=$TERN_DIR/hosts tmp
+  if [ -f "$hosts" ]; then
+    tmp=$(mktemp)
+    awk -F'\t' -v OFS='\t' -v a="user@$id" -v n="$name" '$0 !~ /^#/ && $2 == a { $2 = n } { print }' "$hosts" >"$tmp" \
+      && cat "$tmp" >"$hosts"
+    rm -f "$tmp"
+  fi
+  log "$id: Tern ready: open $name from a Tern window"
+}
+
+# Drops sandbox $1 from this Mac's Tern hosts and known hosts, so a new box that gets its name
+# or tailnet address is not refused for a different host key. Silent when Tern has none.
+tern_forget() {
+  local id=$1 hosts=$TERN_DIR/hosts known=$TERN_DIR/known_hosts name addr fp tmp
+  [ -f "$hosts" ] || return 0
+  name=$(name_of "$id" 2>/dev/null || true)
+  tmp=$(mktemp)
+  while IFS=$'\t' read -r addr _; do
+    addr=${addr#*@}
+    [ -f "$known" ] || continue
+    fp=$(awk -v a="$addr" 'index($1, a ":") == 1 || $1 == a { print $2; exit }' "$known")
+    [ -z "$fp" ] || { awk -v f="$fp" '$2 != f' "$known" >"$tmp" && cat "$tmp" >"$known"; }
+  done < <(awk -F'\t' -v a="user@$id" -v n="$name" '$0 !~ /^#/ && ($2 == a || (n != "" && $2 == n))' "$hosts")
+  awk -F'\t' -v a="user@$id" -v n="$name" '$0 ~ /^#/ || !($2 == a || (n != "" && $2 == n))' "$hosts" >"$tmp" \
+    && cat "$tmp" >"$hosts"
+  rm -f "$tmp"
 }
 
 # Joins sandbox $1 to the tailnet as $2 with a key minted for it alone. The key travels
@@ -170,6 +251,8 @@ new() {
   herdr machine add "$id" --label "$name" >/dev/null \
     || log "herdr machine add failed; run: herdr machine add $id --label $name"
   tailnet_join "$id" "$name"
+  omp_config "$id"
+  tern_setup "$id" "$name"
   ready_check "$id" "$snapshot" || die "$id is not ready (see above). Inspect: ssh $id. Delete: bx rm $id"
   echo "$id"
   log "ready: ssh $id"
@@ -268,10 +351,75 @@ name_of() {
   sandboxes | jq -r --arg id "$1" 'select(.id == $id) | .name'
 }
 
+# Waits until herdr on machine $1 lists panes. The first calls after `machine add` can be
+# refused while its bridge starts.
+herdr_answers() {
+  local i=0
+  while [ $i -lt 10 ]; do
+    herdr --machine "$1" pane list >/dev/null 2>&1 && return
+    sleep 3
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# Starts stopped sandbox $1 again for another AUTO_STOP_HOURS, then gives it what a stop
+# loses: a herdr server and, if Tailscale dropped it, its tailnet node. On a running box it
+# only repairs herdr when herdr does not answer, so a working server and its panes stay.
+resume() {
+  local id name state
+  id=$(resolve "$1")
+  name=$(name_of "$id")
+  state=$(boat info "$id" --json | jq -r .sandbox.state)
+  case $state in
+    stopped)
+      log "resuming $name, on for ${AUTO_STOP_HOURS}h"
+      boat resume "$id" --ttl $((AUTO_STOP_HOURS * 3600)) >/dev/null || die "could not resume $id"
+      ;;
+    stopping | pending) die "$id is $state; retry in a minute" ;;
+    error) die "$id is in error. Power-cycle it: boat recover $id" ;;
+    *)
+      if herdr --machine "$name" pane list >/dev/null 2>&1; then
+        log "$id is already running and herdr answers"
+        echo "$id"
+        return
+      fi
+      log "$id is already running; herdr does not answer, re-adding it"
+      ;;
+  esac
+  wait_hydrated "$id"
+  # A herdr server started during the restore, by the Mac's herdr reconnecting, listens on
+  # a socket the restore removed. A resume keeps no panes, so a new server loses nothing.
+  ssh -o BatchMode=yes "$id" 'pkill -x herdr' || true
+  herdr_forget "$id"
+  log "$id: adding to herdr as $name"
+  herdr machine add "$id" --label "$name" >/dev/null \
+    || die "herdr machine add failed; run: herdr machine add $id --label $name"
+  herdr_answers "$name" || die "herdr on $name does not answer. Inspect: ssh $id"
+  # 0 joined, 3 no Tailscale on this box, else off the tailnet.
+  local status=0
+  # shellcheck disable=SC2016 # Expanded on the sandbox.
+  ssh -o BatchMode=yes "$id" '
+    systemctl cat tailscaled.service >/dev/null 2>&1 || exit 3
+    for _ in $(seq 30); do [ -S /run/tailscale/tailscaled.sock ] && break; sleep 2; done
+    $HOME/.nix-profile/bin/tailscale status >/dev/null 2>&1' || status=$?
+  case $status in
+    0 | 3) ;;
+    *) tailnet_join "$id" "$name" ;;
+  esac
+  # A rejoin can change the tailnet address Tern's host entry holds.
+  tern_forget "$id"
+  omp_config "$id"
+  tern_setup "$id" "$name"
+  echo "$id"
+  log "ready: herdr --machine $name, or ssh $id"
+}
+
 rm_box() {
   local id
   id=$(resolve "$1")
   herdr_forget "$id"
+  tern_forget "$id"
   # Else the node lingers offline for a while, and a new box with this name gets <name>-1.
   "$tailnet" forget "$(name_of "$id")" || log "could not remove $id from the tailnet"
   boat delete "$id" --yes >/dev/null
@@ -688,9 +836,20 @@ case ${1:-} in
     ;;
   ls) ls_boxes ;;
   list) list_snapshots ;;
+  resume)
+    [ $# -eq 2 ] || die "usage: bx resume <name|id>"
+    resume "$2"
+    ;;
   rm)
     [ $# -eq 2 ] || die "usage: bx rm <name|id>"
     rm_box "$2"
+    ;;
+  tern)
+    [ $# -eq 2 ] || die "usage: bx tern <name|id>"
+    id=$(resolve "$2")
+    tern_forget "$id"
+    omp_config "$id"
+    tern_setup "$id" "$(name_of "$id")"
     ;;
   tailnet)
     [ $# -eq 2 ] || die "usage: bx tailnet <name|id>"

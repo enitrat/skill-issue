@@ -108,9 +108,11 @@ Check herdr on every box before relying on it: `herdr --machine <box> pane list`
 `bx new` the first call can be refused for a few seconds; retry. A herdr server started while
 Boat restores the disk (after `boat resume`, the Mac's herdr may reconnect and start one)
 listens on a socket the restore then removes, and `--machine` fails with `ConnectionRefused`
-for good. Forwarding never starts or repairs a server. Nothing survives a resume, so a fresh
-server loses nothing: once `boat info <id>` says `"hydrated": true`, stop the old one and
-re-add the machine, which starts a new one:
+for good. Forwarding never starts or repairs a server. Resume a stopped box with
+`bx resume <box>`, never `boat resume`: it waits for the restore, starts a fresh herdr server,
+re-adds the machine and rejoins the tailnet if needed. On a running box whose herdr does not
+answer, `bx resume <box>` does the same repair. By hand, once `boat info <id>` says
+`"hydrated": true`, stop the old server and re-add the machine, which starts a new one:
 
 ```bash
 ssh <id> 'pkill -x herdr'   # -x matches the process name, not this shell's command line
@@ -199,3 +201,12 @@ boxes and `compare` sets two runs side by side.
    trials' checkouts. Say the cost from the dry run before passing `--yes`.
 5. Pack each run without `work/`, `verify/`, `snapshot/` and `verification-baseline/`, copy it
    back, `merge` the boxes of one condition into one run, then `compare` the conditions.
+
+## Tern
+
+If `~/.config/bx/tern-linux-x86_64.tar.gz` exists (a Tern Linux build, downloaded by hand from
+the stencil.so account) and the `tern` CLI is on this Mac, `bx new` and `bx resume` install Tern
+on the box and add it to the Mac's Tern hosts under the box name. Open it from a Tern window; no
+extra step. `bx tern <box>` redoes it, `bx rm` drops the host. Tern is not in the snapshot: its
+service writes a host key at first start, and a snapshot would give every box the same one.
+Without the tarball, `bx` logs that it skipped Tern and the box is unchanged.
