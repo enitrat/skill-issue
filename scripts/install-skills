@@ -3,17 +3,20 @@
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -22,6 +25,7 @@ const manifest = JSON.parse(
   readFileSync(join(repoRoot, "skills-external.json"), "utf8"),
 );
 const argv = process.argv.slice(2);
+const update = argv[0] === "--update";
 
 function run(args, cwd = repoRoot) {
   const result = spawnSync("npx", ["skills", ...args], {
@@ -29,7 +33,7 @@ function run(args, cwd = repoRoot) {
     stdio: "inherit",
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.status !== 0) throw new Error(`skills exited with status ${result.status ?? 1}`);
 }
 
 // `skills add --copy` replaces symlinks with copies. A launcher in bin/ that
@@ -54,64 +58,93 @@ function restoreBinLinks(skillDir) {
   }
 }
 
-mkdirSync(externalRoot, { recursive: true });
-
-for (const skill of manifest.skills ?? []) {
-  if (!skill.name || basename(skill.name) !== skill.name) {
+const externalSkills = manifest.skills ?? [];
+for (const skill of externalSkills) {
+  if (!skill.name || skill.name === "." || skill.name === ".." || basename(skill.name) !== skill.name) {
     throw new Error(`Invalid external skill name: ${skill.name}`);
   }
+}
 
-  const stagingRoot = mkdtempSync(join(tmpdir(), "skill-"));
+if (update) {
+  mkdirSync(externalRoot, { recursive: true });
+  const stagingRoot = mkdtempSync(join(externalRoot, ".update-"));
+  const backupRoot = join(stagingRoot, ".backups");
+  let fetchRoot;
+  const published = [];
+  let removeStaging = true;
   try {
-    console.log(`\nFetching ${skill.name} from ${skill.source}`);
-    run(
-      [
-        "add",
-        skill.source,
-        "--skill",
-        skill.name,
-        "--agent",
-        "codex",
-        "--copy",
-        "--yes",
-      ],
-      stagingRoot,
-    );
-
-    const fetched = join(stagingRoot, ".agents", "skills", skill.name);
-    const destination = resolve(externalRoot, skill.name);
-    if (!destination.startsWith(`${resolve(externalRoot)}/`)) {
-      throw new Error(`External skill escapes catalog: ${skill.name}`);
-    }
-    rmSync(destination, { recursive: true, force: true });
-    cpSync(fetched, destination, { recursive: true });
-    restoreBinLinks(destination);
-
-    if (skill.modelInvocable) {
-      const skillFile = join(destination, "SKILL.md");
-      writeFileSync(
-        skillFile,
-        readFileSync(skillFile, "utf8").replace(
-          /^disable-model-invocation:.*\n/m,
-          "",
-        ),
+    mkdirSync(backupRoot);
+    fetchRoot = mkdtempSync(join(tmpdir(), "skill-"));
+    for (const skill of externalSkills) {
+      const fetchDir = join(fetchRoot, skill.name);
+      mkdirSync(fetchDir);
+      console.log(`\nFetching ${skill.name} from ${skill.source}`);
+      run(
+        [
+          "add",
+          skill.source,
+          "--skill",
+          skill.name,
+          "--agent",
+          "codex",
+          "--copy",
+          "--yes",
+        ],
+        fetchDir,
       );
+
+      const fetched = join(fetchDir, ".agents", "skills", skill.name);
+      if (!statSync(join(fetched, "SKILL.md")).isFile()) throw new Error(`Missing SKILL.md: ${skill.name}`);
+      const staged = join(stagingRoot, skill.name);
+      cpSync(fetched, staged, { recursive: true });
+      restoreBinLinks(staged);
+
+      if (skill.modelInvocable) {
+        const skillFile = join(staged, "SKILL.md");
+        writeFileSync(
+          skillFile,
+          readFileSync(skillFile, "utf8").replace(
+            /^disable-model-invocation:.*\n/m,
+            "",
+          ),
+        );
+      }
     }
+
+    for (const skill of externalSkills) {
+      const destination = join(externalRoot, skill.name);
+      const backup = join(backupRoot, skill.name);
+      const hadPrevious = lstatSync(destination, { throwIfNoEntry: false }) !== undefined;
+      if (hadPrevious) renameSync(destination, backup);
+      published.push({ destination, backup, hadPrevious });
+      renameSync(join(stagingRoot, skill.name), destination);
+    }
+  } catch (error) {
+    removeStaging = false;
+    for (const { destination, backup, hadPrevious } of published.reverse()) {
+      rmSync(destination, { recursive: true, force: true });
+      if (hadPrevious) renameSync(backup, destination);
+    }
+    removeStaging = true;
+    throw error;
   } finally {
-    rmSync(stagingRoot, { recursive: true, force: true });
+    if (removeStaging) rmSync(stagingRoot, { recursive: true, force: true });
+    if (fetchRoot) rmSync(fetchRoot, { recursive: true, force: true });
   }
+  process.exit(0);
 }
 
 console.log("\nInstalling local and external skills");
 run(["add", ".", ...argv]);
 
 // The install copies again, so repair the installed skills the same way.
-for (const root of [
-  join(homedir(), ".agents", "skills"),
-  join(repoRoot, ".agents", "skills"),
-]) {
-  if (!existsSync(root)) continue;
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.isDirectory()) restoreBinLinks(join(root, entry.name));
-  }
+const root = argv.includes("--global") || argv.includes("-g")
+  ? join(homedir(), ".agents", "skills")
+  : join(repoRoot, ".agents", "skills");
+const localSkills = readdirSync(join(repoRoot, "skills"), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && existsSync(join(repoRoot, "skills", entry.name, "SKILL.md")))
+  .map((entry) => entry.name);
+for (const name of new Set([...localSkills, ...externalSkills.map((skill) => skill.name)])) {
+  const dir = join(root, name);
+  if (existsSync(dir)) restoreBinLinks(dir);
 }

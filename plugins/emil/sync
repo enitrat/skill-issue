@@ -4,13 +4,38 @@ set -euo pipefail
 
 ref="${1:-main}"
 here="$(cd "$(dirname "$0")" && pwd)"
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d "$here/.sync.XXXXXX")"
+cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    for name in skills LICENSE UPSTREAM; do
+      if [ -e "$tmp/old-$name" ] || [ -L "$tmp/old-$name" ]; then
+        if ! rm -rf "${here:?}/${name:?}" || ! mv "$tmp/old-$name" "$here/$name"; then
+          echo "Could not restore $name; backup remains in $tmp" >&2
+          return
+        fi
+      elif [ -e "$tmp/published-$name" ]; then
+        if ! rm -rf "${here:?}/${name:?}"; then
+          echo "Could not remove $name; staged files remain in $tmp" >&2
+          return
+        fi
+      fi
+    done
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
 
-git clone -q --depth 1 --branch "$ref" https://github.com/emilkowalski/skills "$tmp"
+git clone -q --depth 1 --branch "$ref" https://github.com/emilkowalski/skills "$tmp/repo"
+test -d "$tmp/repo/skills"
+test -f "$tmp/repo/LICENSE"
+cp -R "$tmp/repo/skills" "$tmp/skills"
+cp "$tmp/repo/LICENSE" "$tmp/LICENSE"
+git -C "$tmp/repo" rev-parse HEAD > "$tmp/UPSTREAM"
 
-rm -rf "$here/skills"
-cp -R "$tmp/skills" "$here/skills"
-cp "$tmp/LICENSE" "$here/LICENSE"
-git -C "$tmp" rev-parse HEAD > "$here/UPSTREAM"
+for name in skills LICENSE UPSTREAM; do
+  if [ -e "$here/$name" ] || [ -L "$here/$name" ]; then mv "$here/$name" "$tmp/old-$name"; fi
+  touch "$tmp/published-$name"
+  mv "$tmp/$name" "$here/$name"
+done
 echo "emil @ $(cat "$here/UPSTREAM")"

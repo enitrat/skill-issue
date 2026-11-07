@@ -37,6 +37,41 @@
       "name": "thermo-nuclear-code-quality-review",
       "source": "https://github.com/cursor/plugins/tree/main/cursor-team-kit/skills/thermo-nuclear-code-quality-review",
       "modelInvocable": true
+    },
+    {
+      "name": "plannotator",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/core/plannotator"
+    },
+    {
+      "name": "plannotator-annotate",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/claude/plannotator-annotate",
+      "modelInvocable": true
+    },
+    {
+      "name": "plannotator-inbox",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/claude/plannotator-inbox"
+    },
+    {
+      "name": "plannotator-last",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/claude/plannotator-last",
+      "modelInvocable": true
+    },
+    {
+      "name": "plannotator-review",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/claude/plannotator-review",
+      "modelInvocable": true
+    },
+    {
+      "name": "plannotator-compound",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/extra/plannotator-compound"
+    },
+    {
+      "name": "plannotator-setup-goal",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/extra/plannotator-setup-goal"
+    },
+    {
+      "name": "plannotator-visual-explainer",
+      "source": "https://github.com/backnotprop/plannotator/tree/main/apps/skills/extra/plannotator-visual-explainer"
     }
   ]
 }
