@@ -2,8 +2,10 @@
 // the admin console is overwritten by the next apply.
 {
 	// Boat boxes join with keys tagged tag:box, minted by the OAuth client `tailnet` uses.
+	// The hub is one always-on box that runs T3 Code and links to the task boxes.
 	"tagOwners": {
 		"tag:box": ["autogroup:admin"],
+		"tag:hub": ["autogroup:admin"],
 	},
 
 	"grants": [
@@ -11,6 +13,10 @@
 		{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]},
 		// Your devices reach boxes on every port: 7443 for Herdr Remote, plus dev servers.
 		{"src": ["autogroup:member"], "dst": ["tag:box"], "ip": ["*"]},
+		// Your devices reach the hub on every port.
+		{"src": ["autogroup:member"], "dst": ["tag:hub"], "ip": ["*"]},
+		// The hub links to boxes over Tailscale Serve HTTPS, and to nothing else.
+		{"src": ["tag:hub"], "dst": ["tag:box"], "ip": ["tcp:443"]},
 		// No grant has tag:box as a source: a box reaches neither your devices nor other boxes.
 	],
 
@@ -22,11 +28,16 @@
 	"hosts": {},
 
 	"tests": [
-		{"src": "phone", "accept": ["mac:7443"]},
-		{"src": "mac", "accept": ["tag:box:8000", "tag:box:7443", "phone:8000"]},
+		{"src": "phone", "accept": ["mac:7443", "tag:hub:443", "tag:box:3773"]},
+		{"src": "mac", "accept": ["tag:box:8000", "tag:box:7443", "phone:8000", "tag:hub:443"]},
+		{
+			"src":    "tag:hub",
+			"accept": ["tag:box:443"],
+			"deny":   ["tag:box:22", "mac:3773", "phone:443"],
+		},
 		{
 			"src":  "tag:box",
-			"deny": ["mac:22", "mac:7443", "phone:8000", "tag:box:8000"],
+			"deny": ["mac:22", "mac:7443", "phone:8000", "tag:box:8000", "tag:hub:443"],
 		},
 	],
 }
