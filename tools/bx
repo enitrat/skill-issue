@@ -15,7 +15,7 @@ tailnet=$(dirname "$(readlink -f "$0")")/tailnet
 # Tern is optional. `tern remote setup` cannot fetch the Linux build while this Mac's Tern is
 # signed out of Stencil, so the build comes from a tarball downloaded by hand from your
 # stencil.so account: Tern-<version>-linux-x86_64.tar.gz, one `tern/tern` binary inside.
-TERN_TARBALL=${BX_TERN_TARBALL:-$HOME/.config/bx/tern-linux-x86_64.tar.gz}
+TERN_TARBALL=${BX_TERN_TARBALL:-${XDG_DATA_HOME:-$HOME/.local/share}/bx/tern-linux-x86_64.tar.gz}
 # Where this Mac's Tern keeps its host list.
 TERN_DIR=${TERN_CONFIG_DIR:-$HOME/Library/Application Support/Tern}
 
@@ -43,7 +43,7 @@ USAGE
                             only if herdr does not answer
     bx rm <name|id>         Remove a sandbox from herdr and delete it
     bx tern <name|id>       Install Tern on a sandbox and add it to this Mac's Tern hosts,
-                            from the tarball in ~/.config/bx/tern-linux-x86_64.tar.gz
+                            from the tarball in ~/.local/share/bx/tern-linux-x86_64.tar.gz
                             (BX_TERN_TARBALL). `bx new` and `bx resume` do it when the
                             tarball and the `tern` CLI are there; `bx rm` drops the host
     bx tailnet <name|id>    Join a sandbox to the tailnet again. Tailscale drops a box

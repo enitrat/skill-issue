@@ -204,7 +204,7 @@ boxes and `compare` sets two runs side by side.
 
 ## Tern
 
-If `~/.config/bx/tern-linux-x86_64.tar.gz` exists (a Tern Linux build, downloaded by hand from
+If `~/.local/share/bx/tern-linux-x86_64.tar.gz` exists (a Tern Linux build, downloaded by hand from
 the stencil.so account) and the `tern` CLI is on this Mac, `bx new` and `bx resume` install Tern
 on the box and add it to the Mac's Tern hosts under the box name. Open it from a Tern window; no
 extra step. `bx tern <box>` redoes it, `bx rm` drops the host. Tern is not in the snapshot: its
