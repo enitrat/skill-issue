@@ -4,7 +4,7 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.12.0"
+VERSION="0.13.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
@@ -18,6 +18,9 @@ tailnet=$(dirname "$(readlink -f "$0")")/tailnet
 TERN_TARBALL=${BX_TERN_TARBALL:-${XDG_DATA_HOME:-$HOME/.local/share}/bx/tern-linux-x86_64.tar.gz}
 # Where this Mac's Tern keeps its host list.
 TERN_DIR=${TERN_CONFIG_DIR:-$HOME/Library/Application Support/Tern}
+# The hosts bx added to Tern, one "id<TAB>name<TAB>address" per line: only these are ever
+# pruned, so a host you added to Tern yourself is left alone.
+TERN_STATE=${BX_TERN_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/bx/tern-hosts}
 
 usage() {
   cat <<'EOF'
@@ -46,6 +49,9 @@ USAGE
                             from the tarball in ~/.local/share/bx/tern-linux-x86_64.tar.gz
                             (BX_TERN_TARBALL). `bx new` and `bx resume` do it when the
                             tarball and the `tern` CLI are there; `bx rm` drops the host
+    bx tern-prune           Drop from this Mac's Tern hosts the boxes that are stopped or
+                            gone. `bx new`, `resume`, `ls` and `gc` do it too; `resume`
+                            adds a box back. Hosts you added to Tern yourself stay
     bx tailnet <name|id>    Join a sandbox to the tailnet again. Tailscale drops a box
                             that stays stopped for long; `bx new` joins it the first time
     bx gc [--yes]           Find sandboxes stopped for over 3 days and herdr entries whose
@@ -72,13 +78,15 @@ server at http://<name>:3000 from your phone; the box cannot reach them or other
 omp is a Nix package on every box (nix/pkgs). A box gets this Mac's omp config but no
 logins: run /login in omp on the box.
 
-Snapshots hold no credentials. A sandbox from `bx new` gets Boat's agent logins from your
+Before saving, bx removes the known Boat login files and Tailscale state. Setup scripts can
+write other credentials, so review build inputs and snapshot contents before reuse. A sandbox
+from `bx new` gets Boat's agent logins from your
 default Boat environment, plus your `gh auth token` and git name and email, so agents can
 commit, push and open pull requests. Deleting the sandbox deletes them.
 
 A snapshot's repo list, ~/.config/bx/<snapshot>, has one owner/repo per line. It stays on this Mac, so private repo names
 never reach this public repository. `bx bake` clones with your `gh auth token`, sent over
-SSH for the clone only: no token is written to the build sandbox or kept in the snapshot.
+SSH for the clone only. Repository setup scripts may write credentials to disk.
 Each repo gets: git submodules, `pnpm install --frozen-lockfile` when it has a pnpm
 lockfile, Playwright's Chromium and its system libraries for each Playwright it installs,
 and `make setup` when its Makefile has that target. Then ~/.config/bx/<snapshot>.sh, if it
@@ -87,7 +95,7 @@ there, such as starting a Docker stack once so its images are in the snapshot.
 
 Build sandboxes get your Boat environment like any other: a sandbox made with --no-env
 passes "no logins" on to every sandbox started from its snapshot. Before saving, the bake
-deletes the login files Boat wrote, so the snapshot holds none. A failed build keeps its
+deletes the known login files Boat wrote. A failed build keeps its
 sandbox for inspection and prints how to delete it.
 EOF
 }
@@ -166,25 +174,56 @@ tern_setup() {
       && cat "$tmp" >"$hosts"
     rm -f "$tmp"
   fi
+  # Remember it as ours, with the address Tern holds, so a prune can find it after the box is gone.
+  local addr
+  addr=$(awk -F'\t' -v n="$name" '$0 !~ /^#/ && $2 == n { sub(/^[^@]*@/, "", $1); print $1; exit }' "$hosts" 2>/dev/null || true)
+  mkdir -p "$(dirname "$TERN_STATE")"
+  { grep -v -F "$id"$'\t' "$TERN_STATE" 2>/dev/null || true; printf '%s\t%s\t%s\n' "$id" "$name" "$addr"; } >"$TERN_STATE.new" \
+    && mv "$TERN_STATE.new" "$TERN_STATE"
   log "$id: Tern ready: open $name from a Tern window"
 }
 
 # Drops sandbox $1 from this Mac's Tern hosts and known hosts, so a new box that gets its name
 # or tailnet address is not refused for a different host key. Silent when Tern has none.
 tern_forget() {
-  local id=$1 hosts=$TERN_DIR/hosts known=$TERN_DIR/known_hosts name addr fp tmp
+  local id=$1 hosts=$TERN_DIR/hosts known=$TERN_DIR/known_hosts name rec_addr addr fp tmp
+  # The record outlives the box, which name_of no longer finds.
+  name=$(awk -F'\t' -v i="$id" '$1 == i { print $2; exit }' "$TERN_STATE" 2>/dev/null || true)
+  rec_addr=$(awk -F'\t' -v i="$id" '$1 == i { print $3; exit }' "$TERN_STATE" 2>/dev/null || true)
+  [ -n "$name" ] || name=$(name_of "$id" 2>/dev/null || true)
+  if [ -f "$TERN_STATE" ]; then
+    tmp=$(mktemp)
+    grep -v -F "$id"$'\t' "$TERN_STATE" >"$tmp" || true
+    cat "$tmp" >"$TERN_STATE"
+    rm -f "$tmp"
+  fi
   [ -f "$hosts" ] || return 0
-  name=$(name_of "$id" 2>/dev/null || true)
   tmp=$(mktemp)
   while IFS=$'\t' read -r addr _; do
     addr=${addr#*@}
     [ -f "$known" ] || continue
     fp=$(awk -v a="$addr" 'index($1, a ":") == 1 || $1 == a { print $2; exit }' "$known")
     [ -z "$fp" ] || { awk -v f="$fp" '$2 != f' "$known" >"$tmp" && cat "$tmp" >"$known"; }
-  done < <(awk -F'\t' -v a="user@$id" -v n="$name" '$0 !~ /^#/ && ($2 == a || (n != "" && $2 == n))' "$hosts")
-  awk -F'\t' -v a="user@$id" -v n="$name" '$0 ~ /^#/ || !($2 == a || (n != "" && $2 == n))' "$hosts" >"$tmp" \
+  done < <(awk -F'\t' -v a="user@$id" -v n="$name" -v r="user@$rec_addr" '$0 !~ /^#/ && ($2 == a || (n != "" && $2 == n) || (r != "user@" && $1 == r))' "$hosts")
+  awk -F'\t' -v a="user@$id" -v n="$name" -v r="user@$rec_addr" '$0 ~ /^#/ || !($2 == a || (n != "" && $2 == n) || (r != "user@" && $1 == r))' "$hosts" >"$tmp" \
     && cat "$tmp" >"$hosts"
   rm -f "$tmp"
+}
+
+# Drops the hosts bx added to Tern whose box is not running: stopped by Boat's auto-stop,
+# deleted elsewhere, or in error. `bx resume` adds a host back, so nothing is lost. Does
+# nothing when Boat cannot be asked, rather than dropping every host.
+tern_prune() {
+  [ -s "$TERN_STATE" ] || return 0
+  local live id
+  live=$(if [ "$#" -gt 0 ]; then jq -c '.[]' <<<"$1"; else sandboxes; fi \
+    | jq -r 'select(.state != "stopped" and .state != "stopping" and .state != "error") | .id') \
+    || { log "could not list sandboxes; leaving Tern's hosts as they are"; return 0; }
+  while IFS= read -r id; do
+    grep -qxF "$id" <<<"$live" && continue
+    log "$id is not running; dropping it from Tern's hosts"
+    tern_forget "$id"
+  done < <(cut -f1 "$TERN_STATE")
 }
 
 # Joins sandbox $1 to the tailnet as $2 with a key minted for it alone. The key travels
@@ -218,6 +257,7 @@ tailnet_join() {
 
 new() {
   local snapshot=$1 name=$2 type=$3 id
+  tern_prune || true
   if ! boat snapshots --json | jq -e --arg n "$snapshot" '.named[] | select(.name == $n)' >/dev/null; then
     die "no snapshot $snapshot. See bx list"
   fi
@@ -330,6 +370,7 @@ list_snapshots() {
 }
 
 ls_boxes() {
+  tern_prune || true
   local herdr_ids costs
   herdr_ids=$(herdr_boxes | jq -r '.target' | tr '\n' ' ')
   # One API call per sandbox, so eight at a time. A sandbox whose usage cannot be read
@@ -368,6 +409,7 @@ herdr_answers() {
 # only repairs herdr when herdr does not answer, so a working server and its panes stay.
 resume() {
   local id name state
+  tern_prune || true
   id=$(resolve "$1")
   name=$(name_of "$id")
   state=$(boat info "$id" --json | jq -r .sandbox.state)
@@ -428,17 +470,22 @@ rm_box() {
 }
 
 gc() {
-  local yes=$1 stale gone line answer=y
-  stale=$(sandboxes | jq -r --argjson days "$GC_DAYS" '
+  local yes=$1 stale gone line answer=y inventory
+  inventory=$(boat list --all --json | jq -ec '
+    .sandboxes | if type == "array" and all(.[]; (.id | type == "string" and length > 0) and (.name | type == "string" and length > 0) and (.state | type == "string")) then . else error("invalid sandbox inventory") end') \
+    || die "could not establish sandbox inventory; nothing cleaned"
+  stale=$(jq -r --argjson days "$GC_DAYS" '
+    .[] |
     select(.state == "stopped" and .stoppedAt != null)
     | select((now - (.stoppedAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) > $days * 86400)
-    | "\(.id)\t\(.name)"')
+    | "\(.id)\t\(.name)"' <<<"$inventory")
   local live
-  live=" $(sandboxes | jq -r .id | tr '\n' ' ')"
+  live=" $(jq -r '.[].id' <<<"$inventory" | tr '\n' ' ')"
   gone=$(herdr_boxes | jq -r --arg live "$live " \
     '.target as $t | select($live | contains(" \($t) ") | not) | $t')
   local nodes
-  nodes=$("$tailnet" boxes | sort -u | grep -vxF -f <(sandboxes | jq -r .name)) || nodes=''
+  nodes=$("$tailnet" boxes | sort -u | grep -vxF -f <(jq -r '.[].name' <<<"$inventory")) || nodes=''
+  tern_prune "$inventory" || true
   if [ -z "$stale" ] && [ -z "$gone" ] && [ -z "$nodes" ]; then log "nothing to clean"; return; fi
   [ -z "$stale" ] || { echo "Sandboxes stopped for over $GC_DAYS days, to delete:"; printf '%s\n' "$stale" | sed 's/^/  /'; }
   [ -z "$gone" ] || { echo "herdr entries whose sandbox is gone, to remove:"; printf '%s\n' "$gone" | sed 's/^/  /'; }
@@ -492,17 +539,23 @@ create() {
     || die "could not create a sandbox"
 }
 
-# Deletes the logins Boat writes to a sandbox's disk (docs.boat.dev/environments/access),
-# so a snapshot holds none. Tokens in /run/ascii-secrets are never snapshotted.
+# Deletes the known logins Boat writes to a sandbox's disk.
 scrub_logins() {
   # Tailscale's state holds the machine key tailscaled made at its first start, joined or
   # not: kept, every box from the snapshot would be the same node. Each box makes its own
   # when the service starts there.
-  ssh -o BatchMode=yes "$1" 'rm -f ~/.claude/.credentials.json ~/.codex/auth.json \
-    ~/.config/gh/hosts.yml ~/.config/ascii/boat/config.json
+  ssh -o BatchMode=yes "$1" 'set -e
+    rm -f ~/.claude/.credentials.json ~/.codex/auth.json \
+      ~/.config/gh/hosts.yml ~/.config/ascii/boat/config.json
+    for file in ~/.claude/.credentials.json ~/.codex/auth.json \
+      ~/.config/gh/hosts.yml ~/.config/ascii/boat/config.json; do
+      [ ! -e "$file" ] && [ ! -L "$file" ] || exit 1
+    done
     if systemctl cat tailscaled.service >/dev/null 2>&1; then
-      sudo systemctl stop tailscaled.service && sudo rm -rf /var/lib/tailscale
-    fi'
+      sudo systemctl stop tailscaled.service
+    fi
+    sudo rm -rf /var/lib/tailscale
+    sudo test ! -e /var/lib/tailscale'
 }
 
 # Waits for the setup script that `boat new --setup-file` started. The bootstrap takes
@@ -528,17 +581,17 @@ bake() {
     local setup commit
     # By commit, not `main`: GitHub caches raw files for 5 minutes after a push.
     commit=$(git ls-remote https://github.com/enitrat/skill-issue main | cut -f1)
-    [ -n "$commit" ] || die "cannot read the skill-issue main commit"
+    [[ $commit =~ ^[0-9a-f]{40}$ ]] || die "cannot read the skill-issue main commit"
     log "baking skill-issue ${commit:0:7}"
     setup=$(mktemp)
     # shellcheck disable=SC2016 # $HOME expands on the sandbox, not here.
     printf '%s\n' '#!/bin/bash' 'set -euo pipefail' \
-      "curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/$commit/bootstrap/linux.sh | bash" \
+      "curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/$commit/bootstrap/linux.sh | SKILL_ISSUE_REVISION=$commit bash" \
       '"$HOME/skill-issue/bootstrap/check.sh"' \
       '# Each byte left in the store is downloaded again at every start.' \
       '/nix/var/nix/profiles/default/bin/nix-collect-garbage -d' >"$setup"
     log "creating a bare sandbox"
-    id=$(create --name "bake-$snapshot" --setup-file "$setup")
+    id=$(create --name "bake-$snapshot" --setup-file "$setup") || die "could not create build sandbox"
     rm -f "$setup"
     log "$id: running the bootstrap (about 7 minutes)"
     wait_setup "$id" || die "bootstrap failed on $id. Inspect: boat info $id. Delete: boat delete $id"
@@ -553,11 +606,11 @@ bake() {
     local setup=''
     [ -f "$list.sh" ] && setup=$(cat "$list.sh")
     log "creating a sandbox from dev"
-    id=$(create --from dev --name "bake-$snapshot")
+    id=$(create --from dev --name "bake-$snapshot") || die "could not create build sandbox"
     # Install nothing while the disk restores: pnpm then puts its store on Boat's restore
     # layer, a path that is gone once the restore ends, and every later install wants to
     # rebuild node_modules.
-    wait_hydrated "$id"
+    wait_hydrated "$id" || die "could not hydrate $id"
     log "$id: cloning ${repos[*]}"
     # One connection: the script travels quoted in the command line, the token on stdin.
     gh auth token | ssh -o BatchMode=yes "$id" \
@@ -604,13 +657,13 @@ update() {
     || die "no snapshot $snapshot. See bx list"
   # By commit, not `main`: GitHub caches raw files for 5 minutes after a push.
   commit=$(git ls-remote https://github.com/enitrat/skill-issue main | cut -f1)
-  [ -n "$commit" ] || die "cannot read the skill-issue main commit"
+  [[ $commit =~ ^[0-9a-f]{40}$ ]] || die "cannot read the skill-issue main commit"
   log "creating a sandbox from $snapshot"
   id=$(create --from "$snapshot" --name "update-$snapshot")
   wait_hydrated "$id"
   log "$id: re-running the bootstrap at skill-issue ${commit:0:7}"
   ssh -o BatchMode=yes "$id" "set -euo pipefail
-    curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/$commit/bootstrap/linux.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/enitrat/skill-issue/$commit/bootstrap/linux.sh | SKILL_ISSUE_REVISION=$commit bash
     . \"\$HOME/.nix-profile/etc/profile.d/hm-session-vars.sh\"
     export PATH=\"\$HOME/.nix-profile/bin:\$HOME/.local/bin:\$PATH\"
     \"\$HOME/skill-issue/bootstrap/check.sh\"
@@ -850,6 +903,9 @@ case ${1:-} in
     tern_forget "$id"
     omp_config "$id"
     tern_setup "$id" "$(name_of "$id")"
+    ;;
+  tern-prune)
+    tern_prune
     ;;
   tailnet)
     [ $# -eq 2 ] || die "usage: bx tailnet <name|id>"

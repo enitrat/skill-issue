@@ -11,6 +11,7 @@ set -euo pipefail
 repo_url=https://github.com/enitrat/skill-issue.git
 repo_dir=$HOME/skill-issue
 flake_output="user@$(uname -m)-linux"
+revision=${SKILL_ISSUE_REVISION:-main}
 
 log() { printf '[bootstrap] %s\n' "$*"; }
 
@@ -40,13 +41,11 @@ fi
 if [ ! -e "$repo_dir/flake.nix" ]; then
     log "cloning $repo_url into $repo_dir"
     git clone --quiet "$repo_url" "$repo_dir"
-else
-    log "updating $repo_dir"
-    # Reset, not pull: the checkout is a deployment copy, and main's history has been
-    # rewritten once, which a fast-forward cannot follow.
-    git -C "$repo_dir" fetch --quiet origin main
-    git -C "$repo_dir" reset --quiet --hard FETCH_HEAD
 fi
+log "checking out skill-issue $revision"
+# This is a deployment checkout. Reset rather than pull so reruns also handle rewritten history.
+git -C "$repo_dir" fetch --quiet origin "$revision"
+git -C "$repo_dir" reset --quiet --hard FETCH_HEAD
 
 log "switching home-manager to $flake_output"
 # -b moves files that home-manager would overwrite (a stock .zshrc) aside. Boat sets
@@ -57,20 +56,22 @@ env -u WORK_DIR nix run "$repo_dir#home-manager" -- switch --flake "$repo_dir#$f
 # This repo's skills, for Claude Code. The Nix npx by path: Boat's image puts an nvm
 # Node earlier on this script's PATH.
 log "installing skill-issue skills for Claude Code"
-"$HOME/.nix-profile/bin/npx" -y skills add enitrat/skill-issue -g -y -a claude-code -s '*' </dev/null >/dev/null
+installed=$("$HOME/.nix-profile/bin/npx" -y skills add "$repo_dir" -g -y -a claude-code -s '*' --json </dev/null)
+"$HOME/.nix-profile/bin/jq" -e 'type == "array" and length > 0 and all(.[]; .status == "installed" and (.name | type == "string"))' <<<"$installed" >/dev/null
 
-# skills add never removes a skill the repo dropped. Remove the ones it installed
-# from this repo whose SKILL.md is no longer in the checkout.
-lock=$HOME/.agents/.skill-lock.json
+# skills add never removes a skill the repo dropped. Remove only entries still owned
+# by this repo that did not appear in this installation.
+lock=${XDG_STATE_HOME:+$XDG_STATE_HOME/skills/.skill-lock.json}
+lock=${lock:-$HOME/.agents/.skill-lock.json}
 if [ -r "$lock" ]; then
-    "$HOME/.nix-profile/bin/jq" -r '.skills | to_entries[]
-        | select(.value.source == "enitrat/skill-issue")
-        | "\(.key)\t\(.value.skillPath)"' "$lock" |
-        while IFS=$'\t' read -r name path; do
-            if [ ! -e "$repo_dir/$path" ]; then
-                log "removing skill $name, which skill-issue no longer has"
-                "$HOME/.nix-profile/bin/npx" -y skills remove -g -y "$name" </dev/null >/dev/null
-            fi
+    # shellcheck disable=SC2016 # jq expands these variables.
+    "$HOME/.nix-profile/bin/jq" -r --arg repo "$repo_dir" --argjson installed "$installed" '
+        .skills | to_entries[]
+        | select(.value.source == "enitrat/skill-issue" or .value.source == $repo)
+        | .key as $name | select([$installed[].name] | index($name) | not) | $name' "$lock" |
+        while IFS= read -r name; do
+            log "removing skill $name, which skill-issue no longer has"
+            "$HOME/.nix-profile/bin/npx" -y skills remove "$name" -g -y -a claude-code </dev/null >/dev/null
         done
 fi
 
