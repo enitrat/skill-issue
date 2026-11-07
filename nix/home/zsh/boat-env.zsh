@@ -18,4 +18,9 @@ if [[ -r ~/.bashrc ]] && grep -q '^# ASCII TOKEN START' ~/.bashrc; then
         . /run/ascii-secrets/env.sh
     fi
     unset creds
+    # omp reads its subscription tokens from these names; Boat injects the same tokens under
+    # others. Boat withholds the ChatGPT refresh token, so that one lapses after 10 days,
+    # long after a box is gone. A login stored by omp still wins over both.
+    [[ -n ${CLAUDE_CODE_OAUTH_TOKEN-} ]] && export ANTHROPIC_OAUTH_TOKEN=${ANTHROPIC_OAUTH_TOKEN:-$CLAUDE_CODE_OAUTH_TOKEN}
+    [[ -n ${CHATGPT_ACCESS_TOKEN-} ]] && export OPENAI_CODEX_OAUTH_TOKEN=${OPENAI_CODEX_OAUTH_TOKEN:-$CHATGPT_ACCESS_TOKEN}
 fi
