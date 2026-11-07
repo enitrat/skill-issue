@@ -45,8 +45,9 @@ key=$(security find-generic-password -s boat-resolve -w 2>/dev/null) \
   || die "no API key in the Keychain under service boat-resolve"
 
 call() { # METHOD PATH [JSON_BODY]. Prints the response body, also on an HTTP error.
-  curl -sS --fail-with-body --max-time 30 -X "$1" "$api$2" \
-    -H "Authorization: Bearer $key" -H 'Content-Type: application/json' ${3:+-d "$3"}
+  printf 'Authorization: Bearer %s\n' "$key" | \
+    curl -sS --fail-with-body --max-time 30 -X "$1" "$api$2" \
+      -H @- -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
 
 # Authorizes our key (safe to repeat) and caches where to connect and which host key to

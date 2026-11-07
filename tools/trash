@@ -22,8 +22,8 @@ DESCRIPTION
     point: this exists to be the thing reached for by reflex, and by agents
     running cleanup in a repo, when rm -rf would be unrecoverable.
 
-    Name collisions in the trash are resolved by appending a timestamp, so a
-    second `trash build` never overwrites the first one.
+    Each path is placed inside a uniquely named directory in the trash. This
+    prevents name collisions, including when multiple trash commands run.
 
     Not a full freedesktop.org trash implementation: there is no .trashinfo
     metadata, so a Linux file manager will not offer to restore in place.
@@ -57,13 +57,11 @@ for path in "$@"; do
         continue
     fi
 
-    # basename strips trailing slashes, so `trash build/` lands as `build`
-    # rather than moving the contents into an existing directory of that name.
-    name="$(basename -- "$path")"
-    dest="$trash_dir/$name"
-    [ -e "$dest" ] && dest="$trash_dir/$name.$(date +%Y%m%dT%H%M%S)"
-
-    mv -- "$path" "$dest" || status=1
+    dest=$(mktemp -d "$trash_dir/item.XXXXXXXX") || { status=1; continue; }
+    if ! mv -- "$path" "$dest/"; then
+        rmdir "$dest" 2>/dev/null || true
+        status=1
+    fi
 done
 
 exit "$status"

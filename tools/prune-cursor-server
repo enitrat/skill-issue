@@ -48,30 +48,39 @@ if [ ! -d "$dir" ]; then
     exit 0
 fi
 
-# stat -f is BSD/macOS, stat -c is GNU; a remote box could be either.
-mtime() {
-    stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1"
-}
+if stat -c '%Y' "$dir" >/dev/null 2>&1; then
+    stat_format=(-c '%Y')
+else
+    stat_format=(-f '%m')
+fi
 
-stale=$(
-    for d in "$dir"/*/; do
-        [ -d "$d" ] || continue
-        printf '%s\t%s\n' "$(mtime "$d")" "$d"
-    done | sort -rn | tail -n +$((keep + 1)) | cut -f2-
-)
+dirs=()
+records=()
+for d in "$dir"/*; do
+    [ -d "$d" ] && [ ! -L "$d" ] || continue
+    timestamp=$(stat "${stat_format[@]}" "$d")
+    records+=("$timestamp ${#dirs[@]}")
+    dirs+=("$d")
+done
 
-if [ -z "$stale" ]; then
+stale=()
+if [ ${#records[@]} -gt 0 ]; then
+    while read -r _ index; do
+        stale+=("${dirs[index]}")
+    done < <(printf '%s\n' "${records[@]}" | sort -rn | tail -n +$((keep + 1)))
+fi
+
+if [ ${#stale[@]} -eq 0 ]; then
     echo "nothing to prune (keeping $keep newest)"
     exit 0
 fi
 
-count=$(printf '%s\n' "$stale" | wc -l | tr -d ' ')
-while IFS= read -r d; do
+for d in "${stale[@]}"; do
     if [ "$dry_run" -eq 1 ]; then
         echo "would remove $d"
     else
         rm -rf "$d"
     fi
-done <<<"$stale"
+done
 
-[ "$dry_run" -eq 1 ] || echo "pruned $count cached version(s), kept $keep newest"
+[ "$dry_run" -eq 1 ] || echo "pruned ${#stale[@]} cached version(s), kept $keep newest"

@@ -73,10 +73,8 @@ COMMANDS
 
 FILES
     ~/.git-identities/<id>.conf
-            GIT_NAME="Your Name"
-            GIT_EMAIL="you@example.com"
-            SSH_KEY="id_keyname"          # optional
-            SIGNING_KEY="id_keyname"      # optional
+            Git config format with an [identity] section.
+            Existing assignment-format records remain readable.
 
     ~/.config/git/allowed_signers
         Maps emails to signing keys so `git log --show-signature` can
@@ -149,6 +147,33 @@ show_current() {
     fi
 }
 
+valid_id() {
+    [[ $1 =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$ ]]
+}
+
+# Read old assignment records as literal data, never as shell code.
+read_identity() {
+    local file=$1 line field value
+    GIT_NAME='' GIT_EMAIL='' SSH_KEY='' SIGNING_KEY=''
+    if [[ $(head -c 1 "$file") = '[' ]]; then
+        GIT_NAME=$(git config --file "$file" --get identity.name) || return 1
+        GIT_EMAIL=$(git config --file "$file" --get identity.email) || return 1
+        SSH_KEY=$(git config --file "$file" --get identity.sshkey || :)
+        SIGNING_KEY=$(git config --file "$file" --get identity.signingkey || :)
+    else
+        while IFS= read -r line || [ -n "$line" ]; do
+            [[ $line =~ ^(GIT_NAME|GIT_EMAIL|SSH_KEY|SIGNING_KEY)=\"(.*)\"$ ]] || return 1
+            field=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+            printf -v "$field" '%s' "$value"
+        done < "$file"
+    fi
+    [ -n "$GIT_NAME" ] && [ -n "$GIT_EMAIL" ] || return 1
+    for value in "$SSH_KEY" "$SIGNING_KEY"; do
+        [[ -z $value || $value =~ ^[a-zA-Z0-9_.-]+$ ]] || return 1
+        [[ $value != . && $value != .. ]] || return 1
+    done
+}
+
 list_identities() {
     local found=0 f id
     log "Available identities:"
@@ -156,11 +181,13 @@ list_identities() {
         [ -f "$f" ] || continue
         found=1
         id=$(basename "$f" .conf)
-        # shellcheck source=/dev/null
-        ( source "$f"
-          printf '  %-12s %s <%s>%s\n' \
-              "$id" "$GIT_NAME" "$GIT_EMAIL" \
-              "${SIGNING_KEY:+  [signs with $SIGNING_KEY]}" )
+        if ! read_identity "$f"; then
+            warn "Invalid identity record: $f"
+            return 1
+        fi
+        printf '  %-12s %s <%s>%s\n' \
+            "$id" "$GIT_NAME" "$GIT_EMAIL" \
+            "${SIGNING_KEY:+  [signs with $SIGNING_KEY]}"
     done
     [ "$found" -eq 1 ] || log "  (none yet -- run 'git-id setup')"
     log ""
@@ -170,93 +197,135 @@ list_identities() {
 # ---------------------------------------------------------------- switching
 
 switch_identity() {
-    local id="$1"
-    local conf="$CONFIG_DIR/$id.conf"
-
-    if [ ! -f "$conf" ]; then
-        warn "Error: identity '$id' not found"
-        local available=() f
-        for f in "$CONFIG_DIR"/*.conf; do
-            [ -f "$f" ] && available+=("$(basename "$f" .conf)")
-        done
-        if [ ${#available[@]} -gt 0 ]; then
-            warn "Available: ${available[*]}"
-        else
-            warn "No identities registered yet. Run 'git-id setup'."
+    local id="$1" conf="$CONFIG_DIR/$1.conf" tmp backup had_config=0
+    valid_id "$id" || { warn "Invalid identity name: $id"; return 1; }
+    [ -f "$conf" ] || { warn "Identity not found: $id"; return 1; }
+    [ ! -L "$LOCAL_CONFIG" ] || { warn "Cannot replace symlink: $LOCAL_CONFIG"; return 1; }
+    [ ! -e "$LOCAL_CONFIG" ] || [ -f "$LOCAL_CONFIG" ] || {
+        warn "Not a regular file: $LOCAL_CONFIG"; return 1;
+    }
+    read_identity "$conf" || { warn "Invalid identity record: $conf"; return 1; }
+    tmp=$(mktemp "$HOME/.gitconfig.local.XXXXXX") || return 1
+    backup=$(mktemp "$HOME/.gitconfig.local.XXXXXX") || { rm -f "$tmp"; return 1; }
+    if [ -f "$LOCAL_CONFIG" ]; then
+        had_config=1
+        if ! cp -p "$LOCAL_CONFIG" "$tmp" || ! cp -p "$LOCAL_CONFIG" "$backup"; then
+            rm -f "$tmp" "$backup"; return 1;
         fi
+    fi
+    (
+        set -e
+        git config --file "$tmp" --replace-all user.name "$GIT_NAME"
+        git config --file "$tmp" --replace-all user.email "$GIT_EMAIL"
+        if [ -n "$SSH_KEY" ]; then
+            git config --file "$tmp" --replace-all core.sshCommand "ssh -i ~/.ssh/$SSH_KEY"
+        elif git config --file "$tmp" --get core.sshCommand >/dev/null; then
+            git config --file "$tmp" --unset-all core.sshCommand
+        fi
+        if [ -n "$SIGNING_KEY" ]; then
+            git config --file "$tmp" --replace-all user.signingkey "$HOME/.ssh/$SIGNING_KEY.pub"
+            git config --file "$tmp" --replace-all gpg.format ssh
+            git config --file "$tmp" --replace-all commit.gpgsign true
+            git config --file "$tmp" --replace-all tag.gpgsign true
+            git config --file "$tmp" --replace-all gpg.ssh.allowedSignersFile "$ALLOWED_SIGNERS"
+        else
+            for key in user.signingkey gpg.format; do
+                if git config --file "$tmp" --get "$key" >/dev/null; then
+                    git config --file "$tmp" --unset-all "$key"
+                fi
+            done
+            git config --file "$tmp" --replace-all commit.gpgsign false
+            git config --file "$tmp" --replace-all tag.gpgsign false
+        fi
+    )
+    # shellcheck disable=SC2181
+    if [ "$?" -ne 0 ]; then
+        rm -f "$tmp" "$backup"
+        warn "Could not prepare identity configuration"
         return 1
     fi
-
-    SSH_KEY="" SIGNING_KEY=""
-    # shellcheck source=/dev/null
-    source "$conf"
-
-    git config --file "$LOCAL_CONFIG" user.name "$GIT_NAME"
-    git config --file "$LOCAL_CONFIG" user.email "$GIT_EMAIL"
-
-    # Unset rather than leave stale: switching from an identity that pinned a
-    # key to one that does not must not keep using the old key.
-    if [ -n "$SSH_KEY" ]; then
-        git config --file "$LOCAL_CONFIG" core.sshCommand "ssh -i ~/.ssh/$SSH_KEY"
-    else
-        git config --file "$LOCAL_CONFIG" --unset core.sshCommand 2>/dev/null
+    if ! mv -f "$tmp" "$LOCAL_CONFIG"; then
+        rm -f "$tmp" "$backup"
+        warn "Could not replace identity configuration"
+        return 1
     fi
-
-    if [ -n "$SIGNING_KEY" ]; then
-        git config --file "$LOCAL_CONFIG" user.signingkey "$HOME/.ssh/$SIGNING_KEY.pub"
-        git config --file "$LOCAL_CONFIG" gpg.format ssh
-        git config --file "$LOCAL_CONFIG" commit.gpgsign true
-        git config --file "$LOCAL_CONFIG" tag.gpgsign true
-        git config --file "$LOCAL_CONFIG" gpg.ssh.allowedSignersFile "$ALLOWED_SIGNERS"
-        register_allowed_signer "$GIT_EMAIL" "$HOME/.ssh/$SIGNING_KEY.pub"
-    else
-        git config --file "$LOCAL_CONFIG" --unset user.signingkey 2>/dev/null
-        git config --file "$LOCAL_CONFIG" --unset gpg.format 2>/dev/null
-        git config --file "$LOCAL_CONFIG" commit.gpgsign false
-        git config --file "$LOCAL_CONFIG" tag.gpgsign false
+    local expected_sign=false
+    [ -z "$SIGNING_KEY" ] || expected_sign=true
+    if [ "$(git config user.name)" != "$GIT_NAME" ] ||
+       [ "$(git config user.email)" != "$GIT_EMAIL" ] ||
+       [ "$(git config --bool commit.gpgsign)" != "$expected_sign" ] ||
+       [ "$(git config --bool tag.gpgsign)" != "$expected_sign" ] ||
+       { [ -n "$SSH_KEY" ] && [ "$(git config core.sshCommand)" != "ssh -i ~/.ssh/$SSH_KEY" ]; } ||
+       { [ -n "$SIGNING_KEY" ] && { [ "$(git config user.signingkey)" != "$HOME/.ssh/$SIGNING_KEY.pub" ] || [ "$(git config gpg.format)" != ssh ] || [ "$(git config gpg.ssh.allowedSignersFile)" != "$ALLOWED_SIGNERS" ]; }; } ||
+       { [ -n "$SIGNING_KEY" ] && ! register_allowed_signer "$GIT_EMAIL" "$HOME/.ssh/$SIGNING_KEY.pub"; }; then
+        if [ "$had_config" -eq 1 ]; then
+            mv -f "$backup" "$LOCAL_CONFIG" || warn "Could not restore $LOCAL_CONFIG; backup: $backup"
+        else
+            rm -f "$LOCAL_CONFIG" "$backup"
+        fi
+        warn "Identity is overridden, not included in Git configuration, or its signing key could not be registered"
+        return 1
     fi
-
+    rm -f "$backup"
     log "Switched to: $GIT_NAME <$GIT_EMAIL>${SSH_KEY:+ [ssh: $SSH_KEY]}${SIGNING_KEY:+ [signs: $SIGNING_KEY]}"
 }
 
 # Append "<email> namespaces=git <keytype> <keydata>" once per key.
 register_allowed_signer() {
-    local email="$1" pubkey="$2" keyline
+    local email="$1" pubkey="$2" keyline tmp
     [ -f "$pubkey" ] || return 0
-    keyline=$(cut -d' ' -f1,2 < "$pubkey")
-
-    mkdir -p "$(dirname "$ALLOWED_SIGNERS")"
-    touch "$ALLOWED_SIGNERS"
-    if ! grep -qF "$keyline" "$ALLOWED_SIGNERS" 2>/dev/null; then
-        printf '%s namespaces="git" %s\n' "$email" "$keyline" >> "$ALLOWED_SIGNERS"
+    keyline=$(cut -d' ' -f1,2 < "$pubkey") || return 1
+    if [ -f "$ALLOWED_SIGNERS" ] && grep -qF "$keyline" "$ALLOWED_SIGNERS"; then
+        return 0
     fi
+    [ ! -L "$ALLOWED_SIGNERS" ] || return 1
+    mkdir -p "$(dirname "$ALLOWED_SIGNERS")" || return 1
+    tmp=$(mktemp "${ALLOWED_SIGNERS}.XXXXXX") || return 1
+    if { [ ! -e "$ALLOWED_SIGNERS" ] || cp -p "$ALLOWED_SIGNERS" "$tmp"; } &&
+       printf '%s namespaces="git" %s\n' "$email" "$keyline" >> "$tmp" &&
+       mv -f "$tmp" "$ALLOWED_SIGNERS"; then
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
 }
 
 # ---------------------------------------------------------------- registry
 
 add_identity() {
-    local id="${1-}" name="${2-}" email="${3-}" key="${4-}" signing="${5-}"
-
+    local id="${1-}" name="${2-}" email="${3-}" key="${4-}" signing="${5-}" tmp value
     if [ -z "$id" ] || [ -z "$name" ] || [ -z "$email" ]; then
         warn "Usage: git-id add <id> <name> <email> [ssh_key] [signing_key]"
-        warn "Example: git-id add work 'Jane Doe' jane@corp.com '' id_work"
         return 1
     fi
-
-    mkdir -p "$CONFIG_DIR"
-    cat > "$CONFIG_DIR/$id.conf" << EOF
-GIT_NAME="$name"
-GIT_EMAIL="$email"
-SSH_KEY="$key"
-SIGNING_KEY="$signing"
-EOF
+    valid_id "$id" || { warn "Invalid identity name: $id"; return 1; }
+    for value in "$key" "$signing"; do
+        [[ -z $value || $value =~ ^[a-zA-Z0-9_.-]+$ ]] && [[ $value != . && $value != .. ]] || {
+            warn "Invalid key filename: $value"; return 1;
+        }
+    done
+    mkdir -p "$CONFIG_DIR" || return 1
+    tmp=$(mktemp "$CONFIG_DIR/.identity.XXXXXX") || return 1
+    (set -e
+        git config --file "$tmp" identity.name "$name"
+        git config --file "$tmp" identity.email "$email"
+        git config --file "$tmp" identity.sshkey "$key"
+        git config --file "$tmp" identity.signingkey "$signing"
+    )
+    # shellcheck disable=SC2181
+    if [ "$?" -ne 0 ] || ! mv -f "$tmp" "$CONFIG_DIR/$id.conf"; then
+        rm -f "$tmp"
+        warn "Could not save identity: $id"
+        return 1
+    fi
     log "Added identity: $id"
 }
 
 remove_identity() {
     local id="${1-}" conf="$CONFIG_DIR/${1-}.conf"
-    if [ -n "$id" ] && [ -f "$conf" ]; then
-        rm "$conf"
+    valid_id "$id" || { warn "Invalid identity name: $id"; return 1; }
+    if [ -f "$conf" ]; then
+        rm "$conf" || return 1
         log "Removed identity: $id"
     else
         warn "Identity not found: $id"
@@ -338,7 +407,7 @@ setup_interactive() {
 
     local id name email
     id=$(ask "Identity name (a label, e.g. personal / work)" "${gh_login:-default}")
-    [ -n "$id" ] || die "identity name cannot be empty"
+    valid_id "$id" || die "identity name must start with a letter, digit or _ and contain only letters, digits, _, . or -"
     name=$(ask "Commit author name" "${gh_name:-$gh_login}")
     [ -n "$name" ] || die "author name cannot be empty"
 
@@ -387,6 +456,8 @@ setup_interactive() {
         signing_key=""
     elif [ "$pick" = "$i" ]; then
         signing_key=$(ask "New key filename in ~/.ssh" "id_${id}_signing")
+        [[ $signing_key =~ ^[a-zA-Z0-9_.-]+$ && $signing_key != . && $signing_key != .. ]] \
+            || die "invalid key filename"
         if [ -f "$HOME/.ssh/$signing_key" ]; then
             die "$HOME/.ssh/$signing_key already exists; re-run and reuse it instead"
         fi
