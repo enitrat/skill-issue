@@ -87,6 +87,9 @@ in
       "com.apple.swipescrolldirection" = false;
       AppleWindowTabbingMode = "always";
     };
+    # No Stage Manager: its window animations and the recent-apps strip that
+    # slides out from the left screen edge.
+    WindowManager.GloballyEnabled = false;
     # Tighter menu bar spacing so icons stop sliding behind the notch. Apple's own
     # icons only honour these under com.apple.controlcenter.
     CustomUserPreferences."com.apple.controlcenter" = {
