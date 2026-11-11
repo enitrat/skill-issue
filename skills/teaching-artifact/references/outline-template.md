@@ -1,33 +1,39 @@
 # Outline template
 
-Send this in chat before writing any HTML. Fill every `<…>`. Keep each section line to one sentence.
+Send this in chat before writing any HTML. Fill every `<…>`. One sentence per line.
 
 ```md
-Your goal: <the reader's purpose in one sentence>. Here is the outline; I'm holding the page until you approve it.
+Your goal: <what the reader must do after reading, one sentence>. Here is the outline; I'm holding the page until you approve it.
 
-## Structure
-Every section opens with a one- or two-sentence answer readable alone. Detail sits behind folds.
+## Reader
+- Who: <role(s), e.g. "the SDK team" / "a product person and an engineer">.
+- Already knows: <what we can assume>. Does not know: <what we must define>.
+- Baseline they compare against: <repo, branch or version, read on <date>> (or "none").
 
-**0. Header.** Title "<2–4 word name>". Pills: "<status, e.g. Research, nothing decided>", "Checked on <date>".
-**1. The task.** Three cards: Goal / Question / This page.
-**2. The short answer.** Verdict: "<one sentence>". Risk strip: <n> chips, each linking to its card.
-**3. <Section>.** Answer: "<sentence>". Visual: <stepper of N steps: a → b → c | matrix | gauge | table>. Folds: <what>.
+## Spine (<branch from SKILL.md section 2>)
+**L0 Short answer.** <verdict sentence | 3 lines of code | diagram + sentence>.
+**L1 Context.** Goal / Who it's for / Material: <repo, PR, branch, date>.
+**2. <Section>** (<Diátaxis mode>). Answer: "<sentence>". Visual: <stepper of N steps | Today/Proposed tabs | before/after over areas A, B, C | matrix | table>. Folds: <what>.
 … one line per section …
-**N. Open decisions.** Product vs Engineering.
-**N+1. Reference.** Folds: <what we own and reuse | where to look>.
+**N. Open questions.** Product vs Engineering.
+**N+1. Reference.** Folds: <what>.
+
+## Cut list
+- <What the page will not contain, e.g. "how we got here", "the rejected candidates", "the app's flow engine in usage examples">.
 
 ## Voice and look
-- Voice: <plain colleague sentences; what is never on the page, e.g. per-claim source tags>.
-- Density: <one answer sentence per section; paragraphs become rows, chips or steps>.
+- Density: answer sentence + one caption per visual, ≤ 3 sentences per paragraph, < 900 visible words; detail in folds.
+- Terms defined on first use: <the newcomer terms you already know you'll need>.
 - Colours and fonts: <named design system and its files | quickstart defaults>. Light theme.
 
 ## Questions
-1. <Does the risk list match what you care about? Anything to add or drop?>
-2. <A depth call: shrink or expand a section?>
-3. <A scope call the page cannot settle by itself.>
+1. <A question whose answer changes what you build.>
+2. <…>
+3. <…>
 ```
 
 Why each part is there:
-- The answer sentence per section lets the user judge content before design exists.
-- The voice block is concrete because density and tone are where users correct most, and a vague block ("clear and concise") invites no correction until the page exists.
+- **Reader and baseline** come first because the most expensive rewrites came from the wrong audience or the wrong "today".
+- **The cut list** lets the user correct density before a page exists; users judge what is missing as easily as what is present.
+- **Answer sentences per section** let the user judge content before design exists.
 - Questions are limited to three; each must change what you build.

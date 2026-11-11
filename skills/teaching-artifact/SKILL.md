@@ -1,171 +1,162 @@
 ---
 name: teaching-artifact
-description: Build a sectioned, shareable HTML artifact that teaches a system, an integration or a decision and surfaces its big risks fast. Outline gate first, then a structure chosen from the reader's purpose, step-by-step SVG diagrams, outcome matrices, risk cards and folds in place of prose, in the user's design-system colours. Use when the user wants to learn, review or brief others on a system, integration, vendor or set of options as a page or artifact ("teach me this in an artifact", "explainer page", "research page", "risk overview", "spike write-up"). Not for one focused diagram (show-me) or an explanation in chat (teach).
+description: Build a sectioned, shareable HTML artifact that teaches a system, a design proposal, an API or a decision, with progressive disclosure, real before/after comparisons, step-by-step diagrams, highlighted code and folds in place of prose. Outline gate first, then a page spine chosen from the reader's purpose, then a cold-reader test and a render check before publishing. Use when the user wants to learn, review, propose or brief others as a page or artifact ("teach me this in an artifact", "explainer page", "make an artifact about the API design", "before/after of the refactor", "research page", "risk overview", "spike write-up"). Not for one focused diagram (show-me) or an explanation in chat (teach).
 ---
 
 # Teaching artifact
 
-A page a busy reader learns from in five minutes and returns to for detail. Design carries the meaning; prose is the last resort.
+A page a reader who has never seen the system learns from in five minutes and returns to for detail. Design carries the meaning; every sentence left on the page teaches something the reader needs.
 
-Scope. This skill owns the page's structure, visuals, copy and iteration. It borrows, and does not restate:
-- Voice and diagram-by-diagram pacing: the `teach` skill.
-- Gathering the facts: the `how` / `research` skills, or explorers you brief.
-- The page contract (CSP, fonts, title, responsive rules): the Artifact tool's `quickstart` result, called with `intent: "other"`.
+This skill owns the page's structure, visuals, copy and iteration. It borrows, and does not restate:
+- Voice and diagram pacing: the `teach` skill.
+- Gathering facts: `how`, `research`, or explorers you brief.
+- The page contract (CSP, fonts, title, responsive rules): the Artifact tool's `quickstart` with `intent: "other"`.
+- Drawing SVG: the `artifact-diagramming` skill, loaded before the first diagram.
 
-## 1. Check the evidence
+## 1. Choose the spine from the reader's purpose
 
-Research comes before the outline. The page is shared, so its numbers become the team's numbers.
-
-- Check yourself every number and claim that drives the recommendation. A subagent's figure stays the subagent's until you have re-read its source or re-run its query.
-- When two reports disagree, read the cited source yourself. One read settles it; a third opinion does not.
-- A "never" or "always" claim about a system's states is model-checked or dropped. Prose reasoning about state machines misses interleavings.
-- Copy numbers and counts exactly as the source states them. A rounded count ("about 10") where the source lists 8 is an error a reader will find.
-
-## 2. Choose the structure from the reader's purpose
-
-Ask what the reader must decide or understand. Walk this tree:
+Ask who reads the page and what they must do after reading it. Walk this tree:
 
 ```
-What is the reader trying to do?
-├── Learn a system and know its big risks
-│     → Header · The task · Short answer + risk strip · How it works · Fit · Risks · Open decisions · Reference
-├── Choose between alternatives (versions, vendors, designs)
-│     → Header · The task · Short answer + risk strip · Shared base (once) · One section per alternative · Side by side · Shared risks · Open decisions · Reference
-└── Understand one mechanism
-      → Header · Short answer · Build-up sections, one per moving part · Gotchas · Reference
+What must the reader do after reading?
+├── Understand a system (to work in it, operate it, or join the team)
+│     → Context · Short answer · The domain in one diagram · How it works, one moving part per section · Gotchas · Reference
+├── Review or adopt a design or API (ours, or a proposal to another team)
+│     → read references/code-visualisation.md; spine is defined there
+├── Build what the page describes (a plan, a target architecture)
+│     → Context · Short answer · The system as it will be · Parts, one per section · What it removes · Open questions · Reference
+├── Choose between alternatives
+│     → read references/risk-pages.md ("Alternatives")
+└── Know the risks of something we depend on
+      → read references/risk-pages.md ("Risks")
 ```
 
-Branches combine. When a split into alternatives arrives mid-stream, restructure the whole page to the second branch; a bolted-on section breaks the reader's map of the page.
+Rules that hold on every spine:
+- **Domain first.** The first technical section names the domain's nouns and how they relate, in one diagram, before any integration, host application or implementation detail. Why: a page organised around how we integrate something teaches our plumbing, not the thing; the reader cannot judge a proposal whose primitives they were never shown.
+- **Final state, not history.** The page describes the system as it is or will be. Rejected candidates, rubrics, decision logs and "how we got here" stay out, except on a choose-between-alternatives page, where the alternatives are the content. Why: a decision log makes the reader reconstruct the result; the page should hand it over.
+- **Branches combine.** When a split into alternatives arrives mid-stream, restructure to that spine; a bolted-on section breaks the reader's map.
 
-Each alternative's section has the same blocks in the same order (intro, how it works, outcomes, risks), because the reader compares by position. Same order, not same counts: never add a filler card to match the other section.
+## 3. Disclosure ladder
 
-A risk every alternative carries goes once, in the shared risks, with one severity chip per alternative ("A: Med · B: High").
+The page is read in levels. Each level is complete on its own, and technicality only rises as the reader goes down:
 
-## 3. Outline gate
+| Level | What it holds | Reader time |
+|---|---|---|
+| L0 | Title + short answer block | 30 s |
+| L1 | Context: the goal, who this is for, what material the page draws on (repo, PR, branch, date) | 1 min |
+| L2 | Each section's eyebrow, heading, answer sentence and primary visual | 5 min total |
+| L3 | Folds inside sections: mechanics, edge cases, full types, long code | on demand |
+| L4 | Reference folds at the end: paths, identifiers, versions, sources, commands | lookup |
 
-No HTML before the user approves an outline. Corrections to voice and density cost nothing before a page exists and a rewrite after. Use `references/outline-template.md`: per section the answer sentence, the visual and the folds, then a concrete voice-and-look block, then at most three questions.
+- Start wide: L0–L1 use no term the audience does not already know. A term is introduced at the first level that needs it, never earlier.
+- The short answer's form follows the content: a verdict sentence for a risk page, three lines of code for an API page, one diagram plus a sentence for a system page. Never a strip of chips that a reader cannot learn from.
+- Per section: eyebrow (mono label with section number and scope), heading, one answer sentence the reader can stop at, one primary visual directly under it, folds. A second visual only when it answers a different question.
 
-- The user approves without answering a question: decide it, and name the decision in the delivery reply.
-- The user asked to judge only the finished page: write the outline to a file, answer its questions yourself, build, and list the answers in the delivery reply.
+## 4. Text budget: delete before you convert
 
-## 4. Design system
+For every paragraph, walk this in order:
 
-When the user names a design system, take its colours and fonts. Otherwise use the quickstart defaults.
+```
+Does the reader need what this paragraph teaches to do their job after reading?
+├── No → delete it. Do not shorten it, do not turn it into a chip.
+└── Yes
+    ├── Is it a sequence, a comparison, a state change or a structure?
+    │     → draw it (stepper, table, before/after, diagram) and delete the prose
+    ├── Is it detail a first read skips? → move it into a fold
+    └── Otherwise → keep it as at most 3 sentences
+```
 
-1. Read the semantic tokens: background, foreground, card, border, muted, primary, and the status roles with their tints.
-2. Resolve each to a literal value from the primitives file. An artifact has no access to the system's variable chains.
-3. Write them as tokens on bare `:root`, light values only: no dark blocks, every colour explicit, `body` background set.
-4. Map status roles to bad, warn, ok, info, each as a tint background plus its on-tint text colour. They drive severity chips, outcome cells and gauges.
-5. Map `--brand` to the system's accent that means "ours", not its primary button colour.
-6. Replace every kit value, even ones that happen to match.
-7. Fonts: display face for headings, body face, mono face for labels and figures. Inline a face that Google Fonts does not host as a base64 `@font-face`, heading weight only: write a placeholder, substitute the base64 into the same file once, keep no separate template.
+Hard limits:
+- At most 3 sentences per paragraph, caption or list item outside folds. A section's visible prose is its answer sentence plus one caption per visual; a longer explanation is a sign the visual is wrong.
+- Visible prose (outside folds, code, tables and diagram labels) stays under 900 words for the page.
+- Chips hold labels only: a status, a severity, a kind, at most 3 words. A sentence cut down to fit a chip is noise.
+- Check both with `python3 -I scripts/page_stats.py page.html` before every publish; it exits 1 when a limit is broken.
 
-The dark short-answer block is an inverse panel built from the same tokens; it is allowed on a light-only page.
+When the user says the page is too long: cut 40–50% of visible prose while keeping every mechanism, table, diagram and code block, then show the before/after word count. Do not cut to a third; overshooting loses the reasoning and the user has to ask for it back.
 
-## 5. Page anatomy
-
-Every section has the same shape, so the reader learns it once:
-
-1. Eyebrow: a mono label with the section number and scope, or a chip naming the alternative.
-2. Heading.
-3. One answer sentence the reader can stop at.
-4. One primary visual directly under it. A second visual only when it answers a different question (how it works, then what happens when it breaks).
-5. Folds (`<details>`) for anything a first read skips.
-
-Density test: if a paragraph could be a table row, a chip, a gauge or a diagram step, convert it. Two paragraphs of prose in one section fails the test.
-
-The page opens with a dark short-answer block: a verdict headline with one highlighted phrase, at most two sentences, then a strip of at most 5 risk chips. Each chip shows its severity label and links to its card. Order the chips by severity, then by harm to users' money, then by availability. Five is the ceiling because past it the first chips stop looking more urgent than the rest.
-
-Provenance appears once, as header pills ("Research, nothing decided", "Checked on <date>"). Never tag individual claims as fact, inference or source. Flag uncertainty inline only where it changes a decision ("not yet tested on a fork").
-
-Reference material stays in the closing folds: addresses, identifiers, error names, file paths, version numbers, audit lists, source links. In the main flow it is noise to a learner and reads as authority the prose has not earned.
-
-## 6. Visuals
+## 5. Visuals
 
 Pick the visual from the content's shape:
 
 | Content | Visual |
 |---|---|
-| A flow with 3+ parts | Stepper: one inline SVG built up one part per step |
-| How our flows behave in each state of an external system | Outcome matrix: states as rows, our flows as columns, outcome cells on ok/warn/bad tints |
-| A live figure that sizes a risk | Gauge bar with the figure and its date under it |
-| Two ways something can behave | Twin cards, each with a small chart and an outcome chip |
-| Choosing between options | Side-by-side table |
+| A flow with 3+ parts | Stepper: one SVG built up one part per step |
+| Today vs proposed, old vs new | Tabs or a Before/After toggle, "today" selected by default |
+| How our parts behave in each state of something external | Outcome matrix: states as rows, our parts as columns, cells on ok/warn/bad tints |
+| Code, types, API surfaces | Highlighted code block; see references/code-visualisation.md |
+| Options to choose between | Side-by-side table whose rows are the axes that differ |
+| A live figure that sizes a risk | Gauge bar with the figure and its date |
 | Detail a first read skips | Fold |
 
-Load the `artifact-diagramming` skill before drawing the first SVG. Copy components from `references/kit.html`; do not reinvent them.
+- Copy components from `references/kit.html` (general) and `references/code-kit.html` (code). Do not reinvent them.
+- Steppers open on the last step so the whole picture shows at rest; the caption changes per step and reserves its height.
+- One encoding per property, used in every diagram: ours in the brand tint, third parties in the info tint, sensitive flows dashed. Red only for the worst outcome (stuck or loss), amber for recoverable, green for success.
+- A coloured or bold cell, line or chip needs a key under it; emphasis without a key is noise.
+- Generated output (model checker, profiler, codegen) is never pasted as is: redraw only what the reader needs, in the reader's words.
+- Phone first: SVG viewBox at most 560 units wide, labels at 16 units or more, at most 4 boxes per row. At 400 px every table cell and label reads without sideways scroll.
 
-Steppers. Teaching a flow means redrawing it with one part added each time. On a page that is one SVG whose parts are `<g data-s="n">` groups revealed by step buttons. It opens on the last step so the whole picture shows at rest. The caption under it changes per step and reserves its height so the page does not jump.
+## 6. Copy
 
-Visual grammar. One encoding per property that matters, used in every diagram: our components in the brand tint, third-party components in the info tint, sensitive flows as dashed brand edges, hidden values as masked chips. Never encode one property two ways.
+Follow `teach`'s voice: plain sentences, one name per concept. On top of that:
 
-Failure states are drawn as nodes next to the component they affect, not as legend entries. Colour carries severity: red only for the worst outcome (stuck, or loss), amber for a recoverable one (retry, refund), green for success.
+- **Define before use.** List every term a newcomer may not know: the system's own nouns, our internal names, type and function names, third-party products. Each gets a 3–8 word gloss where it first appears, or is deleted. A type used in a code block is shown or glossed before that block. Why: a reader who meets an undefined noun stops learning and starts guessing.
+- **Prefer the ecosystem's word.** Use the term the wider ecosystem (TypeScript, EVM, the framework in use) already has over one we coined. Rename a label in a diagram if a reader would ask what it means.
+- **Claims carry their condition.** "A deposit above the remaining cap waits until the cap is raised", not "the cap is too small". Never judge a third party's fitness unless our side of the comparison is on the page.
+- **Provenance once.** Header pills ("Proposal, nothing decided", "Checked on <date>", "Compared with <baseline>"). Never tag individual claims as fact, inference or source.
+- **Promised structure exists.** "Ranked", "compared", "in order" point at a table that shows it.
+- **One home per figure**: the place where it drives a decision, plus at most the short answer.
+- Open decisions split into Product and Engineering. Delete an open decision the moment the user answers it.
 
-Emphasis means something stated. A coloured or bold table cell needs a key under the table; otherwise no emphasis. In a side-by-side table, mark the riskier cell, not the "winner".
+## 7. Outline gate
 
-A generated chart (model checker, tooling output) is never pasted as is. Redraw it with only the states the reader needs, in the reader's words, or turn its result into a caption under the outcome matrix. Mermaid renders natively from `<pre class="mermaid">`; `classDef` cannot read CSS variables, so copy the token's literal value there, the one allowed literal colour outside `:root`.
+No HTML before the user approves an outline built from `references/outline-template.md`. Corrections to structure, voice and density cost nothing before a page exists and a rewrite after.
 
-Phone first. At a 400 px viewport every table cell and diagram label reads without a sideways scroll:
-- SVG viewBox at most 560 units wide, labels at 16 units or more, at most 4 boxes in a row. That renders labels near 10 px; an 800-unit viewBox with 11-unit labels renders them at 5 px.
-- Annotations go under the node they describe.
-- Outcome tables reflow into stacked rows below 600 px (kit `.matrix`). Chip labels stay at 3 words or fewer. The decisive cell is the one a scrolled column hides.
+- The outline names the audience and their baseline, the spine from section 2, the ladder from section 3, and a **cut list**: what the page will not contain. Users correct density on the outline; they can only do that if the cuts are visible.
+- At most three questions, each one changing what you build.
+- The user approves without answering: decide, and name the decision in the delivery reply. The user asks to judge only the finished page: write the outline to a file, answer its questions yourself, build.
 
-## 7. Copy
+## 8. Design system
 
-Follow `teach`'s voice: plain sentences, one name per concept, no framing labels. On top of that:
+When the user names a design system, take its colours and fonts; otherwise the quickstart defaults.
 
-Terms
-- Before publishing, list every term a newcomer may not know: the system's own component names, our internal names, third-party products, standard numbers, role names. Gloss each in 3 to 8 words where it first appears, tables included, or delete it. The reader is new to this system, so its own nouns are the jargon.
-- Jargon is a missing reasoning step. "Only the admin can set a delegate" makes the reader ask what that means; say what happens to whom.
+1. Resolve the system's semantic tokens (background, foreground, card, border, muted, primary, status roles with tints) to literal values from its primitives file.
+2. Write them on bare `:root`, light values only, `body` background set. Replace every kit value.
+3. Map status roles to bad, warn, ok, info as tint plus on-tint text. Map `--brand` to the accent that means "ours", not the primary button colour.
+4. Fonts: display face for headings, body face, mono face for labels and code. A face Google Fonts does not host is inlined as a base64 `@font-face`, heading weight only, in the published file itself.
 
-Claims
-- A verdict states a fact and the condition under which it bites, using figures on the page: "a deposit above the remaining cap waits until the cap is raised". Never judge a third party's fitness or scale ("too small for us", "not production-ready") unless our side of the comparison is on the page too. Without it, the judgment is a guess dressed as a finding.
-- Model results appear as outcomes in the reader's words ("retries, then refunds"), never as rule names or "breaks / holds".
-- Promised structure exists. A sentence that says "ranked", "compared" or "in order" points at a list or table that shows the rank.
-- One home per figure: the place where it drives a decision. It may appear once more, in the short answer. Repeated five times, a fact becomes noise.
+Keep the same components and colours across iterations of one page; the user notices when the renderer or the look changes between versions.
 
-Outcome cells and chips
-- Outcome verb-phrases that name what the user gets: "Settles", "Refunds deposit at deadline", "Stuck until unpaused". Not adjectives.
+## 9. Test before publishing
 
-Risk cards
-- Anatomy, in order: title, severity chip, optional gauge, one or two sentences on what we lose, then one `→` mitigation line. Body text in the normal text colour: it is the content, not a caption.
-- Calm, specific titles: "Withdrawals thin at high utilization", not "Bank run".
-- Rate every risk on one scale across alternatives. If one option has far less of something, it cannot share the other option's rating for that risk.
-- Severity matches what the team plans to do. A risk that bites only under a choice the team is not making is Low. If the product call is open, settle it or mark the rating conditional on it. A risk specific to one alternative is rated as if that alternative were chosen and sits in its section.
-- A mitigation is an action our system can take. Trace it through the flow step by step, checking what the system can see and control at that moment; a check on a value the system does not know yet is not a mitigation. Messaging to users ("tell holders…") is a product call and goes to Open decisions as a question.
+Run both checks on every publish that adds or rewrites a section.
 
-Safety and scope
-- Say what stays safe once, where the reader's first fear lives (principal, earnings, user data), as a worked example or twin cards. Scope the claim to the states it holds in. On a risk card, add it only when it lowers the severity a reader would infer.
-- Something the product chose not to do is not a risk. Mention it once, in one sentence, where it is relevant; never as a chip, card, table row or model rule.
+**Cold reader.** Spawn a fresh subagent with no conversation context. Give it the page's visible text and code (not the HTML), plus one line describing the audience from the outline. Ask it to: restate the short answer; restate each section's point in one sentence; list every term it could not define from the page; for a comparison, name what differs between the options. Every miss is a rewrite instruction: fix the page, not the reader. Why: you cannot unknow the context you built the page from; a reader without it is the only test of whether the page teaches.
 
-Open decisions split into Product and Engineering columns. An element that looks clickable (pill, tab, chip) does something; a label that only describes is plain text.
+**Render.** Open the built page in a headless browser before publishing:
+- Zero console errors.
+- Click every tab, toggle, step and fold; each shows content.
+- Screenshot at 400 px and at desktop width and look at both: tables, code blocks, diagram labels, any hidden panel.
+- Never publish a page whose script you have not run, and never splice an old script into a new file; rebuild the script whole.
 
-## 8. Build, publish, verify
+## 10. Build and iterate
 
-- The published file is the only source. Edit it in place and publish with `edits`. A split into template and body files makes the next rebuild silently undo every `edits` publish.
-- Take the one rendered look the quickstart allows and spend it on what breaks most: 400 px width (tables, diagram labels), any hidden tab panel, a stepper's first and last step. Fix what you see, then publish.
-
-## 9. Iterate
-
-- The user asks what a passage means: answer in chat. Edit the page only to fix the framing, keeping the passage the same length or shorter. Do not raise severity or add work items in the same edit.
-- Progressive disclosure repeats a fact in several layers (strip, card, comparison row, open decisions). Before changing a fact, search the page for every layer that states it and send all edits in one publish.
-- Delete an open decision the moment the user answers it.
-- A section from the approved outline that was cut or merged is named in the reply, with where its content went.
-- Tell the user they can comment on a specific card; read those threads with the `ArtifactComments` tool.
+- The published file is the only source. Edit it in place and publish with `edits`. Keep a copy of each published version beside it (`page.v<N>.html`) so a regression can be restored.
+- After a large rewrite, give the cold reader the previous and the new version and ask which teaches better. If the old one wins, restore it and redo the change smaller.
+- The user asks what a passage means: answer in chat. Edit the page only to fix the framing, keeping the passage the same length or shorter.
+- Progressive disclosure repeats a fact across levels (short answer, section, fold, reference). Before changing a fact, search the page for every place it appears and change all of them in one publish.
+- A section from the approved outline that was cut or merged is named in the reply with where its content went.
 - The first delivery reply is the link, the decisions you made for the user, and what you could not verify. Later replies are the link, what changed and any decision needed. Never recap the page in chat.
 
 ## Checklist
 
-- [ ] Figures that drive the recommendation checked by you; contradictions resolved at the source
-- [ ] Structure from the tree in section 2; alternatives share one block order
-- [ ] Outline approved before HTML, or answered in a file when the user judges only the result
-- [ ] Design-system tokens on `:root`, light only, status tints mapped, kit values replaced
-- [ ] Every section: eyebrow, heading, answer sentence, one primary visual, folds
-- [ ] At most 5 risk chips, labelled with severity, ordered
-- [ ] One dated provenance pill; identifiers and sources only in reference folds
-- [ ] Every newcomer term glossed where it first appears
-- [ ] No judgment of a third party's fitness without our side on the page
-- [ ] One severity scale across alternatives; every mitigation traced through the flow
-- [ ] What stays safe said once, scoped; non-goals are one sentence
-- [ ] Rendered at 400 px: every cell and diagram label readable
-- [ ] Reply is link + decisions + what changed; no recap
+- [ ] Every requirement traced to a source; "today" read from the audience's real baseline
+- [ ] Spine from section 2; domain nouns shown before any integration; no decision log on a non-choice page
+- [ ] Ladder L0–L4 holds; L0–L1 use no unknown term; short answer teaches something
+- [ ] `page_stats.py` passes: ≤ 3 sentences per paragraph or caption, < 900 visible words; no sentence turned into a chip
+- [ ] Every comparison shows a real "today" next to "proposed", today selected by default
+- [ ] Every term, type and coined label glossed or shown before use
+- [ ] Every emphasis has a key
+- [ ] Outline approved, with audience, baseline and cut list
+- [ ] Cold reader restated every section and named no undefined term
+- [ ] Rendered: no console errors, every control clicked, 400 px and desktop looked at
+- [ ] Reply is link + decisions + what could not be verified; no recap
