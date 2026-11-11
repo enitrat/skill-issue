@@ -1,14 +1,18 @@
-"""Make Cursor and VS Code open folders in the current window.
+"""Make Cursor and VS Code open each folder as a native macOS tab of the current window.
 
-Both apps write their own settings.json, so this sets one key and leaves the
-rest of the file alone.
+A new window joins the existing window group as a tab because AppleWindowTabbingMode
+is "always" (nix/darwin/default.nix). Both apps write their own settings.json, so this
+sets two keys and leaves the rest of the file alone.
 """
 
 import json
 import os
 import sys
 
-KEY, VALUE = "window.openFoldersInNewWindow", "off"
+SETTINGS = {
+    "window.openFoldersInNewWindow": "on",
+    "window.nativeTabs": True,
+}
 EDITORS = {
     "Cursor": "~/Library/Application Support/Cursor/User/settings.json",
     "VS Code": "~/Library/Application Support/Code/User/settings.json",
@@ -26,10 +30,10 @@ for name, path in EDITORS.items():
         except json.JSONDecodeError as error:
             print(f"[editor-defaults] invalid JSON in {path}: {error}", file=sys.stderr)
             sys.exit(1)
-    if data.get(KEY) == VALUE:
+    if all(data.get(key) == value for key, value in SETTINGS.items()):
         continue
-    data[KEY] = VALUE
+    data.update(SETTINGS)
     with open(path, "w") as f:
         json.dump(data, f, indent=4)
         f.write("\n")
-    print(f"[editor-defaults] {name} reuses its current window")
+    print(f"[editor-defaults] {name} opens folders as tabs")
