@@ -288,7 +288,12 @@ in
     // lib.genAttrs [ "pstack-models.md" "pstack-local.md" ] (name: {
       target = ".claude/rules/${name}";
       source = config.lib.file.mkOutOfStoreSymlink "${repo}/rules/${name}";
-    });
+    })
+    # The global CLAUDE.md, live-linked so an edit in either place needs no switch.
+    // {
+      ".claude/CLAUDE.md".source =
+        config.lib.file.mkOutOfStoreSymlink "${repo}/nix/home/files/claude-global.md";
+    };
 
     # Claude Code rewrites its own settings file, so it cannot be a read-only store
     # link. Each switch copies the repo version over it, keeping the previous one.
