@@ -4,12 +4,15 @@
 # machine entries. Everything else is plain `boat`.
 set -euo pipefail
 
-VERSION="0.13.0"
+VERSION="0.14.0"
 
 # A stopped sandbox older than this is garbage for `bx gc`.
 GC_DAYS=3
 # How long a sandbox from `bx new` stays on before Boat stops it.
 AUTO_STOP_HOURS=4
+# The key every box signs commits with. One key for all boxes, registered on GitHub as a
+# signing key, so a leaked box key is revoked there without touching this Mac's own key.
+SIGNING_KEY=${BX_SIGNING_KEY:-$HOME/.ssh/id_bx_signing}
 # Its sibling, which owns the Tailscale API; ~/.local/bin may not have it yet.
 tailnet=$(dirname "$(readlink -f "$0")")/tailnet
 # Tern is optional. `tern remote setup` cannot fetch the Linux build while this Mac's Tern is
@@ -81,8 +84,16 @@ logins: run /login in omp on the box.
 Before saving, bx removes the known Boat login files and Tailscale state. Setup scripts can
 write other credentials, so review build inputs and snapshot contents before reuse. A sandbox
 from `bx new` gets Boat's agent logins from your
-default Boat environment, plus your `gh auth token` and git name and email, so agents can
-commit, push and open pull requests. Deleting the sandbox deletes them.
+default Boat environment, plus your `gh auth token`, git name and email, and the box signing
+key, so agents can commit signed, push and open pull requests. Deleting the sandbox deletes
+them.
+
+The box signing key is ~/.ssh/id_bx_signing (BX_SIGNING_KEY), one key for every box. `bx new`
+refuses to start a box without it. Create and register it once:
+    ssh-keygen -t ed25519 -N '' -C 'bx boxes' -f ~/.ssh/id_bx_signing
+    gh auth refresh -h github.com -s admin:ssh_signing_key
+    gh ssh-key add ~/.ssh/id_bx_signing.pub --type signing --title 'bx boxes'
+If it leaks, delete it under GitHub's SSH and GPG keys and make a new one.
 
 A snapshot's repo list, ~/.config/bx/<snapshot>, has one owner/repo per line. It stays on this Mac, so private repo names
 never reach this public repository. `bx bake` clones with your `gh auth token`, sent over
@@ -255,8 +266,25 @@ tailnet_join() {
   esac
 }
 
+# Boxes are throwaway, so Claude runs there without prompts: trusted repo roots (a parent
+# folder does not cover a nested repo; $HOME trust is never saved), approved project MCP
+# servers, and bypassPermissions.
+claude_trust() {
+  ssh -o BatchMode=yes "$1" 'set -e
+    f=$HOME/.claude.json
+    [ -s "$f" ] || echo "{}" >"$f"
+    roots=$(find "$HOME" -maxdepth 3 -name .git -not -path "*/.*/*" -printf "%h\n" | jq -R . | jq -sc .)
+    jq --argjson r "$roots" "reduce \$r[] as \$p (.; .projects[\$p].hasTrustDialogAccepted = true)" "$f" >"$f.bx" && mv "$f.bx" "$f"
+    mkdir -p "$HOME/.claude"
+    s=$HOME/.claude/settings.json
+    [ -s "$s" ] || echo "{}" >"$s"
+    jq ".enableAllProjectMcpServers = true | .permissions.defaultMode = \"bypassPermissions\" | .skipDangerousModePermissionPrompt = true" "$s" >"$s.bx" && mv "$s.bx" "$s"' \
+    || log "could not pre-trust Claude on $1; its first start will ask"
+}
+
 new() {
   local snapshot=$1 name=$2 type=$3 id
+  [ -f "$SIGNING_KEY" ] || die "no box signing key at $SIGNING_KEY, so the box's commits would be unsigned. Create and register it once (see bx --help)"
   tern_prune || true
   if ! boat snapshots --json | jq -e --arg n "$snapshot" '.named[] | select(.name == $n)' >/dev/null; then
     die "no snapshot $snapshot. See bx list"
@@ -283,6 +311,8 @@ new() {
     git config -f ~/.gitconfig.local user.name $(printf %q "$(git config user.name)")
     git config -f ~/.gitconfig.local user.email $(printf %q "$(git config user.email)")
   " || die "could not log gh in on $id. Delete: bx rm $id"
+  log "$id: setting up commit signing"
+  signing_setup "$id" || die "could not set up commit signing on $id. Delete: bx rm $id"
   wait_hydrated "$id"
   # Only after the restore: `machine add` starts the box's herdr server, and a server
   # started earlier listens on ~/.config/herdr/herdr.sock inside the FUSE layer that the
@@ -292,10 +322,28 @@ new() {
     || log "herdr machine add failed; run: herdr machine add $id --label $name"
   tailnet_join "$id" "$name"
   omp_config "$id"
+  claude_trust "$id"
   tern_setup "$id" "$name"
   ready_check "$id" "$snapshot" || die "$id is not ready (see above). Inspect: ssh $id. Delete: bx rm $id"
   echo "$id"
   log "ready: ssh $id"
+}
+
+# The key travels on stdin, like the gh token, and lands outside the snapshot's history:
+# a box writes it after its create.
+signing_setup() {
+  ssh -o BatchMode=yes "$1" "
+    set -e
+    mkdir -p ~/.ssh
+    (umask 077; cat > ~/.ssh/bx_signing)
+    ssh-keygen -y -f ~/.ssh/bx_signing > ~/.ssh/bx_signing.pub
+    printf '%s %s\\n' $(printf %q "$(git config user.email)") \"\$(cat ~/.ssh/bx_signing.pub)\" > ~/.ssh/allowed_signers
+    git config -f ~/.gitconfig.local gpg.format ssh
+    git config -f ~/.gitconfig.local user.signingkey \"\$HOME/.ssh/bx_signing.pub\"
+    git config -f ~/.gitconfig.local gpg.ssh.allowedSignersFile \"\$HOME/.ssh/allowed_signers\"
+    git config -f ~/.gitconfig.local commit.gpgsign true
+    git config -f ~/.gitconfig.local tag.gpgsign true
+  " < "$SIGNING_KEY"
 }
 
 # Boat restores a sandbox's disk in the background after `ready`, and what starts during
@@ -325,6 +373,15 @@ ready_check() {
     }
     check 'nix daemon answers' nix_up
     check 'gh is logged in' gh auth status
+    signed_commit() {
+      dir=\$(mktemp -d)
+      git -C \"\$dir\" init -q && git -C \"\$dir\" commit -q --allow-empty -m probe \\
+        && git -C \"\$dir\" verify-commit HEAD
+      ok=\$?
+      rm -rf \"\$dir\"
+      return \$ok
+    }
+    check 'commits are signed' signed_commit
     # find, not a glob: the remote shell is zsh, which fails on a glob that matches
     # nothing, and dev has no ~/dev.
     for repo in \$(find ~/$2 -mindepth 1 -maxdepth 1 -type d 2>/dev/null); do
@@ -452,6 +509,7 @@ resume() {
   # A rejoin can change the tailnet address Tern's host entry holds.
   tern_forget "$id"
   omp_config "$id"
+  claude_trust "$id"
   tern_setup "$id" "$name"
   echo "$id"
   log "ready: herdr --machine $name, or ssh $id"

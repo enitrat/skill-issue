@@ -66,4 +66,10 @@ case "$*" in *"rm -f"*) bash -c "${@: -1}";; esac''')
     assert result.returncode == 0, result.stderr
     assert "boat snapshot bx_build dev" in log.read_text(), log.read_text()
 
+    log.write_text("")
+    result = subprocess.run([str(bin_dir / "bx"), "new", "--snapshot", "dev", "--name", "fresh"], env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0, result.stderr
+    assert "no box signing key" in result.stderr, result.stderr
+    assert "boat new" not in log.read_text(), log.read_text()
+
 print("bx safety checks passed")

@@ -137,10 +137,10 @@ herdr --machine <box> agent prompt <agent-name> "<task>" --wait --timeout 180000
 herdr --machine <box> agent read <agent-name> --source recent-unwrapped --lines 200
 ```
 
-- The first Claude start in a repo on a fresh box stops at the folder-trust dialog:
-  `agent start` returns `agent_not_ready` and `agent prompt` returns `agent_blocked`. Read it
-  with `agent read`, then ask the user before answering it. Any dialog that blocks an agent is
-  the user's decision, never yours.
+- `bx new` and `bx resume` set Claude up on the box to run without prompts: each snapshot repo
+  trusted, project `.mcp.json` servers approved, `bypassPermissions` on. A repo cloned later
+  still asks for trust. On an older box, run `bx resume <box>`. Any other dialog that blocks an
+  agent (`agent_not_ready`, `agent_blocked`) is the user's decision: `agent read` it and ask.
 - Read the agent's reply before it exits. Claude draws in the terminal's alternate screen, so
   after `/exit` its output is gone from the pane's scrollback.
 - One agent per pane. A second agent or command on the same box gets its own pane:
