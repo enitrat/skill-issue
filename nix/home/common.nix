@@ -299,8 +299,19 @@ in
     # link. Each switch copies the repo version over it, keeping the previous one.
     home.activation.claudeSettings =
       let
+        # This repo's plugins/ marketplace lives in the checkout, whose path differs per machine.
+        localPlugins = {
+          extraKnownMarketplaces.skill-issue.source = {
+            source = "directory";
+            path = "${repo}/plugins";
+          };
+          enabledPlugins."thermos@skill-issue" = true;
+        };
         settings = (pkgs.formats.json { }).generate "claude-settings.json" (
-          lib.recursiveUpdate (lib.importJSON ./files/claude-settings.json) config.skillIssue.claudeSettings
+          lib.foldl' lib.recursiveUpdate (lib.importJSON ./files/claude-settings.json) [
+            localPlugins
+            config.skillIssue.claudeSettings
+          ]
         );
       in
       lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -312,8 +323,8 @@ in
         fi
       '';
 
-    # The settings above enable pstack@cursor-plugins, which does nothing until the
-    # plugin is downloaded. By store path: activation runs with a fixed PATH, which
+    # The settings above enable pstack@cursor-plugins and thermos@skill-issue, which do
+    # nothing until installed. By store path: activation runs with a fixed PATH, which
     # also lacks the git that `marketplace add` clones with.
     home.extraActivationPath = [ pkgs.git ];
     home.activation.claudePlugins = lib.hm.dag.entryAfter [ "claudeSettings" ] ''
@@ -323,6 +334,12 @@ in
         run "$claude" plugin marketplace add cursor/plugins || true
         run "$claude" plugin install pstack@cursor-plugins --scope user \
           || echo "pstack plugin install failed; re-run the switch when online" >&2
+      fi
+      if ! ${lib.getExe pkgs.jq} -e '.plugins["thermos@skill-issue"]' \
+        "$HOME/.claude/plugins/installed_plugins.json" >/dev/null 2>&1; then
+        run "$claude" plugin marketplace add ${repo}/plugins || true
+        run "$claude" plugin install thermos@skill-issue --scope user \
+          || echo "thermos plugin install failed; re-run the switch" >&2
       fi
     '';
 

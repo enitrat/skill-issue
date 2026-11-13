@@ -41,6 +41,7 @@ check "rg: config file in use" test -r "$RIPGREP_CONFIG_PATH"
 check "repo tools linked" test -x ~/.local/bin/git-id
 check "claude: repo skills installed" test -r ~/.claude/skills/bx-boxes/SKILL.md
 check "claude: pstack plugin installed" jq -e '.plugins["pstack@cursor-plugins"]' ~/.claude/plugins/installed_plugins.json
+check "claude: thermos plugin installed" jq -e '.plugins["thermos@skill-issue"]' ~/.claude/plugins/installed_plugins.json
 check "claude: pstack rules linked" test -r ~/.claude/rules/pstack-models.md -a -r ~/.claude/rules/pstack-local.md
 if [[ $OSTYPE == darwin* ]]; then
     # Herdr UI's phone remote and its device list reach this Mac through Tailscale.

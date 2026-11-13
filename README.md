@@ -72,6 +72,17 @@ every pstack role to Opus at medium effort (rewrite it with `/pstack:setup-pstac
 (design engineering, animation, Apple design, mobile/Swift, UI library picker).
 `make emil-sync` refreshes it; `plugins/emil/UPSTREAM` pins the commit.
 
+`plugins/thermos/` vendors Cursor's
+[Thermos](https://github.com/cursor/plugins/tree/main/thermos) review plugin
+(`/thermos:thermos`, `/thermos:thermo-nuclear-review`,
+`/thermos:thermo-nuclear-code-quality-review`). Upstream ships only a Cursor
+manifest, so `make thermos-sync` adds `.claude-plugin/plugin.json` and applies
+`plugins/thermos/claude-code.patch`: namespaced subagent types, Agent-tool
+orchestration, and model-invocable rubric skills the subagents load. A patch
+that no longer applies fails the sync and leaves the vendored copy as it was.
+Unlike emil it is on by default: the switch adds this marketplace and enables
+`thermos@skill-issue`. After a sync, run `claude plugin update thermos@skill-issue`.
+
 ## How It Fits Together
 
 | Area | Source of truth | Applied by | Target |

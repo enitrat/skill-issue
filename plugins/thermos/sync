@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Vendors Cursor's Thermos plugin (cursor/plugins, thermos/) for Claude Code.
+# Upstream ships only a Cursor manifest, so this writes .claude-plugin/plugin.json
+# and applies claude-code.patch. Usage: plugins/thermos/sync [ref]
+set -euo pipefail
+
+ref="${1:-main}"
+here="$(cd "$(dirname "$0")" && pwd)"
+tmp="$(mktemp -d "$here/.sync.XXXXXX")"
+managed=(.claude-plugin skills agents LICENSE README.md UPSTREAM)
+cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    for name in "${managed[@]}"; do
+      if [ -e "$tmp/old-$name" ] || [ -L "$tmp/old-$name" ]; then
+        if ! rm -rf "${here:?}/${name:?}" || ! mv "$tmp/old-$name" "$here/$name"; then
+          echo "Could not restore $name; backup remains in $tmp" >&2
+          return
+        fi
+      elif [ -e "$tmp/published-$name" ]; then
+        if ! rm -rf "${here:?}/${name:?}"; then
+          echo "Could not remove $name; staged files remain in $tmp" >&2
+          return
+        fi
+      fi
+    done
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+git clone -q --depth 1 --filter=blob:none --sparse --branch "$ref" https://github.com/cursor/plugins "$tmp/repo"
+git -C "$tmp/repo" sparse-checkout set thermos
+src="$tmp/repo/thermos"
+mkdir "$tmp/stage"
+cp -R "$src/skills" "$src/agents" "$src/LICENSE" "$src/README.md" "$tmp/stage/"
+mkdir "$tmp/stage/.claude-plugin"
+jq '{name, version, description, author, homepage, repository, license, keywords}' \
+  "$src/.cursor-plugin/plugin.json" > "$tmp/stage/.claude-plugin/plugin.json"
+if [ -f "$here/claude-code.patch" ]; then
+  patch -s -p1 --no-backup-if-mismatch -d "$tmp/stage" < "$here/claude-code.patch"
+fi
+git -C "$tmp/repo" rev-parse HEAD > "$tmp/stage/UPSTREAM"
+
+for name in "${managed[@]}"; do
+  if [ -e "$here/$name" ] || [ -L "$here/$name" ]; then mv "$here/$name" "$tmp/old-$name"; fi
+  touch "$tmp/published-$name"
+  mv "$tmp/stage/$name" "$here/$name"
+done
+echo "thermos @ $(cat "$here/UPSTREAM")"

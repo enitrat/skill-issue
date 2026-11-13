@@ -1,0 +1,126 @@
+diff -ruN a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -4,10 +4,14 @@
+ 
+ ## Installation
+ 
++Vendored for Claude Code from the `skill-issue` marketplace:
++
+ ```bash
+-/add-plugin thermos
++claude plugin install thermos@skill-issue
+ ```
+ 
++Skills and agents are namespaced: `/thermos:thermos`, `/thermos:thermo-nuclear-review`, `thermos:thermo-nuclear-review-subagent`.
++
+ ## Architecture
+ 
+ ```mermaid
+@@ -56,7 +60,7 @@
+ **Double review (thermos):**
+ 
+ 1. Gather `git diff main...HEAD` and full contents of changed files.
+-2. Invoke both subagents in one message with `run_in_background: true`.
++2. Invoke both subagents with two Agent calls in one message.
+ 3. Synthesize prioritized, deduped findings.
+ 
+ **Single skill:** invoke `thermo-nuclear-review` or `thermo-nuclear-code-quality-review` in the main agent, or the matching subagent after gathering diff context.
+diff -ruN a/agents/thermo-nuclear-code-quality-review-subagent.md b/agents/thermo-nuclear-code-quality-review-subagent.md
+--- a/agents/thermo-nuclear-code-quality-review-subagent.md
++++ b/agents/thermo-nuclear-code-quality-review-subagent.md
+@@ -1,15 +1,15 @@
+ ---
+ name: thermo-nuclear-code-quality-review-subagent
+-description: Thermo-nuclear code quality audit (maintainability, structure, 1k-line rule, spaghetti, code-judo). Invoked via Task after a parent gathers diff and file contents. Loads rubric from the thermo-nuclear-code-quality-review skill in the Thermos plugin.
++description: Thermo-nuclear code quality audit (maintainability, structure, 1k-line rule, spaghetti, code-judo). Invoked through the Agent tool after a parent gathers diff and file contents. Loads rubric from the thermo-nuclear-code-quality-review skill in the Thermos plugin.
+ ---
+ 
+ # Thermo-Nuclear Code Quality Review
+ 
+-You are a **Task subagent**. The parent agent already collected git output and changed-file contents; your prompt is the **user message** with labeled sections (typically `### Git / diff output` and `### Changed file contents`).
++You are a **subagent**. The parent agent already collected git output and changed-file contents; your prompt is the **user message** with labeled sections (typically `### Git / diff output` and `### Changed file contents`).
+ 
+ ## Rubric
+ 
+-1. Load the `thermo-nuclear-code-quality-review` skill (shipped in the Thermos plugin) and treat its `SKILL.md` as the **complete** rubric — tone, approval bar, output ordering, code-judo / 1k-line / spaghetti rules.
++1. Load the `thermos:thermo-nuclear-code-quality-review` skill with the Skill tool and treat its `SKILL.md` as the **complete** rubric — tone, approval bar, output ordering, code-judo / 1k-line / spaghetti rules.
+ 2. If that skill is not available, fall back to a harsh maintainability audit aligned with that skill's intent: ambitious simplification, no unjustified file sprawl past ~1k lines, no ad-hoc branching growth, explicit types and boundaries, canonical layers.
+ 
+ ## Work
+@@ -20,4 +20,4 @@
+ 
+ ## Parent orchestration
+ 
+-Typical flow: in **one** message, run two `Task` calls in parallel — `subagent_type: "shell"` and `subagent_type: "explore"` — to collect `git diff <base>...HEAD` output and full contents of changed files (default base `main`). Then invoke this agent with `subagent_type: "thermo-nuclear-code-quality-review-subagent"` and a user prompt containing `### Git / diff output` and `### Changed file contents`.
++Typical flow: the parent runs `git diff <base>...HEAD` (default base `main`) and reads the changed files, then invokes this agent through the Agent tool with `subagent_type: "thermos:thermo-nuclear-code-quality-review-subagent"` and a prompt containing `### Git / diff output` and `### Changed file contents`.
+diff -ruN a/agents/thermo-nuclear-review-subagent.md b/agents/thermo-nuclear-review-subagent.md
+--- a/agents/thermo-nuclear-review-subagent.md
++++ b/agents/thermo-nuclear-review-subagent.md
+@@ -1,15 +1,15 @@
+ ---
+ name: thermo-nuclear-review-subagent
+-description: Thermo-nuclear branch audit (bugs, breaking changes, security, devex, feature-flag leaks) scoped to the diff. Invoked via Task after a parent gathers diff and file contents. Loads rubric from the thermo-nuclear-review skill in the Thermos plugin.
++description: Thermo-nuclear branch audit (bugs, breaking changes, security, devex, feature-flag leaks) scoped to the diff. Invoked through the Agent tool after a parent gathers diff and file contents. Loads rubric from the thermo-nuclear-review skill in the Thermos plugin.
+ ---
+ 
+ # Thermo Nuclear Review (Deep review)
+ 
+-You are a **Task subagent**. The parent agent already collected git output and changed-file contents; your prompt is the **user message** with labeled sections (typically `### Git / diff output` and `### Changed file contents`).
++You are a **subagent**. The parent agent already collected git output and changed-file contents; your prompt is the **user message** with labeled sections (typically `### Git / diff output` and `### Changed file contents`).
+ 
+ ## Rubric
+ 
+-1. Load the `thermo-nuclear-review` skill (shipped in the Thermos plugin) and follow its `SKILL.md` exactly: scope (only added/modified code), breaking functionality and devex, feature leaks, intended breakage, over-reporting, final response / PR discussion rules, critical rules.
++1. Load the `thermos:thermo-nuclear-review` skill with the Skill tool and follow its `SKILL.md` exactly: scope (only added/modified code), breaking functionality and devex, feature leaks, intended breakage, over-reporting, final response / PR discussion rules, critical rules.
+ 2. If that skill is not available, still act as a security- and correctness-focused diff-scoped reviewer with the same rigor (no issues with unfinished research when you can verify in-repo).
+ 
+ ## Work
+@@ -25,4 +25,4 @@
+ 
+ ## Parent orchestration
+ 
+-Typical flow: in **one** message, run two `Task` calls in parallel — `subagent_type: "shell"` and `subagent_type: "explore"` — to collect `git diff <base>...HEAD` output and full contents of changed files (default base `main`). Then invoke this agent with `subagent_type: "thermo-nuclear-review-subagent"` and a user prompt containing `### Git / diff output` and `### Changed file contents`.
++Typical flow: the parent runs `git diff <base>...HEAD` (default base `main`) and reads the changed files, then invokes this agent through the Agent tool with `subagent_type: "thermos:thermo-nuclear-review-subagent"` and a prompt containing `### Git / diff output` and `### Changed file contents`.
+diff -ruN a/skills/thermo-nuclear-code-quality-review/SKILL.md b/skills/thermo-nuclear-code-quality-review/SKILL.md
+--- a/skills/thermo-nuclear-code-quality-review/SKILL.md
++++ b/skills/thermo-nuclear-code-quality-review/SKILL.md
+@@ -1,7 +1,6 @@
+ ---
+ name: thermo-nuclear-code-quality-review
+ description: Run an extremely strict maintainability review for abstraction quality, giant files, and spaghetti-condition growth. Use for a thermo-nuclear code quality review, thermonuclear review, deep code quality audit, or especially harsh maintainability review.
+-disable-model-invocation: true
+ ---
+ 
+ # Thermo-Nuclear Code Quality Review
+diff -ruN a/skills/thermo-nuclear-review/SKILL.md b/skills/thermo-nuclear-review/SKILL.md
+--- a/skills/thermo-nuclear-review/SKILL.md
++++ b/skills/thermo-nuclear-review/SKILL.md
+@@ -1,7 +1,6 @@
+ ---
+ name: thermo-nuclear-review
+ description: Comprehensive security and correctness audit of a branch's changes. Use for thermo nuclear, thermonuclear, or deep review requests, or branch/PR diff audits focused on bugs, breaking changes, security issues, devex regressions, and feature-gate leaks.
+-disable-model-invocation: true
+ ---
+ 
+ # Thermo Nuclear Review
+diff -ruN a/skills/thermos/SKILL.md b/skills/thermos/SKILL.md
+--- a/skills/thermos/SKILL.md
++++ b/skills/thermos/SKILL.md
+@@ -11,11 +11,11 @@
+ ## Workflow
+ 
+ 1. Determine the review scope from the user request, PR, current branch, or relevant changed files.
+-2. Gather the diff and any file/context excerpts needed for reviewers to evaluate the change without guessing.
+-3. Launch both subagents in the same message with `run_in_background: true`:
+-   - `subagent_type: "thermo-nuclear-review-subagent"` for bugs, breakages, security, devex regressions, feature-flag leaks, and other branch-audit risks.
+-   - `subagent_type: "thermo-nuclear-code-quality-review-subagent"` for maintainability, structure, file-size growth, spaghetti, abstractions, and codebase-health risks.
+-4. Pass each subagent the same scoped diff/file context and ask it to return prioritized findings with file references and evidence.
++2. Gather the diff and any file/context excerpts needed for reviewers to evaluate the change without guessing. Run `git diff <base>...HEAD` (default base `main`) and read the changed files yourself.
++3. Launch both subagents with two Agent calls in the same message:
++   - `subagent_type: "thermos:thermo-nuclear-review-subagent"` for bugs, breakages, security, devex regressions, feature-flag leaks, and other branch-audit risks.
++   - `subagent_type: "thermos:thermo-nuclear-code-quality-review-subagent"` for maintainability, structure, file-size growth, spaghetti, abstractions, and codebase-health risks.
++4. Pass each subagent the same scoped diff/file context, under `### Git / diff output` and `### Changed file contents` headings, and ask it to return prioritized findings with file references and evidence.
+ 5. After both finish, synthesize the results with findings first, deduplicated across reviewers. Weight overlapping findings more heavily, resolve disagreements with your own judgment, and keep summaries brief.
+ 
+ If individual background summaries are already visible to the user, do not restate them wholesale. Surface the unified verdict, the highest-signal findings, and any remaining uncertainty.

@@ -8,6 +8,11 @@
       "name": "emil",
       "source": "./emil",
       "description": "Emil Kowalski's skills (emilkowal.ski/skill), vendored: design engineering, animation, Apple design, mobile/Swift, UI library picking."
+    },
+    {
+      "name": "thermos",
+      "source": "./thermos",
+      "description": "Cursor's Thermos plugin, vendored and adapted for Claude Code: thermo-nuclear correctness/security and code-quality branch reviews, run in parallel by /thermos:thermos."
     }
   ],
   "metadata": {

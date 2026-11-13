@@ -1,4 +1,4 @@
-.PHONY: skill-install skill-update skill-list codex-setup emil-sync
+.PHONY: skill-install skill-update skill-list codex-setup emil-sync thermos-sync
 
 skill-install:
 	./scripts/install-skills --yes
@@ -16,3 +16,6 @@ codex-setup:
 
 emil-sync:
 	./plugins/emil/sync
+
+thermos-sync:
+	./plugins/thermos/sync
