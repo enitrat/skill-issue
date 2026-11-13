@@ -1,197 +1,211 @@
 ---
 name: comments-best-practices
 description:
-  Guide for deciding when to keep, write, rewrite, or delete code comments and JSDoc. Use when
-  writing new comments, reviewing comments in a PR, or cleaning up commentary in existing code.
-  Trigger for "should I comment this", "review these comments", "is this comment necessary", "clean
-  up comments", "write jsdoc", "document this function".
+  Strict procedure for classifying every code comment and JSDoc/TSDoc block as delete, move, encode,
+  rewrite or keep, based on where the comment sits (field, type, function, parameter, inline) and
+  what that location is allowed to say. Use when writing new comments, reviewing comments in a PR or
+  a file, or cleaning up commentary. Trigger for "should I comment this", "review these comments",
+  "is this comment necessary", "clean up comments", "write jsdoc", "document this function".
 ---
 
-# Comments Are Deodorant
+# Comments
 
-Kevlin Henney: "Comments are deodorant for stinky code." A comment that exists to make confusing
-code bearable is not documentation — it's a mask over a defect. The defect is still there. Robert C.
-Martin goes further: "Comments are, at best, a necessary evil... every comment represents a failure
-to express ourselves in code." Don't comment bad code — rewrite it.
+A comment is unenforced prose next to code that changes. Nothing keeps it true. The default verdict
+for any comment is **delete**; a comment stays only when it passes every step below.
 
-A comment is untyped, unexecuted, unenforced prose sitting next to code that keeps changing. Nothing
-about it stays true unless something forces it to. That's the whole risk profile: every comment you
-write is a claim that will silently rot the first time the code around it changes and nobody
-remembers to update the sentence.
+The failure this skill exists to stop is **context in the wrong place**: a true sentence attached to
+a symbol it does not describe. A field doc that explains a mechanism, or a type doc that says what
+some operation does to the value, is wrong even when every word is accurate. It goes stale the day
+that other code changes, and nobody editing that code will find it.
 
-## The litmus test
+## Procedure
 
-Three independent sources — Ousterhout ("comments should describe things that aren't obvious from
-the code"), the Linux kernel style guide ("say what the code does, not how"), and Martin's
-"redundant comment" smell — converge on one test. Read the comment. Read the code. **If the comment
-adds zero information the code doesn't already give you, delete it.** This is not a judgment call to
-agonize over; it's mechanical. `i++; // increment i` fails it. So does `// loop over items` above a
-for-loop. So does a paragraph explaining what a well-named function obviously does.
+Run this for every comment in scope, one comment at a time. Step 1 judges the whole comment. Steps
+2 to 6 judge **each clause separately**: split the comment into clauses first, and for each clause
+stop at the first step that gives a verdict.
 
-A comment only earns its place past this test if it does one of two things (refactoring.guru's
-carve-out, the sharpest boundary found across all sources):
+```
+1. Tool directive, `@internal`-style tag, license header or codegen banner? → LEAVE, do not edit
+2. Restates the name, the type, the signature or the next line?             → DELETE the clause
+3. History, design process, or a pointer to a doc or ticket?                → DELETE the clause
+4. Is the subject of the clause THIS symbol?
+   └── No → the clause is foreign: MOVE it to its home (table below)
+5. Is the clause on the whitelist for this location?
+   └── No → DELETE the clause
+6. Does a name, a type or `readonly` already state it to the caller?
+   └── Yes → DELETE the clause. If a rename or a narrower type would state it, make that
+             change and DELETE the clause
+7. Clauses are left → REWRITE the comment from them, within the length cap.
+   No clause is left → DELETE the comment. Never invent replacement text.
+```
 
-1. Explains **why** this approach was chosen over the obvious alternative — rationale the code
-   cannot carry no matter how well it's named.
-2. Explains a genuinely complex algorithm **after every simplification has already been tried and
-   failed** — not as a substitute for trying.
+A clause **restates** when removing it leaves a reader of the declaration knowing exactly as much:
+`/** The batch id. */` on `batchId`, `/** Options for send. */` on `SendOptions`.
 
-If a comment doesn't clear one of those two bars, it's deodorant. Cut it, and if the surrounding
-code is what made the comment feel necessary, fix the code instead: extract a variable, extract a
-method, rename, add an assertion for the implicit rule the comment was trying to state in prose. The
-comment text is often the method name you're missing — "`# creating report` / `# sending report`"
-above two blocks is a signal to extract `createReport()` / `sendReport()`, not to keep the comments.
+Step 4 is the one agents skip. Do it literally: write the clauses out and name the subject of each.
+The subject is the head noun the clause is about, so "the batch each leg landed in" is about the
+batch and is not foreign.
 
-## Delete on sight — named anti-patterns
+Step 6 counts only what the caller sees in the declaration. A runtime assertion or a test does not
+state anything to a caller, so a valid range still belongs in the field doc.
 
-Recognize these by name; each is a specific, well-documented failure mode, not a style nit. When you
-find one, remove it — don't ask permission, don't soften it into a shorter version of itself:
+## Whitelist by location
 
-| Anti-pattern             | What it looks like                                                                                                                                                                                         |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Parrot / redundant**   | Restates exactly what the next line does. The most common offender by volume.                                                                                                                              |
-| **Mumbling**             | Vague, unclear, written to satisfy a rule rather than to inform. Worse than no comment.                                                                                                                    |
-| **Misleading**           | No longer true. Actively dangerous — a reader trusts it and gets burned.                                                                                                                                   |
-| **Rotting**              | Was true once; the code around it changed and nobody updated the sentence. Same danger as misleading — assume any unenforced claim about behavior has already rotted until you verify it against the code. |
-| **Journal / changelog**  | "Previously we...", "renamed from...", dated changelog entries. Git already owns history.                                                                                                                  |
-| **Mandated / noise**     | Exists only because a rule says every function/getter needs one. Adds nothing.                                                                                                                             |
-| **Position markers**     | `////////////////` banners. Rarely earn their visual weight.                                                                                                                                               |
-| **Closing-brace**        | `} // end if`. The real signal is that the function is too long to read without one.                                                                                                                       |
-| **Attribution/byline**   | "Added by John" — `git blame` does this better and never goes stale.                                                                                                                                       |
-| **Commented-out code**   | Dead code kept "just in case." Delete it — version control remembers, the file shouldn't.                                                                                                                  |
-| **Nonlocal reference**   | Describes something far away in the system; invalidated by a change the reader can't see.                                                                                                                  |
-| **Stale doc/issue link** | Dead ticket refs, `§section` pointers into docs that move or get archived.                                                                                                                                 |
+A clause not listed for its location does not belong there, however useful it is.
 
-## Keep or rewrite — comments that clear the bar
+### Field or property
 
-Keep, and if verbose, tighten to one or two present-tense sentences placed directly beside the
-decision they protect (distance breeds drift):
+Allowed, as a noun phrase about the value:
 
-- **Intent / rationale** — why this approach over the obvious alternative.
-- **Non-obvious constraints** — API quirks, spec bugs, ordering requirements, race conditions,
-  precision/timezone caveats.
-- **Business rules** invisible in the code path.
-- **Workarounds**, with enough context to know when it's safe to remove.
-- **Safety/security rationale** — why something is deliberately omitted or guarded.
-- **Performance tradeoffs** a future maintainer could plausibly and reasonably break.
-- **Warnings of consequence** — "must run before X", "not thread-safe", "takes 3 hours".
-- **Legal/license headers** and **codegen banners** — different category, see "Never touch" below.
+- what the value means, when the name does not say it
+- its unit (`in wei`, `in chain seconds`)
+- its valid values or range
+- its default (`@defaultValue`)
+- what `null`, `undefined` or empty means
+- its relation to a sibling field of the same type
+- for a callback: when it is called and with what
 
-If a comment carries real intent but leans on **cryptic private shorthand** (internal rule codes
-like `R1`/`R2`, doc-section refs like `§W.6`), rewrite it to restate the actual reasoning inline so
-it survives without the external doc — don't just delete it because it's terse.
+A value defined by an event is still described as a value. Write "the time after which the batch
+can no longer settle", never "finalizing after this cancels the batch".
 
-## JSDoc / TSDoc
+Never:
 
-The compiler already owns types — Effective TypeScript's rule: "nothing stays in sync unless it's
-forced to." A type annotation is forced to stay correct by the type checker; a `@param {number}` tag
-is not, and _will_ eventually lie about a signature that changed. Google's TypeScript style guide
-draws the same line structurally: `/** */` is API documentation for the consumer, parsed by tooling;
-`//` is implementation commentary for the next human reader. Keep them doing different jobs.
+- what any function does with, to or after the value
+- why the value exists or why it has a constraint
+- an instruction to the caller ("send these first", "store this")
+- who produces or consumes it
 
-JSDoc is a **consumer contract**: it tells someone calling the symbol _what it is_ and _how to use
-it_. It is not a place for design narrative, self-justification, project history, or a walkthrough
-of the implementation. A consumer never needs to know why v1 is "deliberately narrow" or what got
-"removed" — that's inward-facing yapping; delete it.
+**A field whose name and type say it gets no comment.** Cap: one sentence.
 
-**Do:**
+Why: a field is data. Its behaviour lives in the operations that touch it, and each of those has its
+own doc. A reader hovering a field wants to know what it holds, nothing else.
 
-- Document an exported symbol **only when its name and types don't already convey how to call it.**
-  A public boundary does not auto-earn a doc. An added doc that restates the signature is mandated
-  noise — don't write it, and delete it where it exists.
-- When a doc IS warranted, write **one line**: what the thing is / how a consumer uses it — never
-  its internal steps. "Adapts an Executable into a bearer-gated, budget-bounded Vercel cron handler"
-  — not a four-clause tour of the auth → budget → status → boot-failure pipeline.
-- Use `@param name description` / `@returns description` — description only, never the type.
-- Use structured tags where they add real signal: `@remarks`, `@example`, `@deprecated` (with a
-  migration path), `@throws`, `@see`/`{@link}`, `@internal`/`@beta`, `@typeParam`.
+### Type, interface, class or constant
 
-**Don't:**
+Allowed: what one instance represents. One sentence. For a union of literals, one line per member
+saying what that member means.
 
-- **Never repeat a type in JSDoc.** `@param {number} value` duplicates what the signature already
-  guarantees and rots the moment the signature changes without the tag being touched. Write
-  `@param value the value to clamp`, not `@param {number} value`. If you find a `{type}` in a
-  `@param`/`@returns` tag, strip just the braces and keep the description.
-- **Don't re-encode a keyword the language already states** — no `@private` on a `private` member,
-  no `@enum` on an `enum`. The keyword is enforced; the tag isn't, so it's the one that goes stale.
-- **Don't push a fact into a comment that a type could carry instead.** `// does not modify nums` →
-  type the parameter `readonly number[]`. A variable named for what it obviously is
-  (`ageNum: number`) doesn't also need a comment restating its type.
-- **Don't add JSDoc to trivial internal helpers** whose name and types already say everything.
-- **Don't let `@param`/`@returns` restate the obvious** — no `@returns the result`.
+Never:
 
-## Bias hard toward deletion — worked examples
+- "What `x()` returns", "What `x()` takes", "Options for `x()`". The signature of `x` already says so,
+  and the comment breaks when `x` is renamed.
+- which operations create, change or consume it
+- lifecycle narration that belongs to those operations
 
-The default outcome of reviewing a comment is **deletion**. Keeping is the exception you have to
-justify, and the justification bar is high. When in doubt, cut. These worked examples set the
-calibration — match this severity, not a gentler version of it.
+Why: the same type is reached from many call sites. A doc phrased around one of them is wrong at the
+others.
 
-**Internal design rationale is not a keep-worthy "why".** The litmus test keeps rationale the code
-can't carry — but that means an _external_ constraint that would bite a maintainer (a third-party
-API quirk, a spec bug, an indexing footgun), **not** a story about how you designed this module.
-"Deliberately narrow", "the single policy knob", "removed from v1", "a deliberate cliff, not a hooks
-layer", "TESTING SEAM: …" all describe your own design process. Delete them. Git and design docs own
-that history; the code does not.
+### Function or method (the doc comment)
 
-**Encodable contracts go into types and tests, not prose.** If an invariant can be expressed as a
-type, a `readonly`, a `never` error channel, or a test assertion, encode it there and delete the
-sentence. Prose invariants rot; enforced ones can't. A block like
-`INVARIANTS (callers may rely on these): 1. execute never fails …` is not a contract — it's a
-contract's shadow. The real contract is the `never` channel and the test that asserts ordering.
+Allowed:
 
-**Even a legitimate footgun gets one line.** When a constraint genuinely can't be encoded and would
-cause a silent bug if a maintainer "simplified" it, name the hazard in a single line. Do not explain
-the full mechanism in the comment — that reasoning, if it's worth keeping at all, lives in a design
-doc, not beside the code.
+- a verb-phrase summary: what it returns, or what it does that the caller can observe
+- preconditions the caller must meet
+- `@throws`, one per error type, each with the condition that raises it
+- `@param` / `@returns` only when they add meaning beyond the name and type; never a type
+- `@example`, when the signature alone does not show how to call it: a generic that infers from its
+  argument, an overload set, a builder. Each example must run on its own
 
-**Never cite outside documentation, and avoid naming other code.** A comment must not link to or
-cite external docs — no URLs, ticket refs, ADR numbers, `CONTEXT.md`/`ARCHITECTURE.md §` pointers,
-spec section numbers. If such a comment carries real reasoning, restate that reasoning inline so it
-survives without the doc; if the citation _is_ the content, delete the comment. Likewise avoid
-referring to other functions, symbols, test names, or files by name — they go stale on any
-rename/move and turn the comment misleading. Rephrase to describe the local behavior directly. The
-only cross-references that may stay are ones that don't rot on an internal rename: a stable external
-API (viem types, an on-chain revert name), a stable public endpoint path, or a tooling-maintained
-`{@link}` — and even then only when load-bearing.
+Never:
 
-| DON'T (delete or collapse)                                                                                                                                                                                                                                      | DO (what survives)                                                                                                         |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `/** Resolves incentive phases into a drip schedule, converting phase days to seconds. */` above `buildDripSchedule(phases): DripSchedule`                                                                                                                      | _(nothing — the name and return type already say it)_                                                                      |
-| A 17-line header explaining what a subgraph is, the total-order cursor mechanics, and that responses are validated                                                                                                                                              | `/** Compound (blockNumber, id) cursor — a plain blockNumber_gt cursor silently drops rows in multi-checkpoint blocks. */` |
-| `/** Build a Vercel cron handler …: fail-closed bearer auth, an optional liveness ping, the run bounded by the budget, then the graded report mapped to a status (failed → 500, else 200). A boot failure crosses the wire as the canonical aborted report. */` | `/** Adapts an Executable into a bearer-gated, budget-bounded Vercel cron handler. */`                                     |
-| `INVARIANTS (callers may rely on these): 1. execute never fails … 2. one report per item …`                                                                                                                                                                     | _(nothing — encode in the `never` channel + a test)_                                                                       |
-| A module header narrating "deliberately narrow", "the single policy knob", "removed from v1: recover, numeric concurrency, …"                                                                                                                                   | _(nothing — delete the whole block)_                                                                                       |
+- how it works: the algorithm, the order of internal calls, what it caches
+- why it was designed this way
+- what another function does, or what the caller usually does next
+- a second copy of the doc on an overload or an override; document the first, and on the others say
+  only what differs
 
-**Already at the floor — keep as-is.** These clear the bar because they name an external constraint
-in one line and can't be encoded:
+Cap: one summary sentence, plus at most two sentences of contract.
 
-- `/** node's crypto.randomInt requires the range span to stay below 2^48. */`
-- `// EdDSA signs with no digest; ECDSA/RSA need sha256 — without normalizePem a flattened key fails BAD_END_LINE.`
+Why: the doc comment is the caller's contract. A caller must be able to call the function correctly
+without reading its body, and needs nothing about the body.
 
-## Never touch these
+### Inline `//` comment
 
-Load-bearing directive comments are not prose — leave them exactly as-is, they are read by tooling,
-not just humans:
+Allowed: one hazard a maintainer would trigger by "simplifying" the line below it. An external
+constraint (an API quirk, a spec bug, an ordering requirement), a security or privacy reason, a
+performance trap.
 
-- `eslint-disable`, `oxlint-disable`, `biome-ignore`, `prettier-ignore`
-- `@ts-expect-error`, `@ts-ignore`, `@ts-check`
-- `"use client"` / `"use server"` pragmas
-- Codegen banners (`DO NOT EDIT`, `generated`) and license headers
+Never: what the code does, a section label, a summary of the block.
 
-## Reviewing existing comments
+Cap: one line, directly above the line it protects. If it needs a second line, the code is unclear:
+extract a named function or variable and delete the comment.
 
-Walk every comment in the file or diff and classify it against the litmus test and the anti-pattern
-table above — no comment gets a pass by default. For each one: does it clear one of the two bars? If
-not, name which anti-pattern it is and delete it (fixing the underlying code if that's what made it
-feel necessary). If it clears the bar but is verbose or cryptic, rewrite it in place. Done means
-every comment in scope has been classified and every deletion actually removed from the file — not
-summarized as "mostly fine."
+Why: "what" is the code's job and rots first. "Why not the obvious way" is the only thing the code
+cannot say.
 
----
+### File or module header
 
-_Sources: Ousterhout, "A Philosophy of Software Design" (comment red flags, interface vs.
-implementation comments); Martin, "Clean Code" ch. 4 (good/bad comment taxonomy); Linux kernel
-coding-style.rst §8 (comments); Kevlin Henney ("Comments are deodorant for stinky code");
-refactoring.guru "Comments" smell; Google TypeScript Style Guide; Effective TypeScript, Item 30
-("Don't Repeat Type Information in Documentation"); Google engineering practices (review-comment
-promotion, TODO ownership)._
+None, apart from a license header.
+
+## Where a foreign clause goes
+
+| The clause says                                      | Its home                                           |
+| ---------------------------------------------------- | -------------------------------------------------- |
+| what operation X does to this value                  | the doc of X                                       |
+| when an error is raised                              | `@throws` on the function that raises it           |
+| a rule the value always obeys                        | a type, `readonly`, an assertion, or a test        |
+| why the code is written this way, for a maintainer   | one `//` line above the code                       |
+| why the design is this way, alternatives, trade-offs | the PR or a design doc. Not the code               |
+| how to use this in a flow, what to do next           | the guide. Not the code                            |
+| a mechanism the caller cannot observe                | nowhere. Delete it                                 |
+
+If the home already says it, delete the clause. If the home's own whitelist forbids the clause, the
+clause has no home in code: delete it.
+
+**A clause the caller needs to avoid a bug is never deleted before its home holds it.** A
+precondition, a privacy or safety hazard, an ordering requirement: write it into the function doc
+first, as a precondition, then remove it from the field or type. If that function is outside the
+files you may edit, leave the clause where it is and report it.
+
+## Tells
+
+Each of these in a field or type doc means a foreign clause is present. Find the clause and run
+step 4 on it.
+
+- a causal word: `because`, `so`, `so that`, `since`, `which means`, `in order to`, or a colon
+  followed by a reason
+- a verb whose subject is not the symbol: "a claim leaves…", "the router pulls…", "the SDK reads…"
+- the name of another function, type, file or test
+- a time word: `after`, `once`, `until`, `when the caller`, `later`
+- `we`, `deliberately`, `previously`, `for now`, `note that`, `always`, `never`
+
+## Worked examples
+
+| Before                                                                                                             | Verdict                                                                                             | After                                                                |
+| ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `/** The batch. */` on `batchId: bigint`                                                                           | Step 2: restates the name                                                                           | _(no comment)_                                                       |
+| `/** The account that must send the calls: their encryption proofs are bound to it. */` on `account`               | Step 4: the clause after the colon is a mechanism. Step 2: the rest restates the name               | _(no comment)_                                                       |
+| `/** The account's encrypted deposit, or null when the read named no account. A claim or quit leaves a zero. */`   | Step 4: second sentence is about `claim` and `quit`. Move it to their docs                          | `/** The account's encrypted deposit, or null when no account was given. */` |
+| `/** What deposit and redeem return. */` on `JoinOutcome`                                                          | Step 4: the only clause is about `deposit` and `redeem`. Nothing is left                             | _(no comment)_                                                       |
+| `/** Options for prepareDeposit. */` on `JoinOptions`                                                              | Step 2: restates a signature                                                                        | _(no comment)_                                                       |
+| A method doc: "Reads the state, then the request id, then decrypts publicly and encodes the callback."             | Whitelist: that is the algorithm                                                                    | `/** Builds the call that settles a dispatched batch. */`            |
+| `// loop over the legs` above a `for`                                                                              | Step 2                                                                                              | _(no comment)_                                                       |
+| `// Every leg's token is decrypted together: a lone decrypt would tell the relayer which vault was picked.`        | Inline, one hazard, cannot be encoded                                                               | keep as is                                                           |
+| A 4-line `//` block explaining a caching scheme                                                                    | Over the cap: the code is unclear                                                                   | extract `readFixedOnce(…)`, delete the comment                       |
+
+## JSDoc mechanics
+
+- Never write a type in a tag. `@param value the value to clamp`, never `@param {number} value`.
+  Why: the compiler enforces the signature and nothing enforces the tag.
+- Never restate a keyword the language enforces: no `@private` on a `private` member, no `@readonly`
+  on `readonly`.
+- `/** */` is for the caller. `//` is for the maintainer. Never put maintainer notes in `/** */`:
+  they ship in the published types and the IDE hover.
+- When the project requires a doc on every exported symbol, write the shortest sentence that passes
+  the whitelist. Never pad it to look complete.
+
+## Never touch
+
+`eslint-disable`, `oxlint-disable`, `biome-ignore`, `prettier-ignore`, `@ts-expect-error`,
+`@ts-ignore`, `@ts-check`, `"use client"`, `"use server"`, codegen banners, license headers.
+
+## Writing new code
+
+Write the code with no comments. Then add a comment only where step 7 of the procedure would be
+reached. A comment written before the code is finished describes code that no longer exists.
+
+## Reviewing
+
+Classify every comment in scope; none passes by default. The review is done when each one has a
+verdict and the file matches it. Report the counts (deleted, moved, encoded, rewritten, kept) and
+list every clause that was moved, with its new home, so the reviewer can check nothing was lost.
