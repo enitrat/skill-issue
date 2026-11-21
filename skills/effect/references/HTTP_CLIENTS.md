@@ -12,6 +12,7 @@ Use Effect HTTP client modules for outgoing HTTP in app/provider code:
 The grouped import is `import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"`.
 Current v4 exports no longer include the prerelease `effect/unstable/http` path.
 Individual APIs may still carry an `@stability unstable` annotation; import placement is not a stability guarantee.
+The Effect language service warns on every such use (`unstableApiUsage`). A project that adopts Effect HttpClient on purpose allows the module once in its plugin options (`"allowedUnstableApis": ["effect/http"]`) instead of suppressing each call site.
 
 Prefer Effect HttpClient in Effect application and provider code when its typed errors, layers, and transforms are useful. Raw `fetch` remains reasonable for browser or edge constraints, small adapters, platform transports, and libraries that intentionally avoid unstable Effect HTTP APIs.
 

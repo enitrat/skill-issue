@@ -89,7 +89,7 @@ export class Service extends Context.Service<Service, Interface>()(
 ) {}
 
 export interface TestInterface extends Interface {
-  readonly sentMessages: () => Effect.Effect<ReadonlyArray<Message>>
+  readonly sentMessages: Effect.Effect<ReadonlyArray<Message>>
   readonly failNextSend: (error: SendError) => Effect.Effect<void>
 }
 
@@ -108,9 +108,7 @@ export const testLayer = Layer.effectContext(
         if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
         yield* Ref.update(sent, (messages) => [...messages, message])
       }),
-      sentMessages: Effect.fn("Notifier.Test.sentMessages")(function* () {
-        return yield* Ref.get(sent)
-      }),
+      sentMessages: Ref.get(sent),
       failNextSend: Effect.fn("Notifier.Test.failNextSend")(function* (error) {
         yield* Ref.set(nextFailure, Option.some(error))
       }),
@@ -129,7 +127,8 @@ Guidance:
 - The same object should back both the real `Service` tag and `TestService` tag.
 - Production code depends only on the real service tag.
 - Tests use `TestService` for control and inspection.
-- Use function-valued service members, including zero-argument operations, so `Effect.fn` fits naturally.
+- Use function-valued service members, wrapped in `Effect.fn`, for operations that take arguments.
+- Expose a zero-argument operation as an `Effect` value, not as a function returning one: an Effect is already lazy and re-runs on every `yield*`.
 - Use `Layer.succeed` for complete dead-simple static test implementations.
 - Use `Layer.mock` only for tiny local partial mocks where omitted members should fail loudly if used.
 

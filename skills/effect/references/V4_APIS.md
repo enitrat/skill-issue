@@ -44,7 +44,8 @@ const Port = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))
 
 const config = Config.schema(Port, "PORT")
 const constructed = Port.makeEffect(8080) // failure: SchemaIssue.Issue
-const decoded = Schema.decodeUnknownEffect(Port)(8080) // failure: Schema.SchemaError
+const decoded = Schema.decodeEffect(Port)(8080) // failure: Schema.SchemaError
+const fromWire = (input: unknown) => Schema.decodeUnknownEffect(Port)(input) // same failure, for unknown input
 const wrapped = constructed.pipe(
   Effect.mapError((issue) => new Schema.SchemaError(issue)),
 )

@@ -23,7 +23,9 @@ Guidance:
 - Use `schema.makeEffect(...)` when construction failure should stay in the Effect error channel. It validates typed constructor input and fails with `SchemaIssue.Issue`, not `Schema.SchemaError`.
 - Use `schema.makeOption(...)` when constructor validation details may be discarded.
 - Decode unknown input at boundaries with `Schema.decodeUnknownEffect(...)` by default.
-- Use `Schema.decodeUnknownSync(...)` only in scripts, tests, or startup paths where throwing is acceptable.
+- Decode input already typed as the schema's `Encoded` with `Schema.decodeEffect(...)` or `Schema.decodeSync(...)`, never a `decodeUnknown*` variant: the typed decoders keep the compile-time check on the input.
+- Use the throwing `Schema.decodeSync(...)` / `Schema.decodeUnknownSync(...)` only in scripts, tests, startup paths, or parsers whose contract is to throw.
+- Use `Schema.Finite` (or `Schema.Int`) for numeric domain values; `Schema.Number` accepts `NaN`, `Infinity`, and `-Infinity`.
 - Use `Schema.decodeUnknownOption(...)` only when mismatch details are intentionally discarded.
 - Use `Schema.decodeUnknownResult(...)` for pure code that wants explicit success/failure without Effect.
 
@@ -123,10 +125,13 @@ Guidance:
 
 ## Errors
 
-`Schema.TaggedError` is the explicit class exception for typed Effect errors.
+`Schema.TaggedError` is the explicit class exception for typed Effect errors. Always pass the brand as the second type argument.
 
 ```ts
-export class PersistenceError extends Schema.TaggedError<PersistenceError>()(
+export class PersistenceError extends Schema.TaggedError<
+  PersistenceError,
+  { readonly brand: unique symbol }
+>()(
   "UserRepo.PersistenceError",
   {
     operation: Schema.String,
@@ -137,6 +142,7 @@ export class PersistenceError extends Schema.TaggedError<PersistenceError>()(
 
 Guidance:
 
+- Brand every Schema class and error (`{ readonly brand: unique symbol }`). Errors are structural types: two unbranded errors with the same `_tag` and fields are assignable to each other, so a handler or an error channel can accept the wrong one silently.
 - Map infrastructure failures into domain-specific tagged errors at service boundaries.
 - Include operation labels when they help diagnose adapter, persistence, provider, or transport failures.
 - Use schema unions for public API or transport error surfaces.

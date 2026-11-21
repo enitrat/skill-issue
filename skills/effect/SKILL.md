@@ -22,6 +22,7 @@ Check these before guessing:
 - the nearest `AGENTS.md` and any project-local Effect practices doc
 - the project-pinned `effect` package source and version
 - current upstream Effect source when the installed package does not answer the question
+- the Effect language service diagnostics (`@effect/tsgo`), when the project runs it: they win over this skill's examples
 
 ## Branch Chooser
 
@@ -46,13 +47,13 @@ If a task spans several branches, read all matching files before editing.
 - Prefer `Context.Service` for application services when the codebase has not standardized on another current service-tag style.
 - Build real service implementations with `Layer.effect(Service, Effect.gen(...))` and return `Service.of({ ... })`.
 - Model records with `Schema.Struct(...)` plus a same-name `interface`.
-- Model typed Effect errors with `Schema.TaggedError`.
+- Model typed Effect errors with branded `Schema.TaggedError` classes: `Schema.TaggedError<Self, { readonly brand: unique symbol }>()`.
 - Read runtime config through `Config`, not direct `process.env` access in application logic.
 - Use `Schedule` for retry, repeat, polling, pacing, and backoff policies.
 - Use `Stream` for effectful sources that emit many values over time and need pull, backpressure, interruption, or transformation.
 - Prefer Effect HTTP client modules for outgoing HTTP in Effect applications when their typed errors, layers, and client transforms are useful.
 - Prefer Effect-aware tests, explicit layers, and deterministic synchronization over sleeps.
-- Decode unknown wire input with `Schema.decodeUnknownEffect(...)`; use `schema.makeEffect(...)` for typed constructor input with validation. Reserve throwing `schema.make(...)` for trusted construction, and never use casts to skip validation.
+- Decode unknown wire input with `Schema.decodeUnknownEffect(...)`; decode input already typed as the schema's `Encoded` with `Schema.decodeEffect(...)` or `Schema.decodeSync(...)`; use `schema.makeEffect(...)` for typed constructor input with validation. Reserve throwing `schema.make(...)` for trusted construction, and never use casts to skip validation.
 
 ## Quick Selection Guide
 
@@ -62,8 +63,10 @@ If a task spans several branches, read all matching files before editing.
 - Reusable boundary-crossing tagged variant: `Schema.TaggedStruct(...)` plus same-name `interface`.
 - Boundary-crossing tagged union: `Schema.TaggedUnion(...)` with `.cases`, `.guards`, and `.match`.
 - External/custom discriminator such as `type`: `Schema.Struct({ type: Schema.tag("variant"), ... })` plus `Schema.toTaggedUnion("type")` when union helpers are needed.
-- Expected typed failure: `Schema.TaggedError`.
+- Expected typed failure: branded `Schema.TaggedError`.
 - Unknown boundary payload: `Schema.decodeUnknownEffect(...)`.
+- Typed input that still needs decoding (a `string` into a branded ID): `Schema.decodeEffect(...)` or `Schema.decodeSync(...)`.
+- Numeric field: `Schema.Finite` or `Schema.Int`; `Schema.Number` admits `NaN` and `±Infinity`.
 - Service boundary: `Context.Service<Service, Interface>()(...)` plus `Layer.effect(...)` plus `Service.of(...)`.
 - Public or non-trivial internal service method: `Effect.fn("Domain.operation")`.
 - Runtime configuration: `Config` recipes read in layers; override with `ConfigProvider` in tests.
@@ -96,6 +99,9 @@ If a task spans several branches, read all matching files before editing.
 - Do not use `as any`, non-null assertions, or unchecked casts to silence Effect typing problems.
 - Do not introduce `Schema.Class` or `Schema.TaggedClass` as default app data-modeling patterns.
 - Do not hand-roll `_tag` error classes when `Schema.TaggedError` fits.
+- Do not omit the brand type argument on Schema classes and errors: without it, two errors with the same fields are interchangeable.
+- Do not pass already-typed input to `decodeUnknown*`: it discards the compile-time check on the input.
+- Do not declare zero-argument service members that return an Effect; an Effect is already lazy, so the member is the Effect value.
 - Do not use cause-level recovery when typed-error recovery is enough.
 - Do not use `Layer.mergeAll(...)` or `provideMerge(...)` as blind make-it-compile tools.
 - Do not hide required application authority, credentials, persistence, transports, or external services behind `Context.Reference` defaults.
