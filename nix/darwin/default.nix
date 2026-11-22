@@ -32,6 +32,8 @@ in
     # so nothing is ever removed silently. Declare it or uninstall it by hand.
     onActivation.cleanup = "check";
     taps = [ "penso/tap" ];
+    # nixpkgs lacks it.
+    brews = [ "cliproxyapi" ];
     casks = [
       # Daily tools
       "1password"
