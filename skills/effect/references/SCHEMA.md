@@ -4,7 +4,7 @@ Use this when touching data models, DTOs, row schemas, wire contracts, brands, v
 
 ## Records
 
-Default to `Schema.Struct(...)` plus a same-name `interface`.
+Default to `Schema.Struct(...)` plus a same-name type alias.
 
 ```ts
 export const User = Schema.Struct({
@@ -13,7 +13,7 @@ export const User = Schema.Struct({
   email: Schema.optionalKey(Schema.String),
 })
 
-export interface User extends Schema.Schema.Type<typeof User> {}
+export type User = typeof User.Type
 ```
 
 Guidance:

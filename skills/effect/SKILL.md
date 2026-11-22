@@ -46,7 +46,7 @@ If a task spans several branches, read all matching files before editing.
 - Use `Effect.fnUntraced` only for internal helpers where stack-frame/span metadata is intentionally unnecessary.
 - Prefer `Context.Service` for application services when the codebase has not standardized on another current service-tag style.
 - Build real service implementations with `Layer.effect(Service, Effect.gen(...))` and return `Service.of({ ... })`.
-- Model records with `Schema.Struct(...)` plus a same-name `interface`.
+- Model records with `Schema.Struct(...)` plus a same-name type alias: `type User = typeof User.Type`.
 - Model typed Effect errors with branded `Schema.TaggedError` classes: `Schema.TaggedError<Self, { readonly brand: unique symbol }>()`.
 - Read runtime config through `Config`, not direct `process.env` access in application logic.
 - Use `Schedule` for retry, repeat, polling, pacing, and backoff policies.
@@ -57,10 +57,10 @@ If a task spans several branches, read all matching files before editing.
 
 ## Quick Selection Guide
 
-- Ordinary object record: `Schema.Struct(...)` plus same-name `interface`.
+- Ordinary object record: `Schema.Struct(...)` plus same-name `type X = typeof X.Type`.
 - Scalar ID/value object: constrained branded schema.
 - Internal workflow decision or state: `Data.TaggedEnum<...>` plus `Data.taggedEnum<...>()` constructors and exhaustive `$match`.
-- Reusable boundary-crossing tagged variant: `Schema.TaggedStruct(...)` plus same-name `interface`.
+- Reusable boundary-crossing tagged variant: `Schema.TaggedStruct(...)` plus same-name `type X = typeof X.Type`.
 - Boundary-crossing tagged union: `Schema.TaggedUnion(...)` with `.cases`, `.guards`, and `.match`.
 - External/custom discriminator such as `type`: `Schema.Struct({ type: Schema.tag("variant"), ... })` plus `Schema.toTaggedUnion("type")` when union helpers are needed.
 - Expected typed failure: branded `Schema.TaggedError`.
@@ -101,6 +101,7 @@ If a task spans several branches, read all matching files before editing.
 - Do not hand-roll `_tag` error classes when `Schema.TaggedError` fits.
 - Do not omit the brand type argument on Schema classes and errors: without it, two errors with the same fields are interchangeable.
 - Do not pass already-typed input to `decodeUnknown*`: it discards the compile-time check on the input.
+- Do not write `interface X extends Schema.Schema.Type<typeof X> {}`: lint rejects an empty interface (`no-empty-interface`); use `type X = typeof X.Type`.
 - Do not declare zero-argument service members that return an Effect; an Effect is already lazy, so the member is the Effect value.
 - Do not use cause-level recovery when typed-error recovery is enough.
 - Do not use `Layer.mergeAll(...)` or `provideMerge(...)` as blind make-it-compile tools.
