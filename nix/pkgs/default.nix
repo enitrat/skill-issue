@@ -72,6 +72,51 @@ in
       };
     };
 
+  # nixpkgs trails Anthropic's releases by days. This is the binary Anthropic's own installer
+  # downloads; hashes from <base>/<version>/manifest.json. Bun executable: no strip, no patchelf.
+  # To update: `curl <base>/latest`, then copy each platform's checksum from that manifest.
+  claude-code =
+    let
+      version = "2.1.330";
+      url =
+        platform:
+        "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${version}/${platform}/claude";
+      sources = {
+        aarch64-darwin = {
+          url = url "darwin-arm64";
+          hash = "sha256:f7c5093b9dd6560d08af28bc27b123fb55091deae3180ac39df199522da86815";
+        };
+        x86_64-linux = {
+          url = url "linux-x64";
+          hash = "sha256:f390eaa0814e6a1bff74cbb47acb74cb9c89d30ced809fe0af5af00c7bfe8ebb";
+        };
+        aarch64-linux = {
+          url = url "linux-arm64";
+          hash = "sha256:6016f90cac783e367fb1aa97c768a2efb94a0128a5b46b70fb3d8fcbbd9dd444";
+        };
+      };
+      system = final.stdenvNoCC.hostPlatform.system;
+    in
+    final.stdenvNoCC.mkDerivation {
+      pname = "claude-code";
+      inherit version;
+      src = final.fetchurl (sources.${system} or (throw "claude-code: no release binary for ${system}"));
+      dontUnpack = true;
+      dontStrip = true;
+      dontPatchELF = true;
+      installPhase = ''
+        runHook preInstall
+        install -Dm755 "$src" "$out/bin/claude"
+        runHook postInstall
+      '';
+      meta = {
+        description = "Anthropic's terminal coding agent";
+        mainProgram = "claude";
+        license = final.lib.licenses.unfree;
+        platforms = builtins.attrNames sources;
+      };
+    };
+
   # Not in nixpkgs.
   linear-cli =
     let

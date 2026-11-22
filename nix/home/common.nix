@@ -40,7 +40,8 @@ in
 
       # Agents and their tooling. Claude Code from Nix, not its installer or Boat's
       # npm copy: one version on the Mac and every box, so a teleported session
-      # resumes on the Claude that wrote it. Updates come with `nix flake update`.
+      # resumes on the Claude that wrote it. Anthropic's release binary, pinned in
+      # nix/pkgs/default.nix: bump the version and hashes there to update.
       claude-code
       herdr
       agent-browser
