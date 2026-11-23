@@ -47,8 +47,8 @@ if [[ $OSTYPE == darwin* ]]; then
     check "publish-artifact: linked" test -x ~/.local/bin/publish-artifact
     # headersHelper for the claude.ai connectors registered in ~/.claude.json.
     check "claude-mcp-headers: linked" test -x ~/.local/bin/claude-mcp-headers
-    # The default profile routes through CLIProxyAPI, which hides the Artifact tool.
-    check "publish-artifact: ~/.claude_artifacts signed in to claude.ai (see publish-artifact --help)" eval 'env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN CLAUDE_CONFIG_DIR="$HOME/.claude_artifacts" claude auth status | jq -e ".loggedIn and .authMethod == \"claude.ai\""'
+    # publish-artifact and the connectors read CLIProxy's claude.ai token through it.
+    check "claude-mcp-headers: resolves a claude.ai token (see claude-mcp-headers --help)" eval '~/.local/bin/claude-mcp-headers | jq -e ".Authorization"'
     # Herdr UI's phone remote and its device list reach this Mac through Tailscale.
     check "tailscale: connected to the tailnet" eval 'tailscale status --json | jq -e ".BackendState == \"Running\""'
     # Runs .herdr/automations/bx-refresh.luau, which keeps the Boat snapshots current.

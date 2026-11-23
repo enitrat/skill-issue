@@ -1,50 +1,108 @@
 #!/usr/bin/env bash
-# publish-artifact: publish an HTML file as a claude.ai Artifact
+# publish-artifact: publish and manage claude.ai Artifacts over the frame API
 
-VERSION="1.0.0"
-PROFILE="${ARTIFACT_PROFILE:-$HOME/.claude_artifacts}"
+VERSION="2.0.0"
+API="https://api.anthropic.com/api/frame"
 
 show_help() {
     cat << 'EOF'
 NAME
-    publish-artifact - publish an HTML file as a claude.ai Artifact
+    publish-artifact - publish and manage claude.ai Artifacts
 
 SYNOPSIS
-    publish-artifact <file.html> [artifact-url]
+    publish-artifact <file.html> [artifact] [--title TITLE] [--share private|org]
+    publish-artifact list [--json]
+    publish-artifact share <artifact> private|org
+    publish-artifact delete <artifact> --yes
     publish-artifact --help | -h
     publish-artifact --version | -v
 
 DESCRIPTION
-    Runs `claude -p` in a second Claude Code profile (~/.claude_artifacts)
-    that is signed in to claude.ai, and asks it to publish the file with the
-    Artifact tool. Prints the artifact URL. With an artifact-url, updates that
-    artifact in place.
+    Publishes an HTML file as a Claude Code artifact and prints its URL,
+    https://claude.ai/code/artifact/<uuid>. With an artifact, publishes a new
+    version of it in place. New artifacts start private.
 
-    A separate profile because the default one routes through CLIProxyAPI:
-    ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN take precedence over the
-    claude.ai login, and without that login the Artifact tool is unavailable.
-    This tool strips both variables and points CLAUDE_CONFIG_DIR at the
-    profile, so the default session is untouched.
+    <artifact> is a claude.ai/code/artifact/<uuid> or claude.ai/artifact/<id>
+    link, or the bare uuid or id.
 
-    One-time setup, in a terminal (it opens a browser; pick "Claude account
-    with subscription"):
+    The title defaults to the page's <title>, then to the file name.
 
-        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
-            CLAUDE_CONFIG_DIR="$HOME/.claude_artifacts" claude auth login
+    Claude Code's Artifact tool needs a claude.ai login, which a CLIProxy
+    session does not have. This tool calls the same undocumented endpoints
+    (api.anthropic.com/api/frame/*) directly, with the claude.ai OAuth token
+    CLIProxy keeps. claude-mcp-headers resolves that token and the account.
 
-    Use "$HOME", not "~": `env` does not expand it and Claude Code would
-    create a literal "~" directory in the current folder.
-
-    The profile only gets Read on the file's folder and the Artifact tool.
-    The file's content is uploaded to claude.ai; artifacts start private.
+    Pages that use the Artifact tool's runtime (window.claude.*, shared data,
+    comments) are untested: the direct publish records contract 0.0.0.
 
 ENVIRONMENT
-    ARTIFACT_PROFILE    Profile directory (default ~/.claude_artifacts)
+    CLAUDE_AI_ACCOUNT   Account to publish as; see claude-mcp-headers --help
 
 EXAMPLES
     publish-artifact report.html
-    publish-artifact report.html https://claude.ai/artifact/<id>
+    publish-artifact report.html https://claude.ai/code/artifact/<uuid>
+    publish-artifact report.html --share org
 EOF
+}
+
+die() { echo "publish-artifact: $*" >&2; exit 1; }
+
+# Short artifact ids are the uuid in base58.
+slug_of() {
+    local id="${1%%[?#]*}"
+    id="${id%/}"
+    id="${id##*/}"
+    if [[ $id =~ ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$ ]]; then
+        echo "$id" | tr '[:upper:]' '[:lower:]'
+        return
+    fi
+    [[ $id =~ ^[1-9A-HJ-NP-Za-km-z]+$ ]] || die "not an artifact link or id: $1"
+    local alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    local expr="n=0" i prefix
+    for ((i = 0; i < ${#id}; i++)); do
+        prefix="${alphabet%%"${id:i:1}"*}"
+        expr+="; n=n*58+${#prefix}"
+    done
+    local hex
+    hex=$(printf '%s; obase=16; n\n' "$expr" | BC_LINE_LENGTH=0 bc | tr '[:upper:]' '[:lower:]')
+    (( ${#hex} <= 32 )) || die "not an artifact id: $1"
+    hex=$(printf '%32s' "$hex" | tr ' ' 0)
+    echo "${hex:0:8}-${hex:8:4}-${hex:12:4}-${hex:16:4}-${hex:20:12}"
+}
+
+frame() {
+    local method="$1" path="$2"
+    shift 2
+    local body status
+    body=$(mktemp)
+    status=$(curl -sS -o "$body" -w '%{http_code}' -X "$method" "$API$path" \
+        -H "Authorization: $AUTH" -H "X-Frame-CP: go" -H "content-type: application/json" "$@") ||
+        { rm -f "$body"; die "$method $path: request failed"; }
+    if [[ $status != 2* ]]; then
+        echo "publish-artifact: $method $path: HTTP $status: $(head -c 300 "$body")" >&2
+        rm -f "$body"
+        exit 1
+    fi
+    cat "$body"
+    rm -f "$body"
+}
+
+set_share() {
+    local slug="$1" share="$2" mode current
+    case "$share" in
+        private) mode=owner ;;
+        org) mode=org ;;
+        *) die "--share takes private or org, not '$share'" ;;
+    esac
+    current=$(frame GET "/perm/$slug")
+    local now
+    now=$(jq -r '.read.mode // ""' <<< "$current")
+    [[ $now == "$mode" || ($mode == owner && -z $now) ]] && return
+    jq -e --arg m "$mode" '.assignableReadModes == null or (.assignableReadModes | index($m))' <<< "$current" > /dev/null ||
+        die "this account or organization does not allow $share sharing"
+    jq -n --arg m "$mode" --argjson cur "$current" \
+        '{read: {mode: $m, users: (if $m == "org" then ($cur.read.users // []) else [] end)}}' |
+        frame PATCH "/perm/$slug" -H "If-Match: $(jq -r .version <<< "$current")" --data-binary @- > /dev/null
 }
 
 case "${1:-}" in
@@ -55,26 +113,59 @@ esac
 
 set -euo pipefail
 
-file="$1"
-url="${2:-}"
-[ -r "$file" ] || { echo "publish-artifact: cannot read $file" >&2; exit 1; }
-dir="$(cd "$(dirname "$file")" && pwd)"
-file="$dir/$(basename "$file")"
+helper="$(dirname "$(readlink -f "$0")")/claude-mcp-headers"
+AUTH=$("$helper" | jq -r .Authorization) || die "no claude.ai token; see claude-mcp-headers --help"
 
-status="$(env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
-    CLAUDE_CONFIG_DIR="$PROFILE" claude auth status 2>/dev/null || true)"
-if ! jq -e '.loggedIn and .authMethod == "claude.ai"' <<< "$status" > /dev/null 2>&1; then
-    echo "publish-artifact: $PROFILE is not signed in to claude.ai. See --help for the one-time login." >&2
-    exit 1
-fi
-
-prompt="Publish the file $file with the Artifact tool."
-[ -n "$url" ] && prompt="$prompt Update the existing artifact at $url."
-prompt="$prompt Do not edit the file. Reply with the artifact URL only."
-
-# A neutral working directory keeps a project's CLAUDE.md out of the context.
-mkdir -p "$PROFILE/work"
-cd "$PROFILE/work"
-exec env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
-    CLAUDE_CONFIG_DIR="$PROFILE" \
-    claude -p "$prompt" --add-dir "$dir" --allowedTools "Read" "Artifact"
+case "$1" in
+    list)
+        out=$(frame GET "/frames?limit=60")
+        if [[ ${2:-} == --json ]]; then
+            jq '[(.data // .frames // .items // .)[] | {url: ("https://claude.ai/code/artifact/" + .slug), title, audience, updatedAt}]' <<< "$out"
+        else
+            jq -r '(.data // .frames // .items // .)[] | [.updatedAt, .audience, "https://claude.ai/code/artifact/" + .slug, .title] | @tsv' <<< "$out"
+        fi
+        ;;
+    share)
+        [[ $# -eq 3 ]] || die "usage: publish-artifact share <artifact> private|org"
+        slug=$(slug_of "$2")
+        set_share "$slug" "$3"
+        echo "https://claude.ai/code/artifact/$slug"
+        ;;
+    delete)
+        [[ $# -ge 2 ]] || die "usage: publish-artifact delete <artifact> --yes"
+        slug=$(slug_of "$2")
+        title=$(frame GET "/$slug" | jq -r .title)
+        if [[ ${3:-} != --yes ]]; then
+            echo "Would delete \"$title\" (https://claude.ai/code/artifact/$slug). Add --yes." >&2
+            exit 1
+        fi
+        frame DELETE "/$slug" > /dev/null
+        echo "Deleted \"$title\""
+        ;;
+    *)
+        file="$1"
+        shift
+        slug="" title="" share=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --title) title="${2:?--title needs a value}"; shift 2 ;;
+                --share) share="${2:?--share needs a value}"; shift 2 ;;
+                -*) die "unknown option $1" ;;
+                *) [[ -z $slug ]] || die "one artifact at a time"; slug=$(slug_of "$1"); shift ;;
+            esac
+        done
+        [[ -r $file ]] || die "cannot read $file"
+        [[ $file =~ \.html?$ ]] || die "only .html files: $file"
+        if [[ -z $title ]]; then
+            title=$(tr '\n' ' ' < "$file" | sed -nE 's/.*<title[^>]*>[[:space:]]*([^<]*[^<[:space:]])[[:space:]]*<\/title>.*/\1/Ip')
+            [[ -n $title ]] || title=$(basename "${file%.*}")
+        fi
+        out=$(jq -n --rawfile content "$file" --arg title "$title" --arg slug "$slug" \
+            '{title: $title, favicon: "*", content: $content} + (if $slug == "" then {} else {slug: $slug} end)' |
+            frame POST /deploy/direct --data-binary @-)
+        slug=$(jq -r '.slug // empty' <<< "$out")
+        [[ -n $slug ]] || die "deploy returned no slug: $(head -c 300 <<< "$out")"
+        [[ -z $share ]] || set_share "$slug" "$share"
+        echo "https://claude.ai/code/artifact/$slug"
+        ;;
+esac
