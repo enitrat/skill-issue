@@ -78,14 +78,19 @@ do not unset `ANTHROPIC_*` in a session.
 
 ### Artifacts
 
-`tools/publish-artifact <file.html> [artifact]` publishes or updates an
-Artifact and prints its URL; `list`, `share <artifact> private|org` and
-`delete <artifact> --yes` manage them. It calls `api.anthropic.com/api/frame/*`
-with the header `X-Frame-CP: go`, the endpoints Claude Code's Artifact tool
-uses. Do not call the Artifact tool from a session.
+`tools/claude-artifacts` mirrors Claude Code's Artifact tool: `publish
+<file.html>` creates one, `update <artifact> <file.html>` publishes a new
+version at the same link, and `list`, `read [--content]`, `versions`,
+`comments`, `share private|org`, `rename`, `pin`, `unpin` and `delete --yes`
+manage them. It is a `uv` script that calls `api.anthropic.com/api/frame/*`
+with the header `X-Frame-CP: go`, the endpoints that tool uses, found in the
+Claude Code binary. Do not call the Artifact tool from a session.
 
-- Short links (`claude.ai/artifact/<id>`) are the artifact uuid in base58;
-  the API takes the uuid.
+- Short links (`claude.ai/artifact/<id>`) are the artifact uuid in base58,
+  padded to 22 characters; the API takes the uuid. Output uses short links.
+- A deploy without a `description` clears it, so `update` resends the current
+  one. The raw source host (`<uuid>.frame.claudeusercontent.com/_f/<ver>/_src/`)
+  answers 403 to requests without a User-Agent.
 - The direct publish records contract `0.0.0`. Pages that use the Artifact
   runtime (`window.claude.*`, shared data, comments) are untested.
 

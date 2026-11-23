@@ -44,10 +44,10 @@ check "claude: pstack plugin installed" jq -e '.plugins["pstack@cursor-plugins"]
 check "claude: thermos plugin installed" jq -e '.plugins["thermos@skill-issue"]' ~/.claude/plugins/installed_plugins.json
 check "claude: pstack rules linked" test -r ~/.claude/rules/pstack-models.md -a -r ~/.claude/rules/pstack-local.md
 if [[ $OSTYPE == darwin* ]]; then
-    check "publish-artifact: linked" test -x ~/.local/bin/publish-artifact
+    check "claude-artifacts: linked" test -x ~/.local/bin/claude-artifacts
     # headersHelper for the claude.ai connectors registered in ~/.claude.json.
     check "claude-mcp-headers: linked" test -x ~/.local/bin/claude-mcp-headers
-    # publish-artifact and the connectors read CLIProxy's claude.ai token through it.
+    # claude-artifacts and the connectors read CLIProxy's claude.ai token through it.
     check "claude-mcp-headers: resolves a claude.ai token (see claude-mcp-headers --help)" eval '~/.local/bin/claude-mcp-headers | jq -e ".Authorization"'
     # Herdr UI's phone remote and its device list reach this Mac through Tailscale.
     check "tailscale: connected to the tailnet" eval 'tailscale status --json | jq -e ".BackendState == \"Running\""'

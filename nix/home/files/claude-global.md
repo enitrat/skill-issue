@@ -11,7 +11,7 @@
 
 # Artifacts
 
-- This session routes through a proxy, so the Artifact tool is unavailable here. To publish an HTML page as a claude.ai Artifact, write it to a file and run `publish-artifact <file.html> [artifact-url]` (prints the URL; pass the URL to update in place). `publish-artifact --help` covers list, share and delete. Never call the Artifact tool directly, and never unset `ANTHROPIC_*` in this session.
+- This session routes through a proxy, so the Artifact tool is unavailable here. To publish an HTML page as a claude.ai Artifact, write it to a file and run `claude-artifacts publish <file.html>` to create one, or `claude-artifacts update <artifact-url> <file.html>` to publish a new version at the same link; both print the link. `claude-artifacts --help` covers list, read, share, rename, pin and delete. Never call the Artifact tool directly, and never unset `ANTHROPIC_*` in this session.
 
 # Pull requests
 

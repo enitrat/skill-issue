@@ -32,7 +32,7 @@ DESCRIPTION
     $CLAUDE_AI_ACCOUNT, then the first line of ~/.config/claude-ai/account,
     then the only file there is. Connector authorizations (Gmail, Drive...)
     belong to one user, so pick the account that authorized them on claude.ai.
-    publish-artifact reads its token through this helper too.
+    claude-artifacts reads its token through this helper too.
 
     Register a connector (ids come from GET /v1/mcp_servers):
 
