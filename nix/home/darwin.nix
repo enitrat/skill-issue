@@ -47,6 +47,9 @@ in
       "Edit(/${scratch}/**)"
     ];
 
+  # Node inside Claude Code trusts the Nix-managed system CA bundle on macOS.
+  skillIssue.claudeSettings.env.NODE_EXTRA_CA_CERTS = "/etc/ssl/certs/ca-certificates.crt";
+
   programs.zsh.profileExtra = ''
     # Homebrew provides the casks' CLIs (op, adb). Appended, so a stray Homebrew
     # copy of a tool can never shadow the Nix one.

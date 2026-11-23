@@ -317,11 +317,25 @@ in
       in
       lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         target="$HOME/.claude/settings.json"
-        if ! cmp -s ${settings} "$target"; then
+        rendered=$(mktemp)
+        keys_env="$HOME/.cli-proxy-api/keys.env"
+        access_key=""
+        if [ -r "$keys_env" ]; then
+          access_key=$(${lib.getExe pkgs.gnused} -n 's/^ACCESS_KEY=//p' "$keys_env" | head -n 1)
+        fi
+        if [ -n "$access_key" ]; then
+          ${lib.getExe pkgs.jq} --arg token "$access_key" \
+            '.env = ((.env // {}) + {ANTHROPIC_BASE_URL: "http://127.0.0.1:8317", ANTHROPIC_AUTH_TOKEN: $token})' \
+            ${settings} > "$rendered"
+        else
+          cp ${settings} "$rendered"
+        fi
+        if ! cmp -s "$rendered" "$target"; then
           run mkdir -p "$HOME/.claude"
           [ -e "$target" ] && run cp "$target" "$target.bak"
-          run install -m 644 ${settings} "$target"
+          run install -m 600 "$rendered" "$target"
         fi
+        rm -f "$rendered"
       '';
 
     # The settings above enable pstack@cursor-plugins and thermos@skill-issue, which do
@@ -368,7 +382,9 @@ in
       stamp="${config.xdg.stateHome}/agent-browser-chrome"
       want="${pkgs.agent-browser}"
       if [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
-        run ${lib.getExe pkgs.agent-browser} install
+        # darwin-rebuild activates under sudo with a PATH that lacks /usr/bin, and
+        # the installer shells out to sw_vers.
+        PATH="/usr/bin:$PATH" run ${lib.getExe pkgs.agent-browser} install
         run mkdir -p "$(dirname "$stamp")"
         if [ -z "''${DRY_RUN:-}" ]; then echo "$want" > "$stamp"; fi
       fi
