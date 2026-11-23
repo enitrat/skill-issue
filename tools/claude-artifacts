@@ -11,7 +11,10 @@ through CLIProxy does not have. This CLI calls the same undocumented endpoints
 claude-mcp-headers resolves that token and the account.
 """
 
+from __future__ import annotations
+
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,29 +22,161 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Callable, Generic, NoReturn, Optional, TypeVar, Union
 
 import typer
 
-VERSION = "3.1.0"
-API = "https://api.anthropic.com/api/frame"
-BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+VERSION = "4.0.0"
 USER_AGENT = f"claude-artifacts/{VERSION}"
-UUID = re.compile(r"^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$")
+BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-app = typer.Typer(
-    help=__doc__,
-    no_args_is_help=True,
-    add_completion=False,
-    pretty_exceptions_enable=False,
-)
+T = TypeVar("T")
+
+# ---------------------------------------------------------------- failures
+# Expected failures are values. Commands are the only place that turns one into
+# an exit code; the shared base exists so that check can narrow the type.
 
 
-class Share(str, Enum):
+class Failure:
+    @property
+    def message(self) -> str:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class InvalidArtifactId(Failure):
+    text: str
+
+    @property
+    def message(self) -> str:
+        return f"not an artifact link or id: {self.text}"
+
+
+@dataclass(frozen=True)
+class UnsupportedFile(Failure):
+    path: str
+    reason: str
+
+    @property
+    def message(self) -> str:
+        return f"{self.path}: {self.reason}"
+
+
+@dataclass(frozen=True)
+class NoToken(Failure):
+    detail: str
+
+    @property
+    def message(self) -> str:
+        return f"no claude.ai token: {self.detail} (see claude-mcp-headers --help)"
+
+
+@dataclass(frozen=True)
+class RequestFailed(Failure):
+    operation: str
+    status: Optional[int]
+    detail: str
+
+    @property
+    def message(self) -> str:
+        status = f"HTTP {self.status}" if self.status is not None else "network error"
+        return f"{self.operation}: {status}: {self.detail}"
+
+
+@dataclass(frozen=True)
+class MalformedResponse(Failure):
+    operation: str
+
+    @property
+    def message(self) -> str:
+        return f"{self.operation}: the API answered in an unexpected shape"
+
+
+@dataclass(frozen=True)
+class Conflict(Failure):
+    artifact: ArtifactId
+
+    @property
+    def message(self) -> str:
+        return f"{self.artifact.link} changed since it was read; read it again and redo the change"
+
+
+@dataclass(frozen=True)
+class UnknownType(Failure):
+    name: str
+
+    @property
+    def message(self) -> str:
+        return f"no type named {self.name!r}; `claude-artifacts types` lists the ones this account has"
+
+
+@dataclass(frozen=True)
+class SharingNotAllowed(Failure):
+    audience: Audience
+
+    @property
+    def message(self) -> str:
+        return f"this account or organization does not allow {self.audience.value} sharing"
+
+
+ApiFailure = Union[RequestFailed, MalformedResponse, Conflict]
+
+
+@dataclass(frozen=True)
+class Ok(Generic[T]):
+    """A success. Wrapping it keeps `Ok[T] | Failure` unambiguous for type checkers."""
+
+    value: T
+
+# ------------------------------------------------------------------ domain
+
+
+@dataclass(frozen=True)
+class ArtifactId:
+    """An artifact's uuid. Short links (claude.ai/artifact/<id>) are it in base58."""
+
+    value: uuid.UUID
+
+    @staticmethod
+    def parse(text: str) -> Ok[ArtifactId] | InvalidArtifactId:
+        segment = urllib.parse.urlsplit(text.strip()).path.rstrip("/").rsplit("/", 1)[-1]
+        try:
+            return Ok(ArtifactId(uuid.UUID(segment)))
+        except ValueError:
+            pass
+        if not 0 < len(segment) <= 22 or any(c not in BASE58 for c in segment):
+            return InvalidArtifactId(text)
+        n = 0
+        for c in segment:
+            n = n * 58 + BASE58.index(c)
+        return Ok(ArtifactId(uuid.UUID(int=n))) if n < 1 << 128 else InvalidArtifactId(text)
+
+    @property
+    def short(self) -> str:
+        n, digits = self.value.int, ""
+        while n:
+            n, r = divmod(n, 58)
+            digits = BASE58[r] + digits
+        return digits.rjust(22, BASE58[0])
+
+    @property
+    def link(self) -> str:
+        return f"https://claude.ai/artifact/{self.short}"
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+class Audience(str, Enum):
     private = "private"
     org = "org"
+
+    @property
+    def read_mode(self) -> str:
+        return "owner" if self is Audience.private else "org"
 
 
 class Scope(str, Enum):
@@ -50,334 +185,23 @@ class Scope(str, Enum):
     all = "all"
 
 
-ArtifactArg = Annotated[
-    str,
-    typer.Argument(
-        help="A claude.ai/artifact/<id> or claude.ai/code/artifact/<uuid> link, or the bare id.",
-        show_default=False,
-    ),
-]
-JsonOpt = Annotated[bool, typer.Option("--json", help="Print JSON.")]
+@dataclass(frozen=True)
+class Page:
+    """A single-file HTML artifact."""
 
+    html: str
+    title: str
 
-def fail(message: str) -> None:
-    typer.echo(f"claude-artifacts: {message}", err=True)
-    raise typer.Exit(1)
-
-
-def slug_of(artifact: str) -> str:
-    """The API's uuid for a link or id. Short ids are the uuid in base58."""
-    ident = urllib.parse.urlsplit(artifact).path.rstrip("/").rsplit("/", 1)[-1]
-    if UUID.match(ident.lower()):
-        return ident.lower()
-    if not ident or any(c not in BASE58 for c in ident):
-        fail(f"not an artifact link or id: {artifact}")
-    n = 0
-    for c in ident:
-        n = n * 58 + BASE58.index(c)
-    if n >= 1 << 128:
-        fail(f"not an artifact id: {artifact}")
-    h = f"{n:032x}"
-    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
-
-
-def short_link(slug: str) -> str:
-    n = int(slug.replace("-", ""), 16)
-    digits = ""
-    while n:
-        n, r = divmod(n, 58)
-        digits = BASE58[r] + digits
-    return f"https://claude.ai/artifact/{digits.rjust(22, BASE58[0])}"
-
-
-_auth: Optional[str] = None
-
-
-def auth() -> str:
-    global _auth
-    if _auth is None:
-        helper = Path(__file__).resolve().parent / "claude-mcp-headers"
-        done = subprocess.run([str(helper)], capture_output=True, text=True)
-        if done.returncode != 0:
-            fail(f"no claude.ai token: {done.stderr.strip()} (see claude-mcp-headers --help)")
-        _auth = json.loads(done.stdout)["Authorization"]
-    return _auth
-
-
-def frame(method: str, path: str, body: Any = None, headers: Optional[dict] = None) -> Any:
-    request = urllib.request.Request(
-        f"{API}{path}",
-        method=method,
-        data=None if body is None else json.dumps(body).encode(),
-        headers={
-            "Authorization": auth(),
-            "X-Frame-CP": "go",
-            "content-type": "application/json",
-            "User-Agent": USER_AGENT,
-            **(headers or {}),
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as error:
-        fail(f"{method} {path}: HTTP {error.code}: {error.read()[:300].decode(errors='replace')}")
-    except urllib.error.URLError as error:
-        fail(f"{method} {path}: {error.reason}")
-    return json.loads(raw) if raw.strip() else None
-
-
-def frames(rel: Optional[str], limit: int) -> list[dict]:
-    query = {"limit": str(limit), **({"rel": rel} if rel else {})}
-    body = frame("GET", f"/frames?{urllib.parse.urlencode(query)}")
-    if isinstance(body, list):
-        return body
-    return body.get("data") or body.get("frames") or body.get("items") or []
-
-
-def page_title(html: str, file: Path) -> str:
-    found = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-    title = " ".join(found.group(1).split()) if found else ""
-    return title or file.stem
-
-
-def set_share(slug: str, share: Share) -> None:
-    mode = "owner" if share is Share.private else "org"
-    current = frame("GET", f"/perm/{slug}")
-    now = (current.get("read") or {}).get("mode") or "owner"
-    if now == mode:
-        return
-    allowed = current.get("assignableReadModes")
-    if allowed is not None and mode not in allowed:
-        fail(f"this account or organization does not allow {share.value} sharing")
-    users = (current.get("read") or {}).get("users") or [] if mode == "org" else []
-    frame("PATCH", f"/perm/{slug}", {"read": {"mode": mode, "users": users}}, {"If-Match": current["version"]})
-
-
-def deploy(
-    file: Path,
-    slug: Optional[str],
-    title: Optional[str],
-    description: Optional[str],
-    icon: Optional[str],
-    label: Optional[str],
-    share: Optional[Share],
-    pin: bool,
-    as_json: bool,
-) -> None:
-    if file.suffix.lower() not in (".html", ".htm"):
-        fail(f"only .html files: {file}")
-    try:
-        html = file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
-        fail(f"cannot read {file}: {error}")
-    body = {
-        "title": title or page_title(html, file),
-        "favicon": "*",
-        "content": html,
-        **({"slug": slug} if slug else {}),
-        **({"description": description} if description else {}),
-        **({"icon": icon} if icon else {}),
-        **({"label": label} if label else {}),
-    }
-    result = frame("POST", "/deploy/direct", body)
-    new_slug = result.get("slug") if isinstance(result, dict) else None
-    if not new_slug:
-        fail(f"deploy returned no slug: {json.dumps(result)[:300]}")
-    if share:
-        set_share(new_slug, share)
-    if pin:
-        frame("POST", f"/favorite/{new_slug}")
-    link = short_link(new_slug)
-    if as_json:
-        typer.echo(json.dumps({"url": link, "slug": new_slug, "title": body["title"], "version": result.get("version"), "created": slug is None}, indent=2))
-        return
-    verb = "Updated" if slug else "Created"
-    typer.echo(f'{verb} "{body["title"]}" ({result.get("version", "?")})', err=True)
-    typer.echo(link)
-
-
-TitleOpt = Annotated[Optional[str], typer.Option(help="Title. Defaults to the page's <title>, then the file name.")]
-DescriptionOpt = Annotated[Optional[str], typer.Option(help="One sentence for the gallery card.")]
-IconOpt = Annotated[Optional[str], typer.Option(help="One generic word for the tab icon, such as chart or book.")]
-LabelOpt = Annotated[Optional[str], typer.Option(help="Short name for this version.")]
-ShareOpt = Annotated[Optional[Share], typer.Option(help="Audience after publishing.")]
-PinOpt = Annotated[bool, typer.Option("--pin", help="Pin to the claude.ai sidebar.")]
-FileArg = Annotated[Path, typer.Argument(help="The .html page.", show_default=False)]
-
-
-@app.command()
-def publish(
-    file: FileArg,
-    title: TitleOpt = None,
-    description: DescriptionOpt = None,
-    icon: IconOpt = None,
-    label: LabelOpt = None,
-    share: ShareOpt = None,
-    pin: PinOpt = False,
-    as_json: JsonOpt = False,
-) -> None:
-    """Publish a page as a new artifact. Prints its link; new artifacts start private."""
-    deploy(file, None, title, description, icon, label, share, pin, as_json)
-
-
-@app.command()
-def update(
-    artifact: ArtifactArg,
-    file: FileArg,
-    title: TitleOpt = None,
-    description: DescriptionOpt = None,
-    icon: IconOpt = None,
-    label: LabelOpt = None,
-    share: ShareOpt = None,
-    pin: PinOpt = False,
-    as_json: JsonOpt = False,
-) -> None:
-    """Publish a page as a new version of an existing artifact, same link."""
-    slug = slug_of(artifact)
-    frame("GET", f"/{slug}")
-    if description is None:
-        # A deploy without a description clears it; keep the current one.
-        current = next((r for r in frames(None, 200) if r.get("slug") == slug), {})
-        description = current.get("description")
-    deploy(file, slug, title, description, icon, label, share, pin, as_json)
-
-
-@app.command("list")
-def list_(
-    scope: Annotated[Scope, typer.Option(help="Your artifacts, ones shared with you, or both.")] = Scope.mine,
-    limit: Annotated[int, typer.Option(help="Maximum per scope.")] = 60,
-    as_json: JsonOpt = False,
-) -> None:
-    """List artifacts, most recently updated first."""
-    rows = []
-    for rel in {"mine": [None], "shared": ["shared"], "all": [None, "shared"]}[scope.value]:
-        rows += frames(rel, limit)
-    rows = [r for r in rows if r.get("source_surface", "code") == "code" or scope is not Scope.mine]
-    out = [
-        {
-            "url": short_link(r["slug"]),
-            "title": r.get("title"),
-            "audience": r.get("audience"),
-            "updated": r.get("updatedAt") or r.get("created_at"),
-            "owner": r.get("owner_email"),
-        }
-        for r in rows
-    ]
-    out.sort(key=lambda r: r["updated"] or "", reverse=True)
-    if as_json:
-        typer.echo(json.dumps(out, indent=2))
-        return
-    for r in out:
-        typer.echo("\t".join(str(r[k] or "") for k in ("updated", "audience", "url", "title")))
-
-
-@app.command()
-def read(
-    artifact: ArtifactArg,
-    content: Annotated[bool, typer.Option("--content", help="Print the published source instead.")] = False,
-    path: Annotated[str, typer.Option(help="File to print with --content.")] = "index.html",
-    as_json: JsonOpt = False,
-) -> None:
-    """Show an artifact's metadata, or its published source with --content."""
-    slug = slug_of(artifact)
-    meta = frame("GET", f"/{slug}")
-    if content:
-        url = f"https://{slug}.frame.claudeusercontent.com/_f/{meta['ver']}/_src/{urllib.parse.quote(path)}?__frame_t={urllib.parse.quote(meta['assetToken'])}"
+    @staticmethod
+    def read(file: Path) -> Ok[Page] | UnsupportedFile:
+        if file.suffix.lower() not in (".html", ".htm"):
+            return UnsupportedFile(str(file), "only .html pages; use push for typed artifacts")
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=60) as response:
-                sys.stdout.buffer.write(response.read())
-        except urllib.error.HTTPError as error:
-            fail(f"{path}: HTTP {error.code}")
-        return
-    perm = meta.get("perm") or {}
-    info = {
-        "url": short_link(slug),
-        "title": meta.get("title"),
-        "audience": perm.get("mode") or "owner",
-        "version": meta.get("live"),
-        "versions": len(meta.get("history") or []),
-        "files": [f.get("path") for f in meta.get("files") or []],
-        "author": (meta.get("author") or {}).get("email"),
-        "created": meta.get("created_at"),
-        "updated": meta.get("updated_at"),
-        "views": meta.get("view_count"),
-    }
-    if as_json:
-        typer.echo(json.dumps(info, indent=2))
-        return
-    for key, value in info.items():
-        typer.echo(f"{key}: {', '.join(value) if isinstance(value, list) else value}")
-
-
-@app.command()
-def versions(artifact: ArtifactArg, as_json: JsonOpt = False) -> None:
-    """List an artifact's versions, newest first."""
-    slug = slug_of(artifact)
-    body = frame("GET", f"/versions/{slug}")
-    details = body.get("versions") or {}
-    out = [{"version": v, "live": v == body.get("live"), **details.get(v, {})} for v in body.get("history") or []]
-    if as_json:
-        typer.echo(json.dumps(out, indent=2))
-        return
-    for v in out:
-        typer.echo("\t".join([v["version"], "live" if v["live"] else "", v.get("created_at", ""), v.get("title", "")]))
-
-
-@app.command()
-def comments(artifact: ArtifactArg, as_json: JsonOpt = False) -> None:
-    """Show an artifact's comment threads."""
-    body = frame("GET", f"/comments/{slug_of(artifact)}?names=1")
-    if as_json:
-        typer.echo(json.dumps(body.get("threads") or [], indent=2))
-        return
-    threads = body.get("threads") or []
-    if not threads:
-        typer.echo("No comments.", err=True)
-    for thread in threads:
-        typer.echo(json.dumps(thread, ensure_ascii=False))
-
-
-@app.command()
-def share(artifact: ArtifactArg, audience: Annotated[Share, typer.Argument(help="private or org.")]) -> None:
-    """Set who can open an artifact: only you, or your organization."""
-    slug = slug_of(artifact)
-    set_share(slug, audience)
-    typer.echo(short_link(slug))
-
-
-@app.command()
-def rename(artifact: ArtifactArg, title: Annotated[str, typer.Argument(help="New title.")]) -> None:
-    """Rename an artifact without publishing a new version."""
-    slug = slug_of(artifact)
-    frame("POST", f"/retitle/{slug}", {"title": title})
-    typer.echo(short_link(slug))
-
-
-@app.command()
-def pin(artifact: ArtifactArg) -> None:
-    """Pin an artifact to your claude.ai sidebar."""
-    frame("POST", f"/favorite/{slug_of(artifact)}")
-
-
-@app.command()
-def unpin(artifact: ArtifactArg) -> None:
-    """Unpin an artifact from your claude.ai sidebar."""
-    frame("DELETE", f"/favorite/{slug_of(artifact)}")
-
-
-@app.command()
-def delete(
-    artifact: ArtifactArg,
-    yes: Annotated[bool, typer.Option("--yes", help="Delete; without it, only say what would go.")] = False,
-) -> None:
-    """Delete an artifact. Its link stops working for everyone."""
-    slug = slug_of(artifact)
-    title = frame("GET", f"/{slug}").get("title")
-    if not yes:
-        fail(f'would delete "{title}" ({short_link(slug)}); add --yes')
-    frame("DELETE", f"/{slug}")
-    typer.echo(f'Deleted "{title}"', err=True)
+            html = file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            return UnsupportedFile(str(file), str(error))
+        found = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+        return Ok(Page(html, (" ".join(found.group(1).split()) if found else "") or file.stem))
 
 
 TEXT_TYPES = {
@@ -392,69 +216,443 @@ TEXT_TYPES = {
 }
 
 
-def find_type(name: str) -> dict:
-    """A type by title (any case), slug, or link."""
-    found = frame("GET", "/types").get("types") or []
-    wanted = name.strip().lower()
-    for t in found:
-        if wanted in ((t.get("title") or "").lower(), t.get("slug"), (t.get("url") or "").lower()):
-            return t
-    if "/" in name or UUID.match(wanted) or len(wanted) == 22:
-        slug = slug_of(name)
-        for t in found:
-            if t.get("slug") == slug:
-                return t
-    fail(f"no type named {name!r}; `claude-artifacts types` lists the ones this account has")
+@dataclass(frozen=True)
+class FileContent:
+    text: str
+    content_type: str
 
 
-@app.command()
-def types(as_json: JsonOpt = False) -> None:
-    """List the artifact types (Slides, Sheets, Design...) this account can create."""
-    found = frame("GET", "/types").get("types") or []
-    out = [{"title": t.get("title"), "url": t.get("url"), "description": t.get("description")} for t in found]
+# A path mapped to None deletes that file from the artifact.
+Manifest = dict[str, Optional[FileContent]]
+
+
+def read_manifest(directory: Path, removals: list[str]) -> Ok[Manifest] | UnsupportedFile:
+    """Every visible file under directory, at its relative path, plus removals."""
+    if not directory.is_dir():
+        return UnsupportedFile(str(directory), "not a directory")
+    manifest: Manifest = {}
+    for file in sorted(p for p in directory.rglob("*") if p.is_file()):
+        parts = file.relative_to(directory).parts
+        if any(part.startswith(".") for part in parts):
+            continue
+        rel = "/".join(parts)
+        content_type = TEXT_TYPES.get(file.suffix.lower())
+        if content_type is None:
+            return UnsupportedFile(rel, f"only text files ({', '.join(sorted(TEXT_TYPES))})")
+        try:
+            manifest[rel] = FileContent(file.read_text(encoding="utf-8"), content_type)
+        except UnicodeDecodeError:
+            return UnsupportedFile(rel, "not UTF-8")
+    for path in removals:
+        manifest[path] = None
+    return Ok(manifest) if manifest else UnsupportedFile(str(directory), "no files to send")
+
+
+@dataclass(frozen=True)
+class Card:
+    """What the gallery card shows besides the title. None keeps the server's default."""
+
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    label: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class Artifact:
+    id: ArtifactId
+    title: str
+    live: str
+    history: tuple[str, ...]
+    files: tuple[str, ...]
+    audience: str
+    author: Optional[str]
+    created: str
+    updated: str
+    views: int
+    asset_token: str
+
+
+@dataclass(frozen=True)
+class Summary:
+    id: ArtifactId
+    title: str
+    audience: str
+    rel: str
+    updated: str
+    description: Optional[str]
+
+
+@dataclass(frozen=True)
+class Version:
+    version: str
+    live: bool
+    title: str
+    created: str
+
+
+@dataclass(frozen=True)
+class ArtifactType:
+    id: ArtifactId
+    title: str
+    description: str
+
+    def matches(self, name: str) -> bool:
+        wanted = ArtifactId.parse(name)
+        return name.strip().lower() == self.title.lower() or (isinstance(wanted, Ok) and wanted.value == self.id)
+
+
+@dataclass(frozen=True)
+class Published:
+    id: ArtifactId
+    version: str
+
+
+# ---------------------------------------------------------------- adapters
+
+
+class Redacted(Generic[T]):
+    """Keeps a secret out of reprs, logs and tracebacks."""
+
+    def __init__(self, value: T) -> None:
+        self._value = value
+
+    def reveal(self) -> T:
+        return self._value
+
+    def __repr__(self) -> str:
+        return "Redacted(<hidden>)"
+
+
+def read_token(helper: Path) -> Ok[Redacted[str]] | NoToken:
+    """The Authorization header claude-mcp-headers prints for the configured account."""
+    try:
+        done = subprocess.run([str(helper)], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return NoToken(str(error))
+    if done.returncode != 0:
+        return NoToken(done.stderr.strip() or f"exit {done.returncode}")
+    try:
+        return Ok(Redacted(str(json.loads(done.stdout)["Authorization"])))
+    except (ValueError, KeyError, TypeError):
+        return NoToken("claude-mcp-headers printed no Authorization header")
+
+
+class FrameApi:
+    """The undocumented frame API behind Claude Code's Artifact tool.
+
+    Raw JSON stays in here: every method returns parsed values or a failure.
+    """
+
+    def __init__(self, base: str, token: Redacted[str]) -> None:
+        self._base = base.rstrip("/")
+        self._token = token
+
+    def _call(self, operation: str, method: str, path: str, body: Any = None, headers: Optional[dict[str, str]] = None) -> Any | RequestFailed:
+        request = urllib.request.Request(
+            f"{self._base}{path}",
+            method=method,
+            data=None if body is None else json.dumps(body).encode(),
+            headers={
+                "Authorization": self._token.reveal(),
+                "X-Frame-CP": "go",
+                "content-type": "application/json",
+                "User-Agent": USER_AGENT,
+                **(headers or {}),
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as error:
+            return RequestFailed(operation, error.code, error.read()[:300].decode(errors="replace"))
+        except (urllib.error.URLError, TimeoutError) as error:
+            return RequestFailed(operation, None, str(getattr(error, "reason", error)))
+        try:
+            return json.loads(raw) if raw.strip() else None
+        except ValueError:
+            return RequestFailed(operation, None, "response is not JSON")
+
+    def _parsed(self, operation: str, raw: Any, parse: Callable[[Any], T]) -> Ok[T] | ApiFailure:
+        if isinstance(raw, RequestFailed):
+            return raw
+        try:
+            return Ok(parse(raw))
+        except (KeyError, TypeError, ValueError):
+            return MalformedResponse(operation)
+
+    def artifact(self, id: ArtifactId) -> Ok[Artifact] | ApiFailure:
+        def parse(raw: Any) -> Artifact:
+            return Artifact(
+                id=id,
+                title=raw["title"],
+                live=raw["live"],
+                history=tuple(raw["history"]),
+                files=tuple(f["path"] for f in raw["files"]),
+                audience=(raw.get("perm") or {}).get("mode") or "owner",
+                author=(raw.get("author") or {}).get("email"),
+                created=raw["created_at"],
+                updated=raw["updated_at"],
+                views=int(raw.get("view_count") or 0),
+                asset_token=raw["assetToken"],
+            )
+
+        return self._parsed("read", self._call("read", "GET", f"/{id}"), parse)
+
+    def summaries(self) -> Ok[list[Summary]] | ApiFailure:
+        def parse(raw: Any) -> list[Summary]:
+            return [
+                Summary(
+                    id=ArtifactId(uuid.UUID(r["slug"])),
+                    title=r["title"],
+                    audience=r.get("audience") or "owner",
+                    rel=r["rel"],
+                    updated=r.get("updatedAt") or r["created_at"],
+                    description=r.get("description"),
+                )
+                for r in raw["frames"]
+            ]
+
+        return self._parsed("list", self._call("list", "GET", "/frames?limit=200"), parse)
+
+    def deploy_page(self, page: Page, card: Card, target: Optional[Artifact]) -> Ok[Published] | ApiFailure:
+        body = {
+            "title": page.title,
+            "favicon": "*",
+            "content": page.html,
+            **({"slug": str(target.id), "baseVersion": target.live} if target else {}),
+            **{k: v for k, v in asdict(card).items() if v is not None},
+        }
+        return self._deploy(body, target)
+
+    def deploy_files(self, manifest: Manifest, target: Artifact, label: Optional[str]) -> Ok[Published] | ApiFailure:
+        body = {
+            "slug": str(target.id),
+            "title": target.title,
+            "baseVersion": target.live,
+            # Without "patch", files the manifest leaves out are dropped.
+            "mode": "patch",
+            "manifest": {path: None if f is None else {"content": f.text, "contentType": f.content_type} for path, f in manifest.items()},
+            **({"label": label} if label else {}),
+        }
+        return self._deploy(body, target)
+
+    def _deploy(self, body: dict[str, Any], target: Optional[Artifact]) -> Ok[Published] | ApiFailure:
+        raw = self._call("publish", "POST", "/deploy/direct", body)
+        if isinstance(raw, RequestFailed) and raw.status == 409 and target is not None:
+            return Conflict(target.id)
+        return self._parsed("publish", raw, lambda r: Published(ArtifactId(uuid.UUID(r["slug"])), r["version"]))
+
+    def share(self, id: ArtifactId, audience: Audience) -> Ok[None] | ApiFailure | SharingNotAllowed:
+        current = self._call("share", "GET", f"/perm/{id}")
+        if isinstance(current, RequestFailed):
+            return current
+        try:
+            read = current.get("read") or {}
+            if (read.get("mode") or "owner") == audience.read_mode:
+                return Ok(None)
+            allowed = current.get("assignableReadModes")
+            if allowed is not None and audience.read_mode not in allowed:
+                return SharingNotAllowed(audience)
+            users = read.get("users") or [] if audience is Audience.org else []
+            etag = current["version"]
+        except (AttributeError, KeyError, TypeError):
+            return MalformedResponse("share")
+        done = self._call("share", "PATCH", f"/perm/{id}", {"read": {"mode": audience.read_mode, "users": users}}, {"If-Match": etag})
+        return done if isinstance(done, RequestFailed) else Ok(None)
+
+    def rename(self, id: ArtifactId, title: str) -> Ok[None] | RequestFailed:
+        done = self._call("rename", "POST", f"/retitle/{id}", {"title": title})
+        return done if isinstance(done, RequestFailed) else Ok(None)
+
+    def pin(self, id: ArtifactId, pinned: bool) -> Ok[None] | RequestFailed:
+        done = self._call("pin" if pinned else "unpin", "POST" if pinned else "DELETE", f"/favorite/{id}")
+        return done if isinstance(done, RequestFailed) else Ok(None)
+
+    def delete(self, id: ArtifactId) -> Ok[None] | RequestFailed:
+        done = self._call("delete", "DELETE", f"/{id}")
+        return done if isinstance(done, RequestFailed) else Ok(None)
+
+    def versions(self, id: ArtifactId) -> Ok[list[Version]] | ApiFailure:
+        def parse(raw: Any) -> list[Version]:
+            details = raw.get("versions") or {}
+            return [
+                Version(v, v == raw.get("live"), (details.get(v) or {}).get("title", ""), (details.get(v) or {}).get("created_at", ""))
+                for v in raw["history"]
+            ]
+
+        return self._parsed("versions", self._call("versions", "GET", f"/versions/{id}"), parse)
+
+    def comment_threads(self, id: ArtifactId) -> Ok[list[Any]] | ApiFailure:
+        return self._parsed("comments", self._call("comments", "GET", f"/comments/{id}?names=1"), lambda r: list(r.get("threads") or []))
+
+    def source(self, artifact: Artifact, path: str) -> Ok[bytes] | RequestFailed:
+        url = (
+            f"https://{artifact.id}.frame.claudeusercontent.com/_f/{artifact.live}/_src/"
+            f"{urllib.parse.quote(path)}?__frame_t={urllib.parse.quote(artifact.asset_token)}"
+        )
+        # The content host answers 403 to requests without a User-Agent.
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=60) as response:
+                return Ok(response.read())
+        except urllib.error.HTTPError as error:
+            return RequestFailed(f"read {path}", error.code, "")
+        except (urllib.error.URLError, TimeoutError) as error:
+            return RequestFailed(f"read {path}", None, str(getattr(error, "reason", error)))
+
+    def types(self) -> Ok[list[ArtifactType]] | ApiFailure:
+        def parse(raw: Any) -> list[ArtifactType]:
+            return [ArtifactType(ArtifactId(uuid.UUID(t["slug"])), t["title"], t.get("description") or "") for t in raw["types"]]
+
+        return self._parsed("types", self._call("types", "GET", "/types"), parse)
+
+    def type_file(self, type_: ArtifactType, path: str) -> Ok[str] | ApiFailure:
+        quoted = "/".join(urllib.parse.quote(part) for part in path.split("/"))
+        return self._parsed("type-skill", self._call("type-skill", "GET", f"/types/{type_.id}/files/{quoted}"), lambda r: str(r["text"]))
+
+    def create(self, type_: ArtifactType, title: str) -> Ok[Published] | ApiFailure:
+        raw = self._call("create", "POST", f"/types/{type_.id}/create", {"target_type_version": None, "title": title})
+        return self._parsed("create", raw, lambda r: Published(ArtifactId(uuid.UUID(r["slug"])), r["version"]))
+
+
+# ---------------------------------------------------------------- commands
+
+app = typer.Typer(help=__doc__, no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False)
+
+
+class Context:
+    """Builds the API on first use, so --help needs no token."""
+
+    def __init__(self, build: Callable[[], FrameApi]) -> None:
+        self._build = build
+        self._api: Optional[FrameApi] = None
+
+    def api(self) -> FrameApi:
+        if self._api is None:
+            self._api = self._build()
+        return self._api
+
+
+def expect(result: Union[Ok[T], Failure]) -> T:
+    """Unwrap a success, or report the failure and exit 1."""
+    if isinstance(result, Failure):
+        stop(result.message)
+    return result.value
+
+
+def stop(message: str) -> NoReturn:
+    typer.echo(f"claude-artifacts: {message}", err=True)
+    raise typer.Exit(1)
+
+
+def api_of(ctx: typer.Context) -> FrameApi:
+    context = ctx.find_object(Context)
+    if context is None:
+        raise RuntimeError("main() sets the command context before any command runs")
+    return context.api()
+
+
+def emit(as_json: bool, data: Any, lines: list[str], note: Optional[str] = None) -> None:
+    """Print data as JSON, or the note on stderr and the lines on stdout."""
     if as_json:
-        typer.echo(json.dumps(out, indent=2))
+        typer.echo(json.dumps(data, indent=2, ensure_ascii=False))
         return
-    for t in out:
-        typer.echo(f"{t['title']}\t{t['url']}\t{(t['description'] or '')[:100]}")
+    if note:
+        typer.echo(note, err=True)
+    for line in lines:
+        typer.echo(line)
 
 
-@app.command("type-skill")
-def type_skill(
-    type_name: Annotated[str, typer.Argument(metavar="TYPE", help="Type title, such as Slides, or its link.")],
-    path: Annotated[str, typer.Option(help="Another file of the type, such as artifact-type/reference/format.md.")] = "SKILL.md",
+def find_type(api: FrameApi, name: str) -> ArtifactType:
+    return next((t for t in expect(api.types()) if t.matches(name)), None) or stop(UnknownType(name).message)
+
+
+def parse_id(text: str) -> ArtifactId:
+    return expect(ArtifactId.parse(text))
+
+
+ArtifactArg = Annotated[
+    ArtifactId,
+    typer.Argument(
+        parser=parse_id,
+        metavar="ARTIFACT",
+        help="A claude.ai/artifact/<id> or claude.ai/code/artifact/<uuid> link, or the bare id.",
+        show_default=False,
+    ),
+]
+TypeArg = Annotated[str, typer.Argument(metavar="TYPE", help="Type title, such as Slides, or its link.")]
+FileArg = Annotated[Path, typer.Argument(help="The .html page.", show_default=False)]
+JsonOpt = Annotated[bool, typer.Option("--json", help="Print JSON.")]
+TitleOpt = Annotated[Optional[str], typer.Option(help="Title. Defaults to the page's <title>, then the file name.")]
+DescriptionOpt = Annotated[Optional[str], typer.Option(help="One sentence for the gallery card.")]
+IconOpt = Annotated[Optional[str], typer.Option(help="One generic word for the tab icon, such as chart or book.")]
+LabelOpt = Annotated[Optional[str], typer.Option(help="Short name for this version.")]
+ShareOpt = Annotated[Optional[Audience], typer.Option(help="Audience after publishing.")]
+PinOpt = Annotated[bool, typer.Option("--pin", help="Pin to the claude.ai sidebar.")]
+
+
+def finish_publish(
+    ctx: typer.Context, page: Page, published: Published, verb: str, share: Optional[Audience], pin: bool, as_json: bool
 ) -> None:
-    """Print a type's SKILL.md: how to fill an artifact made from it."""
-    t = find_type(type_name)
-    parts = "/".join(urllib.parse.quote(part) for part in path.split("/"))
-    body = frame("GET", f"/types/{t['slug']}/files/{parts}")
-    if body.get("truncated"):
-        typer.echo(f"claude-artifacts: {path} is truncated by the server", err=True)
-    typer.echo(body.get("text") or body.get("content") or "")
+    api = api_of(ctx)
+    if share is not None:
+        expect(api.share(published.id, share))
+    if pin:
+        expect(api.pin(published.id, pinned=True))
+    emit(
+        as_json,
+        {"url": published.id.link, "id": str(published.id), "title": page.title, "version": published.version},
+        [published.id.link],
+        f'{verb} "{page.title}" ({published.version})',
+    )
 
 
 @app.command()
-def create(
-    type_name: Annotated[str, typer.Argument(metavar="TYPE", help="Type title, such as Slides, or its link.")],
-    title: Annotated[str, typer.Argument(help="The new artifact's title.")],
+def publish(
+    ctx: typer.Context,
+    file: FileArg,
+    title: TitleOpt = None,
+    description: DescriptionOpt = None,
+    icon: IconOpt = None,
+    label: LabelOpt = None,
+    share: ShareOpt = None,
+    pin: PinOpt = False,
     as_json: JsonOpt = False,
 ) -> None:
-    """Create an empty artifact from a type. Fill it with push, following type-skill."""
-    t = find_type(type_name)
-    key = urllib.parse.quote(f"claude-artifacts-{uuid.uuid4()}")
-    body = frame("POST", f"/types/{t['slug']}/create?idempotency_key={key}", {"target_type_version": None, "title": title})
-    slug = body.get("slug")
-    if not slug:
-        fail(f"create returned no slug: {json.dumps(body)[:300]}")
-    if as_json:
-        typer.echo(json.dumps({"url": short_link(slug), "slug": slug, "type": t.get("title"), "version": body.get("version"), "contract": body.get("contract")}, indent=2))
-        return
-    typer.echo(f'Created a {t.get("title")} artifact, "{title}"', err=True)
-    typer.echo(short_link(slug))
+    """Publish a page as a new artifact. Prints its link; new artifacts start private."""
+    page = expect(Page.read(file))
+    page = Page(page.html, title or page.title)
+    published = expect(api_of(ctx).deploy_page(page, Card(description, icon, label), target=None))
+    finish_publish(ctx, page, published, "Created", share, pin, as_json)
+
+
+@app.command()
+def update(
+    ctx: typer.Context,
+    artifact: ArtifactArg,
+    file: FileArg,
+    title: TitleOpt = None,
+    description: DescriptionOpt = None,
+    icon: IconOpt = None,
+    label: LabelOpt = None,
+    share: ShareOpt = None,
+    pin: PinOpt = False,
+    as_json: JsonOpt = False,
+) -> None:
+    """Publish a page as a new version of an existing artifact, same link."""
+    api = api_of(ctx)
+    page = expect(Page.read(file))
+    page = Page(page.html, title or page.title)
+    target = expect(api.artifact(artifact))
+    if description is None:
+        # A deploy without a description clears it; resend the current one.
+        description = next((s.description for s in expect(api.summaries()) if s.id == artifact), None)
+    published = expect(api.deploy_page(page, Card(description, icon, label), target))
+    finish_publish(ctx, page, published, "Updated", share, pin, as_json)
 
 
 @app.command()
 def push(
+    ctx: typer.Context,
     artifact: ArtifactArg,
     directory: Annotated[Path, typer.Argument(help="Folder whose files land at the same paths, such as one holding project/.")],
     remove: Annotated[Optional[list[str]], typer.Option("--remove", help="Path to delete from the artifact; repeatable.")] = None,
@@ -462,43 +660,157 @@ def push(
     as_json: JsonOpt = False,
 ) -> None:
     """Send a folder's files to an artifact. Files not sent stay as they are."""
-    slug = slug_of(artifact)
-    if not directory.is_dir():
-        fail(f"not a directory: {directory}")
-    manifest = {}
-    for file in sorted(p for p in directory.rglob("*") if p.is_file()):
-        rel = file.relative_to(directory).as_posix()
-        if any(part.startswith(".") for part in file.relative_to(directory).parts):
-            continue
-        content_type = TEXT_TYPES.get(file.suffix.lower())
-        if content_type is None:
-            fail(f"only text files ({', '.join(sorted(TEXT_TYPES))}): {rel}")
-        try:
-            manifest[rel] = {"content": file.read_text(encoding="utf-8"), "contentType": content_type}
-        except UnicodeDecodeError:
-            fail(f"not UTF-8: {rel}")
-    for path in remove or []:
-        manifest[path] = None
-    if not manifest:
-        fail(f"no files in {directory}")
-    meta = frame("GET", f"/{slug}")
-    body = {
-        "slug": slug,
-        "title": meta.get("title"),
-        "baseVersion": meta.get("live") or meta.get("ver"),
-        "manifest": manifest,
-        "mode": "patch",
-        **({"label": label} if label else {}),
-    }
-    result = frame("POST", "/deploy/direct", body)
-    if as_json:
-        typer.echo(json.dumps({"url": short_link(slug), "version": result.get("version"), "files": sorted(manifest)}, indent=2))
+    api = api_of(ctx)
+    manifest = expect(read_manifest(directory, remove or []))
+    target = expect(api.artifact(artifact))
+    published = expect(api.deploy_files(manifest, target, label))
+    emit(
+        as_json,
+        {"url": artifact.link, "version": published.version, "files": sorted(manifest)},
+        [artifact.link],
+        f'Pushed {len(manifest)} changes to "{target.title}" ({published.version})',
+    )
+
+
+@app.command("list")
+def list_(
+    ctx: typer.Context,
+    scope: Annotated[Scope, typer.Option(help="Your artifacts, ones shared with you, or both.")] = Scope.mine,
+    as_json: JsonOpt = False,
+) -> None:
+    """List artifacts, most recently updated first."""
+    rows = sorted(
+        (s for s in expect(api_of(ctx).summaries()) if scope is Scope.all or s.rel == scope.value),
+        key=lambda s: s.updated,
+        reverse=True,
+    )
+    emit(
+        as_json,
+        [{"url": s.id.link, "title": s.title, "audience": s.audience, "updated": s.updated} for s in rows],
+        [f"{s.updated}\t{s.audience}\t{s.id.link}\t{s.title}" for s in rows],
+    )
+
+
+@app.command()
+def read(
+    ctx: typer.Context,
+    artifact: ArtifactArg,
+    content: Annotated[bool, typer.Option("--content", help="Print the published source instead.")] = False,
+    path: Annotated[str, typer.Option(help="File to print with --content.")] = "index.html",
+    as_json: JsonOpt = False,
+) -> None:
+    """Show an artifact's metadata, or its published source with --content."""
+    api = api_of(ctx)
+    found = expect(api.artifact(artifact))
+    if content:
+        sys.stdout.buffer.write(expect(api.source(found, path)))
         return
-    typer.echo(f'Pushed {len(manifest)} changes to "{meta.get("title")}" ({result.get("version", "?")})', err=True)
-    typer.echo(short_link(slug))
+    info = {
+        "url": found.id.link,
+        "title": found.title,
+        "audience": found.audience,
+        "version": found.live,
+        "versions": len(found.history),
+        "files": list(found.files),
+        "author": found.author,
+        "created": found.created,
+        "updated": found.updated,
+        "views": found.views,
+    }
+    emit(as_json, info, [f"{k}: {', '.join(v) if isinstance(v, list) else v}" for k, v in info.items()])
 
 
-def version_callback(value: bool) -> None:
+@app.command()
+def versions(ctx: typer.Context, artifact: ArtifactArg, as_json: JsonOpt = False) -> None:
+    """List an artifact's versions, newest first."""
+    rows = expect(api_of(ctx).versions(artifact))
+    emit(as_json, [asdict(v) for v in rows], [f"{v.version}\t{'live' if v.live else ''}\t{v.created}\t{v.title}" for v in rows])
+
+
+@app.command()
+def comments(ctx: typer.Context, artifact: ArtifactArg) -> None:
+    """Print an artifact's comment threads as JSON."""
+    typer.echo(json.dumps(expect(api_of(ctx).comment_threads(artifact)), indent=2, ensure_ascii=False))
+
+
+@app.command()
+def share(ctx: typer.Context, artifact: ArtifactArg, audience: Annotated[Audience, typer.Argument(help="private or org.")]) -> None:
+    """Set who can open an artifact: only you, or your organization."""
+    expect(api_of(ctx).share(artifact, audience))
+    typer.echo(artifact.link)
+
+
+@app.command()
+def rename(ctx: typer.Context, artifact: ArtifactArg, title: Annotated[str, typer.Argument(help="New title.")]) -> None:
+    """Rename an artifact without publishing a new version."""
+    expect(api_of(ctx).rename(artifact, title))
+    typer.echo(artifact.link)
+
+
+@app.command()
+def pin(ctx: typer.Context, artifact: ArtifactArg) -> None:
+    """Pin an artifact to your claude.ai sidebar."""
+    expect(api_of(ctx).pin(artifact, pinned=True))
+
+
+@app.command()
+def unpin(ctx: typer.Context, artifact: ArtifactArg) -> None:
+    """Unpin an artifact from your claude.ai sidebar."""
+    expect(api_of(ctx).pin(artifact, pinned=False))
+
+
+@app.command()
+def delete(
+    ctx: typer.Context,
+    artifact: ArtifactArg,
+    yes: Annotated[bool, typer.Option("--yes", help="Delete; without it, only say what would go.")] = False,
+) -> None:
+    """Delete an artifact. Its link stops working for everyone."""
+    api = api_of(ctx)
+    found = expect(api.artifact(artifact))
+    if not yes:
+        stop(f'would delete "{found.title}" ({artifact.link}); add --yes')
+    expect(api.delete(artifact))
+    typer.echo(f'Deleted "{found.title}"', err=True)
+
+
+@app.command()
+def types(ctx: typer.Context, as_json: JsonOpt = False) -> None:
+    """List the artifact types (Slides, Sheets, Design...) this account can create."""
+    rows = expect(api_of(ctx).types())
+    emit(
+        as_json,
+        [{"title": t.title, "url": t.id.link, "description": t.description} for t in rows],
+        [f"{t.title}\t{t.id.link}\t{t.description[:100]}" for t in rows],
+    )
+
+
+@app.command("type-skill")
+def type_skill(
+    ctx: typer.Context,
+    type_name: TypeArg,
+    path: Annotated[str, typer.Option(help="Another file of the type, such as artifact-type/reference/format.md.")] = "SKILL.md",
+) -> None:
+    """Print a type's SKILL.md: how to fill an artifact made from it."""
+    api = api_of(ctx)
+    typer.echo(expect(api.type_file(find_type(api, type_name), path)))
+
+
+@app.command()
+def create(ctx: typer.Context, type_name: TypeArg, title: Annotated[str, typer.Argument(help="The new artifact's title.")], as_json: JsonOpt = False) -> None:
+    """Create an empty artifact from a type. Fill it with push, following type-skill."""
+    api = api_of(ctx)
+    type_ = find_type(api, type_name)
+    published = expect(api.create(type_, title))
+    emit(
+        as_json,
+        {"url": published.id.link, "id": str(published.id), "type": type_.title, "version": published.version},
+        [published.id.link],
+        f'Created a {type_.title} artifact, "{title}"',
+    )
+
+
+def show_version(value: bool) -> None:
     if value:
         typer.echo(f"claude-artifacts {VERSION}")
         raise typer.Exit()
@@ -506,11 +818,13 @@ def version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
-    version: Annotated[
-        bool, typer.Option("--version", "-v", callback=version_callback, is_eager=True, help="Show the version.")
-    ] = False,
+    ctx: typer.Context,
+    version: Annotated[bool, typer.Option("--version", "-v", callback=show_version, is_eager=True, help="Show the version.")] = False,
 ) -> None:
-    pass
+    """Composition root: resolve the token once, then hand commands the API."""
+    helper = Path(__file__).resolve().parent / "claude-mcp-headers"
+    base = os.environ.get("CLAUDE_ARTIFACTS_API", "https://api.anthropic.com/api/frame")
+    ctx.obj = Context(lambda: FrameApi(base, expect(read_token(helper))))
 
 
 if __name__ == "__main__":

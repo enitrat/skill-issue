@@ -101,10 +101,12 @@ that Anthropic publishes as an artifact holding a viewer and a `SKILL.md`.
 makes an empty instance (`POST /api/frame/types/<slug>/create`), and
 `push <artifact> <dir>` sends a folder's files.
 
-- `push` deploys with `mode: "patch"` and the live `baseVersion`. Without
-  `mode` the deploy drops every project file it does not name; without
-  `baseVersion` a typed instance answers `409 conflict`, which also means
-  someone saved since: read again, do not force.
+- `update` and `push` send the live `baseVersion`, and `push` deploys with
+  `mode: "patch"`. Without `mode` the deploy drops every project file it does
+  not name; without `baseVersion` a typed instance answers `409 conflict`,
+  which also means someone saved since: the CLI reports it and never forces.
+- `tests/test_claude_artifacts.py` runs the real CLI against a local fake of
+  the frame API: `python3 -m unittest tests/test_claude_artifacts.py`.
 - Docs and Sheets keep their content on a server reached only through the
   `claude-docs` connector, not through `push`. Data adds a store
   (`/api/frame/db/agent`), not covered.
