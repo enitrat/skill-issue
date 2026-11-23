@@ -18,13 +18,14 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
 import typer
 
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 API = "https://api.anthropic.com/api/frame"
 BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 USER_AGENT = f"claude-artifacts/{VERSION}"
@@ -377,6 +378,124 @@ def delete(
         fail(f'would delete "{title}" ({short_link(slug)}); add --yes')
     frame("DELETE", f"/{slug}")
     typer.echo(f'Deleted "{title}"', err=True)
+
+
+TEXT_TYPES = {
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".css": "text/css",
+    ".js": "text/javascript",
+    ".json": "application/json",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".svg": "image/svg+xml",
+}
+
+
+def find_type(name: str) -> dict:
+    """A type by title (any case), slug, or link."""
+    found = frame("GET", "/types").get("types") or []
+    wanted = name.strip().lower()
+    for t in found:
+        if wanted in ((t.get("title") or "").lower(), t.get("slug"), (t.get("url") or "").lower()):
+            return t
+    if "/" in name or UUID.match(wanted) or len(wanted) == 22:
+        slug = slug_of(name)
+        for t in found:
+            if t.get("slug") == slug:
+                return t
+    fail(f"no type named {name!r}; `claude-artifacts types` lists the ones this account has")
+
+
+@app.command()
+def types(as_json: JsonOpt = False) -> None:
+    """List the artifact types (Slides, Sheets, Design...) this account can create."""
+    found = frame("GET", "/types").get("types") or []
+    out = [{"title": t.get("title"), "url": t.get("url"), "description": t.get("description")} for t in found]
+    if as_json:
+        typer.echo(json.dumps(out, indent=2))
+        return
+    for t in out:
+        typer.echo(f"{t['title']}\t{t['url']}\t{(t['description'] or '')[:100]}")
+
+
+@app.command("type-skill")
+def type_skill(
+    type_name: Annotated[str, typer.Argument(metavar="TYPE", help="Type title, such as Slides, or its link.")],
+    path: Annotated[str, typer.Option(help="Another file of the type, such as artifact-type/reference/format.md.")] = "SKILL.md",
+) -> None:
+    """Print a type's SKILL.md: how to fill an artifact made from it."""
+    t = find_type(type_name)
+    parts = "/".join(urllib.parse.quote(part) for part in path.split("/"))
+    body = frame("GET", f"/types/{t['slug']}/files/{parts}")
+    if body.get("truncated"):
+        typer.echo(f"claude-artifacts: {path} is truncated by the server", err=True)
+    typer.echo(body.get("text") or body.get("content") or "")
+
+
+@app.command()
+def create(
+    type_name: Annotated[str, typer.Argument(metavar="TYPE", help="Type title, such as Slides, or its link.")],
+    title: Annotated[str, typer.Argument(help="The new artifact's title.")],
+    as_json: JsonOpt = False,
+) -> None:
+    """Create an empty artifact from a type. Fill it with push, following type-skill."""
+    t = find_type(type_name)
+    key = urllib.parse.quote(f"claude-artifacts-{uuid.uuid4()}")
+    body = frame("POST", f"/types/{t['slug']}/create?idempotency_key={key}", {"target_type_version": None, "title": title})
+    slug = body.get("slug")
+    if not slug:
+        fail(f"create returned no slug: {json.dumps(body)[:300]}")
+    if as_json:
+        typer.echo(json.dumps({"url": short_link(slug), "slug": slug, "type": t.get("title"), "version": body.get("version"), "contract": body.get("contract")}, indent=2))
+        return
+    typer.echo(f'Created a {t.get("title")} artifact, "{title}"', err=True)
+    typer.echo(short_link(slug))
+
+
+@app.command()
+def push(
+    artifact: ArtifactArg,
+    directory: Annotated[Path, typer.Argument(help="Folder whose files land at the same paths, such as one holding project/.")],
+    remove: Annotated[Optional[list[str]], typer.Option("--remove", help="Path to delete from the artifact; repeatable.")] = None,
+    label: LabelOpt = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """Send a folder's files to an artifact. Files not sent stay as they are."""
+    slug = slug_of(artifact)
+    if not directory.is_dir():
+        fail(f"not a directory: {directory}")
+    manifest = {}
+    for file in sorted(p for p in directory.rglob("*") if p.is_file()):
+        rel = file.relative_to(directory).as_posix()
+        if any(part.startswith(".") for part in file.relative_to(directory).parts):
+            continue
+        content_type = TEXT_TYPES.get(file.suffix.lower())
+        if content_type is None:
+            fail(f"only text files ({', '.join(sorted(TEXT_TYPES))}): {rel}")
+        try:
+            manifest[rel] = {"content": file.read_text(encoding="utf-8"), "contentType": content_type}
+        except UnicodeDecodeError:
+            fail(f"not UTF-8: {rel}")
+    for path in remove or []:
+        manifest[path] = None
+    if not manifest:
+        fail(f"no files in {directory}")
+    meta = frame("GET", f"/{slug}")
+    body = {
+        "slug": slug,
+        "title": meta.get("title"),
+        "baseVersion": meta.get("live") or meta.get("ver"),
+        "manifest": manifest,
+        "mode": "patch",
+        **({"label": label} if label else {}),
+    }
+    result = frame("POST", "/deploy/direct", body)
+    if as_json:
+        typer.echo(json.dumps({"url": short_link(slug), "version": result.get("version"), "files": sorted(manifest)}, indent=2))
+        return
+    typer.echo(f'Pushed {len(manifest)} changes to "{meta.get("title")}" ({result.get("version", "?")})', err=True)
+    typer.echo(short_link(slug))
 
 
 def version_callback(value: bool) -> None:

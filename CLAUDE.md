@@ -94,6 +94,22 @@ Claude Code binary. Do not call the Artifact tool from a session.
 - The direct publish records contract `0.0.0`. Pages that use the Artifact
   runtime (`window.claude.*`, shared data, comments) are untested.
 
+Typed artifacts (Slides, Design, Design System, Motion) are instances of a type
+that Anthropic publishes as an artifact holding a viewer and a `SKILL.md`.
+`claude-artifacts types` lists them, `type-skill <type>` prints the
+`SKILL.md` that says which `project/` files to write, `create <type> <title>`
+makes an empty instance (`POST /api/frame/types/<slug>/create`), and
+`push <artifact> <dir>` sends a folder's files.
+
+- `push` deploys with `mode: "patch"` and the live `baseVersion`. Without
+  `mode` the deploy drops every project file it does not name; without
+  `baseVersion` a typed instance answers `409 conflict`, which also means
+  someone saved since: read again, do not force.
+- Docs and Sheets keep their content on a server reached only through the
+  `claude-docs` connector, not through `push`. Data adds a store
+  (`/api/frame/db/agent`), not covered.
+- Whiteboard is a type too, in beta; this account's `/types` does not list it.
+
 ### Connectors
 
 Connectors are plain HTTP MCP servers, user scope in `~/.claude.json`, one per
