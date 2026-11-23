@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# claude-mcp-headers: headersHelper that reaches claude.ai connectors through CLIProxy's login
+
+VERSION="1.0.0"
+AUTH_DIR="${CLIPROXY_AUTH_DIR:-$HOME/.cli-proxy-api}"
+
+show_help() {
+    cat << 'EOF'
+NAME
+    claude-mcp-headers - headers for claude.ai connectors in a CLIProxy session
+
+SYNOPSIS
+    claude-mcp-headers <account>
+    claude-mcp-headers --help | -h
+    claude-mcp-headers --version | -v
+
+DESCRIPTION
+    Prints, as JSON, the HTTP headers that Anthropic's MCP proxy
+    (https://mcp-proxy.anthropic.com/v1/mcp/<server-id>) needs to serve one of
+    your claude.ai connectors. Claude Code runs it as a server's
+    `headersHelper` before it connects.
+
+    Claude Code skips claude.ai connectors when ANTHROPIC_AUTH_TOKEN is set,
+    which the CLIProxy profile always sets. Declaring each connector as a plain
+    HTTP MCP server with this helper brings them back. The bearer token is the
+    claude.ai OAuth token that CLIProxy keeps, and refreshes, in
+    ~/.cli-proxy-api/claude-<id>-<account>.json.
+
+    <account> picks that file: the email, or any part of the file name that
+    matches exactly one file. Connector authorizations (Gmail, Drive...) belong
+    to one user, so pick the account that authorized them on claude.ai.
+
+    Register a connector (ids come from GET /v1/mcp_servers):
+
+        claude mcp add-json --scope user linear '{"type":"http",
+          "url":"https://mcp-proxy.anthropic.com/v1/mcp/mcpsrv_...",
+          "headersHelper":"$HOME/.local/bin/claude-mcp-headers you@example.com"}'
+
+ENVIRONMENT
+    CLIPROXY_AUTH_DIR   CLIProxy's auth directory (default ~/.cli-proxy-api)
+EOF
+}
+
+case "${1:-}" in
+    -h | --help) show_help; exit 0 ;;
+    -v | --version) echo "claude-mcp-headers $VERSION"; exit 0 ;;
+    "") show_help >&2; exit 2 ;;
+esac
+
+set -euo pipefail
+
+shopt -s nullglob
+matches=("$AUTH_DIR"/claude-*"$1"*.json)
+if [ "${#matches[@]}" -ne 1 ]; then
+    echo "claude-mcp-headers: '$1' matches ${#matches[@]} files in $AUTH_DIR, expected 1" >&2
+    exit 1
+fi
+
+jq -e --arg session "$(uuidgen | tr '[:upper:]' '[:lower:]')" '
+    if .disabled then error("account is disabled in CLIProxy") else . end
+    | {
+        "Authorization": ("Bearer " + .access_token),
+        "anthropic-version": "2023-06-01",
+        "X-Mcp-Client-Session-Id": $session
+    }' "${matches[0]}"

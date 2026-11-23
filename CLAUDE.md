@@ -61,6 +61,64 @@ Nix owns machine setup. README.md has the commands; the rules:
 - Homebrew uses `cleanup = "check"`. Never change it to `"uninstall"` or
   `"zap"`: those delete apps and their data for anything not declared.
 
+## Claude Code Profiles (macOS)
+
+Two profiles, selected by `CLAUDE_CONFIG_DIR`:
+
+| Profile | Directory | Credential | Used for |
+| - | - | - | - |
+| default | `~/.claude` | CLIProxyAPI at `http://127.0.0.1:8317` | every session |
+| artifacts | `~/.claude_artifacts` | claude.ai login (team plan) | publishing Artifacts |
+
+The `claudeSettings` activation in `nix/home/common.nix` writes
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` into the default profile's
+`settings.json`. Claude Code ranks `ANTHROPIC_AUTH_TOKEN` above the claude.ai
+login, and without that login it drops the Artifact tool. So the default
+profile can never publish an Artifact, and no setting fixes that.
+
+`tools/publish-artifact <file.html> [artifact-url]` is the only way an agent
+publishes one. It runs `claude -p` in the artifacts profile with both
+`ANTHROPIC_*` variables unset, allows only `Read` and `Artifact`, and prints
+the URL. Do not call the Artifact tool from a default session, and do not point
+the default profile at claude.ai.
+
+- The artifacts profile has no `settings.json`, skills, plugins or `CLAUDE.md`.
+  Never link or copy the default profile's `settings.json` into it: that
+  carries the proxy variables back in. This rules out account-slot wrappers
+  such as multi-cc, whose `cc-share` symlinks `settings.json` into each slot.
+- The login is interactive and cannot live in Nix. Run the command in
+  `publish-artifact --help` once per machine; `bootstrap/check.sh` fails until
+  it is done.
+- Write `"$HOME"`, never `~`, in `env CLAUDE_CONFIG_DIR=...`: `env` does not
+  expand it and Claude Code creates a literal `~` directory in the current
+  folder.
+
+### claude.ai connectors in the default profile
+
+The same precedence also disables claude.ai connectors in the default
+profile. They come back as plain HTTP MCP servers, user scope in
+`~/.claude.json`, one per connector, each pointing at
+`https://mcp-proxy.anthropic.com/v1/mcp/<mcpsrv_id>` with
+`tools/claude-mcp-headers <account>` as `headersHelper`. The helper reads the
+claude.ai OAuth token that CLIProxy keeps and refreshes in
+`~/.cli-proxy-api/claude-*-<account>.json`. Registered today: `linear`,
+`notion`, `google-drive`, `claude-docs`, `gmail`, `google-calendar`.
+
+- The ids are per account, so they live in `~/.claude.json`, not in the flake.
+  Register one with the `claude mcp add-json` command in
+  `claude-mcp-headers --help`; list ids with `GET
+  https://api.anthropic.com/v1/mcp_servers?limit=1000`, headers
+  `anthropic-beta: mcp-servers-2025-12-04` and the helper's `Authorization`.
+- A connector must be authorized on claude.ai (Settings > Connectors) by that
+  account. `tools/list` succeeds from the proxy's cache even when it is not;
+  only a tool call returns `401 mcp_unauthorized_no_token`.
+- The startup warning "claude.ai connectors are disabled" stays. It is about
+  Claude Code's own connector loading, not these servers.
+- Undocumented: the proxy requires an `X-Mcp-Client-Session-Id` header and
+  the API path came from the Claude Code binary. A Claude Code or CLIProxy
+  update can break either.
+- Artifacts have no such path: publishing stays on `publish-artifact`.
+
 ## Checks
 
 `prek` runs the hooks in `.pre-commit-config.yaml` (nixfmt, shellcheck,

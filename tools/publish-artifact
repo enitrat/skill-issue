@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# publish-artifact: publish an HTML file as a claude.ai Artifact
+
+VERSION="1.0.0"
+PROFILE="${ARTIFACT_PROFILE:-$HOME/.claude_artifacts}"
+
+show_help() {
+    cat << 'EOF'
+NAME
+    publish-artifact - publish an HTML file as a claude.ai Artifact
+
+SYNOPSIS
+    publish-artifact <file.html> [artifact-url]
+    publish-artifact --help | -h
+    publish-artifact --version | -v
+
+DESCRIPTION
+    Runs `claude -p` in a second Claude Code profile (~/.claude_artifacts)
+    that is signed in to claude.ai, and asks it to publish the file with the
+    Artifact tool. Prints the artifact URL. With an artifact-url, updates that
+    artifact in place.
+
+    A separate profile because the default one routes through CLIProxyAPI:
+    ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN take precedence over the
+    claude.ai login, and without that login the Artifact tool is unavailable.
+    This tool strips both variables and points CLAUDE_CONFIG_DIR at the
+    profile, so the default session is untouched.
+
+    One-time setup, in a terminal (it opens a browser; pick "Claude account
+    with subscription"):
+
+        env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN \
+            CLAUDE_CONFIG_DIR="$HOME/.claude_artifacts" claude auth login
+
+    Use "$HOME", not "~": `env` does not expand it and Claude Code would
+    create a literal "~" directory in the current folder.
+
+    The profile only gets Read on the file's folder and the Artifact tool.
+    The file's content is uploaded to claude.ai; artifacts start private.
+
+ENVIRONMENT
+    ARTIFACT_PROFILE    Profile directory (default ~/.claude_artifacts)
+
+EXAMPLES
+    publish-artifact report.html
+    publish-artifact report.html https://claude.ai/artifact/<id>
+EOF
+}
+
+case "${1:-}" in
+    -h | --help) show_help; exit 0 ;;
+    -v | --version) echo "publish-artifact $VERSION"; exit 0 ;;
+    "") show_help >&2; exit 2 ;;
+esac
+
+set -euo pipefail
+
+file="$1"
+url="${2:-}"
+[ -r "$file" ] || { echo "publish-artifact: cannot read $file" >&2; exit 1; }
+dir="$(cd "$(dirname "$file")" && pwd)"
+file="$dir/$(basename "$file")"
+
+status="$(env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
+    CLAUDE_CONFIG_DIR="$PROFILE" claude auth status 2>/dev/null || true)"
+if ! jq -e '.loggedIn and .authMethod == "claude.ai"' <<< "$status" > /dev/null 2>&1; then
+    echo "publish-artifact: $PROFILE is not signed in to claude.ai. See --help for the one-time login." >&2
+    exit 1
+fi
+
+prompt="Publish the file $file with the Artifact tool."
+[ -n "$url" ] && prompt="$prompt Update the existing artifact at $url."
+prompt="$prompt Do not edit the file. Reply with the artifact URL only."
+
+# A neutral working directory keeps a project's CLAUDE.md out of the context.
+mkdir -p "$PROFILE/work"
+cd "$PROFILE/work"
+exec env -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY \
+    CLAUDE_CONFIG_DIR="$PROFILE" \
+    claude -p "$prompt" --add-dir "$dir" --allowedTools "Read" "Artifact"
