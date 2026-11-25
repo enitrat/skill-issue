@@ -67,7 +67,7 @@ in
     awscli2
   ];
   # Full-screen reminder one minute before each meeting, from github.com/enitrat/remindmeet.
-  # Started at login and restarted if it crashes; "Quitter" in its menu stops it
+  # Started at login and restarted if it crashes; "Quit" in its menu stops it
   # until the next login. Calendar access is a one-time macOS prompt, asked again
   # whenever a new build changes the app's signature.
   launchd.agents.remindmeet = {

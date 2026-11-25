@@ -115,11 +115,11 @@
     "remindmeet": {
       "flake": false,
       "locked": {
-        "lastModified": 1795626783,
-        "narHash": "sha256-7Zw/BQmVsGU5iKx3gDRaweuGbBLk5o0D6rLLI6BuOAg=",
+        "lastModified": 1795627021,
+        "narHash": "sha256-JRQ+/iLrxJsDFAd8mdOHtfdMFfqUR5iy2IuT/6MEKvE=",
         "owner": "enitrat",
         "repo": "remindmeet",
-        "rev": "988cfc631b1442bb5d438272c13389b312113e79",
+        "rev": "f48cebd0bb0e06762e00ee15fbee35f7c48e8853",
         "type": "github"
       },
       "original": {
