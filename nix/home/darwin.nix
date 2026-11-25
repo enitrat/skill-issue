@@ -66,6 +66,19 @@ in
     bitwarden-cli
     awscli2
   ];
+  # Full-screen reminder one minute before each meeting, from github.com/enitrat/remindmeet.
+  # Started at login and restarted if it crashes; "Quitter" in its menu stops it
+  # until the next login. Calendar access is a one-time macOS prompt, asked again
+  # whenever a new build changes the app's signature.
+  launchd.agents.remindmeet = {
+    enable = true;
+    config = {
+      ProgramArguments = [ "${pkgs.remindmeet}/Applications/RemindMeet.app/Contents/MacOS/RemindMeet" ];
+      KeepAlive.SuccessfulExit = false;
+      ProcessType = "Interactive";
+    };
+  };
+
   # `, <tool>` runs anything in nixpkgs once without installing it.
   programs.nix-index-database.comma.enable = true;
 

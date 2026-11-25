@@ -16,6 +16,12 @@
       url = "github:nix-community/nix-index-database";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Built here with this flake's nixpkgs. After a push there:
+    # `nix flake update remindmeet`, then `rebuild`.
+    remindmeet = {
+      url = "github:enitrat/remindmeet";
+      flake = false;
+    };
   };
 
   outputs =
@@ -25,6 +31,7 @@
       home-manager,
       nix-homebrew,
       nix-index-database,
+      remindmeet,
       ...
     }:
     let
@@ -56,7 +63,10 @@
         modules = [
           {
             nixpkgs.hostPlatform = "aarch64-darwin";
-            nixpkgs.overlays = [ overlay ];
+            nixpkgs.overlays = [
+              overlay
+              (final: _: { remindmeet = final.callPackage "${remindmeet}/package.nix" { }; })
+            ];
             nixpkgs.config = { inherit allowUnfreePredicate; };
           }
           ./nix/darwin
