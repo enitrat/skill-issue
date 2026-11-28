@@ -65,6 +65,12 @@ in
   home.packages = with pkgs; [
     bitwarden-cli
     awscli2
+    # macOS has no `timeout`, and agents reach for it constantly. Only GNU timeout
+    # goes on PATH, so the rest of coreutils never shadows the BSD tools.
+    (runCommand "gnu-timeout" { } ''
+      mkdir -p $out/bin
+      ln -s ${coreutils}/bin/timeout $out/bin/timeout
+    '')
   ];
   # Full-screen reminder one minute before each meeting, from github.com/enitrat/remindmeet.
   # Started at login and restarted if it crashes; "Quit" in its menu stops it
