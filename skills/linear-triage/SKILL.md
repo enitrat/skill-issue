@@ -5,7 +5,8 @@ description: Linear project management for a product → design → engineering 
 
 # Linear
 
-Work in Linear with the `mcp__claude_ai_Linear__*` tools. Every write is
+Work in Linear with the Linear MCP tools (`mcp__linear__*`; a session signed in
+to claude.ai directly names them `mcp__claude_ai_Linear__*`). Every write is
 **prepare → confirm → execute**: show the exact change, wait for approval, apply,
 re-read and report what landed.
 
