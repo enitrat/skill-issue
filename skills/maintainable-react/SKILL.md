@@ -73,8 +73,7 @@ Never define a component inside another component's render body — it gets a ne
 
 ## Server state and client state are different problems
 
-Data that comes from a server, chain, or subgraph is **server state** — it belongs in the query cache (TanStack Query), never copied into `useState`/Zustand/Context. A second copy of server data is a second source of truth and *will* drift. Configure `staleTime` per query rather than disabling refetch flags piecemeal; stale data beats a spinner. Use Zustand/local state only for genuine **client state** (UI toggles, form drafts, cross-reload persistence). (See `tanstack-best-practices` for query-layer specifics.)
-
+Data that comes from a server, chain, or subgraph is **server state** — it belongs in the query cache (TanStack Query), never copied into `useState`/Zustand/Context. A second copy of server data is a second source of truth and *will* drift. Configure `staleTime` per query rather than disabling refetch flags piecemeal; stale data beats a spinner. Use Zustand/local state only for genuine **client state** (UI toggles, form drafts, cross-reload persistence).
 ## Split the loader from the view
 
 If a component needs data loaded before it can render correctly, split it:
