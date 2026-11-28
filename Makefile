@@ -1,7 +1,7 @@
 .PHONY: skill-install skill-update skill-list codex-setup emil-sync thermos-sync
 
 skill-install:
-	./scripts/install-skills --yes
+	./scripts/install-skills --global --yes
 
 skill-update:
 	./scripts/install-skills --update

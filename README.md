@@ -32,7 +32,8 @@ make skill-list
 ```
 
 Personal skills live under `skills/<name>/`. Third-party skills live under
-`skills/external/<name>/`. `make skill-install` installs the checked-in catalog.
+`skills/external/<name>/`. `make skill-install` installs the checked-in catalog
+globally and uninstalls skills this repo installed before that are no longer in it.
 `make skill-update` fetches the sources in [`skills-external.json`](skills-external.json)
 so their changes can be reviewed before installation.
 

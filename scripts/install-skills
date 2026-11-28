@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   statSync,
@@ -134,17 +135,51 @@ if (update) {
   process.exit(0);
 }
 
+const global = argv.includes("--global") || argv.includes("-g");
+const projectSkills = join(repoRoot, ".agents", "skills");
+
+// `skills add .` scans the whole repo, so the copies an earlier project-scope
+// install left in .agents/ would be installed again, even after their source
+// was deleted. Remove them and the agent links that point into them.
+if (global) {
+  for (const linkDir of [join(repoRoot, "skills"), join(repoRoot, ".claude", "skills")]) {
+    if (!existsSync(linkDir)) continue;
+    for (const entry of readdirSync(linkDir, { withFileTypes: true })) {
+      const link = join(linkDir, entry.name);
+      if (entry.isSymbolicLink() && readlinkSync(link).includes(join(".agents", "skills"))) rmSync(link);
+    }
+  }
+  rmSync(projectSkills, { recursive: true, force: true });
+}
+
 console.log("\nInstalling local and external skills");
 run(["add", ".", ...argv]);
 
+const skillNames = (dir) =>
+  existsSync(dir)
+    ? readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && existsSync(join(dir, entry.name, "SKILL.md")))
+        .map((entry) => entry.name)
+    : [];
+const catalog = new Set([...skillNames(join(repoRoot, "skills")), ...skillNames(externalRoot)]);
+
 // The install copies again, so repair the installed skills the same way.
-const root = argv.includes("--global") || argv.includes("-g")
-  ? join(homedir(), ".agents", "skills")
-  : join(repoRoot, ".agents", "skills");
-const localSkills = readdirSync(join(repoRoot, "skills"), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && existsSync(join(repoRoot, "skills", entry.name, "SKILL.md")))
-  .map((entry) => entry.name);
-for (const name of new Set([...localSkills, ...externalSkills.map((skill) => skill.name)])) {
+const root = global ? join(homedir(), ".agents", "skills") : projectSkills;
+for (const name of catalog) {
   const dir = join(root, name);
   if (existsSync(dir)) restoreBinLinks(dir);
+}
+
+// Uninstall skills this repo installed earlier that are no longer in it.
+// Skills installed from other sources are left alone.
+if (global) {
+  const lockFile = join(homedir(), ".agents", ".skill-lock.json");
+  const installed = existsSync(lockFile) ? JSON.parse(readFileSync(lockFile, "utf8")).skills ?? {} : {};
+  const stale = Object.entries(installed)
+    .filter(([name, entry]) => entry.sourceType === "local" && entry.source === repoRoot && !catalog.has(name))
+    .map(([name]) => name);
+  if (stale.length > 0) {
+    console.log(`\nRemoving skills no longer in the catalog: ${stale.join(", ")}`);
+    run(["remove", "--global", "--yes", ...stale]);
+  }
 }
